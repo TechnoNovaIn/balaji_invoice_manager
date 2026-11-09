@@ -1,0 +1,85 @@
+{% extends 'base.html' %}
+
+{% block title %}System Administration - Balaji InvoiceHub{% endblock %}
+{% block page_heading %}System Administration Console{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h4 class="fw-bold mb-1" style="color: var(--primary-navy); letter-spacing: -0.02em;">
+                <i class="bi bi-speedometer2 me-2 text-rose"></i>Administrative Command Center
+            </h4>
+            <p class="text-secondary small mb-0">Configure Balaji InvoiceHub access policies, manage user permissions, monitor database connections, and oversee automated backups.</p>
+        </div>
+        <span class="role-badge role-badge-ADMIN py-1 px-3">
+            <i class="bi bi-shield-fill-check"></i> Super Administrator
+        </span>
+    </div>
+</div>
+
+<div class="row g-4 mb-4">
+    <!-- User Management Card -->
+    <div class="col-12 col-md-4">
+        <div class="card card-enterprise h-100 p-4">
+            <div class="d-flex align-items-center gap-3 mb-3">
+                <div class="rounded-3 p-3 d-flex align-items-center justify-content-center" style="background-color: #fff1f2; color: #be123c; width: 52px; height: 52px;">
+                    <i class="bi bi-people-fill fs-3"></i>
+                </div>
+                <div>
+                    <h5 class="fw-bold mb-0" style="color: var(--primary-navy);">User Accounts</h5>
+                    <div class="text-muted small">RBAC & Employee Profiles</div>
+                </div>
+            </div>
+            <p class="small text-secondary mb-4 flex-grow-1">
+                Manage employee login credentials, assign transport departments, reset account passwords, and activate/deactivate portal access.
+            </p>
+            <a href="{% url 'accounts:user_list' %}" class="btn btn-outline-danger btn-sm w-100 fw-semibold">
+                <i class="bi bi-person-gear me-1"></i> Open User Manager
+            </a>
+        </div>
+    </div>
+
+    <!-- PostgreSQL 18 Status Card -->
+    <div class="col-12 col-md-4">
+        <div class="card card-enterprise h-100 p-4">
+            <div class="d-flex align-items-center gap-3 mb-3">
+                <div class="rounded-3 p-3 d-flex align-items-center justify-content-center" style="background-color: var(--accent-blue-subtle); color: var(--accent-blue); width: 52px; height: 52px;">
+                    <i class="bi bi-database-check fs-3"></i>
+                </div>
+                <div>
+                    <h5 class="fw-bold mb-0" style="color: var(--primary-navy);">PostgreSQL 18</h5>
+                    <div class="text-muted small">Database Infrastructure</div>
+                </div>
+            </div>
+            <p class="small text-secondary mb-4 flex-grow-1">
+                Live database connection with persistent connection pooling, strict ACID transactions, and decimal precision monetary calculations.
+            </p>
+            <a href="{% url 'core:health_check' %}" target="_blank" class="btn btn-outline-primary btn-sm w-100 fw-semibold">
+                <i class="bi bi-activity me-1"></i> Inspect Health Endpoint
+            </a>
+        </div>
+    </div>
+
+    <!-- Backup & Recovery Card -->
+    <div class="col-12 col-md-4">
+        <div class="card card-enterprise h-100 p-4">
+            <div class="d-flex align-items-center gap-3 mb-3">
+                <div class="rounded-3 p-3 d-flex align-items-center justify-content-center" style="background-color: var(--accent-teal-subtle); color: var(--accent-teal); width: 52px; height: 52px;">
+                    <i class="bi bi-shield-shaded fs-3"></i>
+                </div>
+                <div>
+                    <h5 class="fw-bold mb-0" style="color: var(--primary-navy);">Backup Center</h5>
+                    <div class="text-muted small">Automated pg_dump Engine</div>
+                </div>
+            </div>
+            <p class="small text-secondary mb-4 flex-grow-1">
+                Dual database and document backup management center with SHA-256 cryptographic verification and non-destructive sandbox drills.
+            </p>
+            <a href="{% url 'backup:dashboard' %}" class="btn btn-teal btn-sm w-100 fw-semibold">
+                <i class="bi bi-shield-check me-1"></i> Open Backup Center
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}

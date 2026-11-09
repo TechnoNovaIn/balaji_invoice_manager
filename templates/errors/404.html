@@ -1,0 +1,25 @@
+{% extends 'base.html' %}
+
+{% block title %}Page Not Found (404) - Balaji InvoiceHub{% endblock %}
+{% block page_heading %}Resource Not Found{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center py-5">
+    <div class="col-12 col-md-8 col-lg-6 text-center">
+        <div class="card card-enterprise p-5">
+            <div class="mx-auto mb-3 d-flex align-items-center justify-content-center rounded-circle" style="width: 72px; height: 72px; background-color: var(--accent-blue-subtle); color: var(--accent-blue);">
+                <i class="bi bi-question-circle display-5"></i>
+            </div>
+            <h4 class="fw-bold mb-2" style="color: var(--primary-navy);">Page Not Found (404)</h4>
+            <p class="text-secondary small mb-4">
+                The URL or resource you requested does not exist on Balaji InvoiceHub.
+            </p>
+            <div>
+                <a href="{% url 'core:dashboard_router' %}" class="btn btn-primary-dark btn-sm">
+                    <i class="bi bi-house-door me-1"></i> Return to Dashboard
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

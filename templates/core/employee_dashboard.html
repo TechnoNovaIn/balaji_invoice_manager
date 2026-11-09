@@ -1,0 +1,114 @@
+{% extends 'base.html' %}
+
+{% block title %}Employee Portal - Balaji InvoiceHub{% endblock %}
+{% block page_heading %}Invoice Collector Portal{% endblock %}
+
+{% block content %}
+<div class="mx-auto" style="max-width: 800px;">
+    <!-- Welcome Identity Banner -->
+    <div class="card card-enterprise mb-4">
+        <div class="card-body p-4">
+            <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+                <div class="d-flex align-items-center gap-3">
+                    <div class="rounded-circle d-flex align-items-center justify-content-center text-white fw-bold shadow-sm" style="width: 48px; height: 48px; background: linear-gradient(135deg, var(--accent-teal), #0284c7); font-size: 1.25rem;">
+                        {{ user.first_name|default:user.username|slice:":1"|upper }}
+                    </div>
+                    <div>
+                        <h5 class="fw-bold mb-0" style="color: var(--primary-navy);">{{ user.get_full_name|default:user.username }}</h5>
+                        <div class="text-secondary small">
+                            Department: <strong>{{ user.department.name|default:"General Fleet Operations" }}</strong>
+                        </div>
+                    </div>
+                </div>
+                <span class="role-badge role-badge-EMPLOYEE py-1 px-3">
+                    <i class="bi bi-person-badge"></i> Invoice Collector
+                </span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Touch Grid: Simple & Direct -->
+    <div class="row g-3 mb-4">
+        <div class="col-12 col-md-8">
+            <div class="card card-enterprise h-100 p-4 border-2 border-teal shadow-sm d-flex flex-column justify-content-between">
+                <div>
+                    <div class="d-flex align-items-center gap-2 mb-2">
+                        <i class="bi bi-camera-fill fs-3 text-teal"></i>
+                        <h5 class="fw-bold mb-0" style="color: var(--primary-navy);">Send Invoice to Naveen</h5>
+                    </div>
+                    <p class="text-secondary small mb-3">Snap bill photos with phone camera or upload PDF receipts directly up to 100 MB.</p>
+                </div>
+                <div>
+                    <a href="{% url 'invoices:upload' %}" class="btn btn-teal py-2 px-4 fw-bold shadow-sm">
+                        <i class="bi bi-camera-fill me-2"></i>Take Photo / Upload PDF
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-12 col-md-4">
+            <div class="card card-enterprise h-100 text-center p-4 shadow-sm d-flex flex-column justify-content-between">
+                <div class="rounded-circle mx-auto mb-2 d-flex align-items-center justify-content-center" style="width: 52px; height: 52px; background-color: var(--accent-blue-subtle); color: var(--accent-blue);">
+                    <i class="bi bi-folder2-open fs-3"></i>
+                </div>
+                <div>
+                    <div class="metric-value mb-0">{{ total_count|default:0 }}</div>
+                    <div class="text-secondary small fw-semibold">Invoices Sent</div>
+                </div>
+                <div class="mt-2">
+                    <a href="{% url 'invoices:my_submissions' %}" class="btn btn-sm btn-outline-secondary w-100">
+                        View All
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Invoices Sent Log -->
+    <div class="card card-enterprise shadow-sm">
+        <div class="card-enterprise-header">
+            <h6 class="fw-bold mb-0 text-dark"><i class="bi bi-list-check me-2 text-teal"></i>Recent Sent Invoices</h6>
+            <a href="{% url 'invoices:my_submissions' %}" class="small text-teal text-decoration-none fw-semibold">View All &rarr;</a>
+        </div>
+        {% if recent_submissions %}
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light small">
+                    <tr>
+                        <th class="ps-3">Tracking ID</th>
+                        <th>Sent Date & Time</th>
+                        <th>Pages</th>
+                        <th class="text-end pe-3">Action</th>
+                    </tr>
+                </thead>
+                <tbody class="small">
+                    {% for item in recent_submissions %}
+                    <tr>
+                        <td class="ps-3 fw-bold font-monospace text-dark">{{ item.submission_id }}</td>
+                        <td class="text-secondary">{{ item.created_at|date:"d M Y, h:i A" }}</td>
+                        <td><span class="badge bg-light text-dark border">{{ item.total_active_pages }} Page{{ item.total_active_pages|pluralize }}</span></td>
+                        <td class="text-end pe-3">
+                            <a href="{% url 'invoices:submission_detail' item.submission_id %}" class="btn btn-sm btn-outline-secondary py-1 px-2">
+                                <i class="bi bi-eye me-1"></i>View
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="card-body text-center py-5">
+            <div class="mx-auto mb-3 text-muted" style="opacity: 0.35;">
+                <i class="bi bi-inbox display-4"></i>
+            </div>
+            <h6 class="fw-bold mb-1" style="color: var(--primary-navy);">No Invoices Sent Yet</h6>
+            <p class="small text-muted mb-3">Snap bill photos from your phone camera or select a PDF to send directly to Naveen.</p>
+            <a href="{% url 'invoices:upload' %}" class="btn btn-sm btn-teal">
+                <i class="bi bi-camera-fill me-1"></i> Take Photo Now
+            </a>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

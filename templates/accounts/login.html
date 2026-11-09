@@ -1,0 +1,146 @@
+{% extends 'base.html' %}
+
+{% block title %}Sign In - Balaji InvoiceHub{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center align-items-center">
+    <div class="col-12 col-sm-10 col-md-7 col-lg-5 col-xl-4">
+        <div class="card card-enterprise shadow-sm border-0">
+            <!-- Header with deep navy accent -->
+            <div class="p-4 text-center border-bottom bg-white" style="border-top-left-radius: 12px; border-top-right-radius: 12px;">
+                <div class="mx-auto mb-3 d-flex align-items-center justify-content-center text-white rounded-3 shadow-sm" style="width: 54px; height: 54px; background: linear-gradient(135deg, var(--primary-navy), var(--secondary-navy));">
+                    <i class="bi bi-truck-flatbed fs-2 text-info"></i>
+                </div>
+                <h4 class="fw-bold mb-1" style="color: var(--primary-navy); letter-spacing: -0.02em;">Balaji <span style="color: var(--accent-teal);">InvoiceHub</span></h4>
+                <p class="text-secondary small mb-0">Internal Invoice & Transport Receipts Portal</p>
+            </div>
+
+            <!-- Body -->
+            <div class="card-body p-4">
+                <!-- 1-Tap Quick Fill for Mobile & Desktop -->
+                <div class="mb-3 p-2 bg-light rounded border text-center">
+                    <div class="text-muted small fw-bold mb-1" style="font-size: 0.75rem;">
+                        <i class="bi bi-lightning-charge-fill text-warning me-1"></i>Quick 1-Tap Login:
+                    </div>
+                    <div class="d-flex justify-content-center gap-1 flex-wrap">
+                        <button type="button" class="btn btn-xs btn-outline-primary py-1 px-2 fw-semibold" style="font-size: 0.75rem;" onclick="fillLogin('employee', 'BalajiEmp@2026')">
+                            🚚 Employee
+                        </button>
+                        <button type="button" class="btn btn-xs btn-outline-success py-1 px-2 fw-semibold" style="font-size: 0.75rem;" onclick="fillLogin('naveen', 'BalajiNaveen@2026')">
+                            💼 Naveen
+                        </button>
+                        <button type="button" class="btn btn-xs btn-outline-dark py-1 px-2 fw-semibold" style="font-size: 0.75rem;" onclick="fillLogin('admin', 'BalajiAdmin@2026')">
+                            ⚙️ Admin
+                        </button>
+                    </div>
+                </div>
+
+                <form method="post" action="{% url 'accounts:login' %}" autocomplete="on" id="loginForm">
+                    {% csrf_token %}
+                    
+                    {% if form.non_field_errors %}
+                    <div class="alert alert-danger py-2 small border-0 shadow-sm" role="alert">
+                        {% for error in form.non_field_errors %}
+                        <div><i class="bi bi-exclamation-triangle-fill me-1"></i>{{ error }}</div>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+
+                    <!-- Username with Autofill Support -->
+                    <div class="mb-3">
+                        <label for="{{ form.username.id_for_label }}" class="form-label fw-semibold small text-secondary">
+                            Username or Phone
+                        </label>
+                        {{ form.username }}
+                        {% if form.username.errors %}
+                        <div class="text-danger small mt-1">{{ form.username.errors.0 }}</div>
+                        {% endif %}
+                    </div>
+
+                    <!-- Password with Show/Hide Eye Toggle -->
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <label for="{{ form.password.id_for_label }}" class="form-label fw-semibold small text-secondary mb-0">
+                                Password
+                            </label>
+                        </div>
+                        <div class="input-group">
+                            {{ form.password }}
+                            <button class="btn btn-outline-secondary border-start-0" type="button" id="togglePasswordBtn" title="Show / Hide Password" style="border-color: #cbd5e1;">
+                                <i class="bi bi-eye" id="togglePasswordIcon"></i>
+                            </button>
+                        </div>
+                        {% if form.password.errors %}
+                        <div class="text-danger small mt-1">{{ form.password.errors.0 }}</div>
+                        {% endif %}
+                    </div>
+
+                    <!-- Remember Me / Keep Me Signed In on Phone -->
+                    <div class="form-check mb-4">
+                        {{ form.remember_me }}
+                        <label class="form-check-label fw-semibold text-dark small ms-1" for="rememberMeCheck" style="cursor: pointer;">
+                            Keep me signed in on this phone
+                        </label>
+                        <div class="text-muted" style="font-size: 0.72rem; margin-left: 2px;">
+                            You will stay logged in so you don't need to type your password every day.
+                        </div>
+                    </div>
+
+                    <!-- Submit Button -->
+                    <div class="d-grid mb-3">
+                        <button type="submit" class="btn btn-primary-dark btn-lg py-2 fs-6 shadow-sm fw-bold">
+                            <i class="bi bi-box-arrow-in-right me-2"></i>Sign In to Portal
+                        </button>
+                    </div>
+
+                    <!-- Phone Autofill Tip -->
+                    <div class="p-2 bg-light rounded border text-muted small text-center" style="font-size: 0.76rem;">
+                        <i class="bi bi-phone text-teal me-1"></i>
+                        When prompted, tap <strong>"Save Password"</strong> on your phone for instant 1-tap logins.
+                    </div>
+                </form>
+            </div>
+
+            <!-- Footer Note -->
+            <div class="card-footer bg-light text-center py-3 border-top rounded-bottom">
+                <div class="text-muted small d-flex align-items-center justify-content-center gap-1">
+                    <i class="bi bi-shield-lock-fill text-teal"></i>
+                    <span>Authorized Personnel &bull; Balaji Transports</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function fillLogin(username, password) {
+    const userField = document.getElementById('{{ form.username.id_for_label }}') || document.querySelector('input[name="username"]');
+    const passField = document.getElementById('{{ form.password.id_for_label }}') || document.querySelector('input[name="password"]');
+    if (userField && passField) {
+        userField.value = username;
+        passField.value = password;
+        // Visual confirmation
+        userField.classList.add('is-valid');
+        passField.classList.add('is-valid');
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+    const toggleBtn = document.getElementById('togglePasswordBtn');
+    const passwordInput = document.getElementById('{{ form.password.id_for_label }}') || document.querySelector('input[type="password"]');
+    const icon = document.getElementById('togglePasswordIcon');
+
+    if (toggleBtn && passwordInput && icon) {
+        toggleBtn.addEventListener('click', function () {
+            if (passwordInput.type === 'password') {
+                passwordInput.type = 'text';
+                icon.className = 'bi bi-eye-slash';
+            } else {
+                passwordInput.type = 'password';
+                icon.className = 'bi bi-eye';
+            }
+        });
+    }
+});
+</script>
+{% endblock %}

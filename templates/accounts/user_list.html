@@ -1,0 +1,109 @@
+{% extends 'base.html' %}
+
+{% block title %}User Management - Balaji InvoiceHub{% endblock %}
+{% block page_heading %}User & Access Administration{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+    <div>
+        <h4 class="fw-bold mb-1" style="color: var(--primary-navy); letter-spacing: -0.02em;">
+            <i class="bi bi-people-fill me-2 text-rose"></i>User & Role Administration
+        </h4>
+        <p class="text-secondary small mb-0">Manage employee accounts, assign transport departments, enforce role boundaries, and control active status.</p>
+    </div>
+    <a href="{% url 'accounts:user_create' %}" class="btn btn-teal btn-sm shadow-sm">
+        <i class="bi bi-person-plus-fill me-1"></i> Add New Employee / User
+    </a>
+</div>
+
+<div class="card card-enterprise">
+    <div class="card-enterprise-header">
+        <div class="d-flex align-items-center gap-2">
+            <h6 class="fw-bold mb-0 text-dark"><i class="bi bi-person-lines-fill me-2 text-teal"></i>Registered Accounts</h6>
+            <span class="badge bg-light text-secondary border small">{{ users_list|length }} Total</span>
+        </div>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-enterprise align-middle">
+                <thead>
+                    <tr>
+                        <th class="ps-4">User</th>
+                        <th>Assigned Role</th>
+                        <th>Department</th>
+                        <th>Contact Number / Email</th>
+                        <th>Account Status</th>
+                        <th>Date Joined</th>
+                        <th class="text-end pe-4">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for u in users_list %}
+                    <tr>
+                        <td class="ps-4">
+                            <div class="d-flex align-items-center gap-2">
+                                <div class="rounded-circle d-flex align-items-center justify-content-center fw-bold text-white small" style="width: 32px; height: 32px; background-color: var(--primary-navy);">
+                                    {{ u.first_name|default:u.username|slice:":1"|upper }}
+                                </div>
+                                <div>
+                                    <div class="fw-bold text-dark">{{ u.get_full_name|default:u.username }}</div>
+                                    <small class="text-muted">@{{ u.username }}</small>
+                                </div>
+                            </div>
+                        </td>
+                        <td>
+                            <span class="role-badge role-badge-{{ u.role }}">{{ u.get_role_display }}</span>
+                        </td>
+                        <td>
+                            <span class="badge bg-light text-secondary border small">{{ u.department.name|default:"General" }}</span>
+                        </td>
+                        <td>
+                            <small class="text-secondary">{{ u.phone_number|default:u.email|default:"Not Provided" }}</small>
+                        </td>
+                        <td>
+                            {% if u.is_active %}
+                            <span class="badge bg-success-subtle text-success border border-success-subtle">
+                                <i class="bi bi-check-circle me-1"></i>Active
+                            </span>
+                            {% else %}
+                            <span class="badge bg-danger-subtle text-danger border border-danger-subtle">
+                                <i class="bi bi-x-circle me-1"></i>Deactivated
+                            </span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <small class="text-secondary">{{ u.date_joined|date:"d M Y" }}</small>
+                        </td>
+                        <td class="text-end pe-4">
+                            {% if u != request.user %}
+                            <form method="post" action="{% url 'accounts:user_toggle_active' u.id %}" class="d-inline">
+                                {% csrf_token %}
+                                {% if u.is_active %}
+                                <button type="submit" class="btn btn-sm btn-outline-danger" title="Deactivate Employee Account">
+                                    <i class="bi bi-slash-circle me-1"></i>Deactivate
+                                </button>
+                                {% else %}
+                                <button type="submit" class="btn btn-sm btn-outline-success" title="Activate Account">
+                                    <i class="bi bi-check-circle me-1"></i>Activate
+                                </button>
+                                {% endif %}
+                            </form>
+                            {% else %}
+                            <span class="badge bg-light text-muted border">Active Session</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="7" class="text-center py-5 text-muted">
+                            <i class="bi bi-people display-4 text-secondary opacity-50 mb-2 d-block"></i>
+                            No users registered yet.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

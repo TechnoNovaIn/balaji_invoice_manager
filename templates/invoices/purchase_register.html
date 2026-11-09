@@ -1,0 +1,374 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Centralized Purchase Register{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-3 px-lg-4 py-3">
+
+    <!-- Page Header & Action Bar -->
+    <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3">
+        <div>
+            <div class="d-flex align-items-center gap-2">
+                <h4 class="fw-bold text-dark mb-0">
+                    <i class="bi bi-journal-bookmark-fill text-primary me-2"></i>Centralized Purchase Register
+                </h4>
+                <span class="badge bg-primary-subtle text-primary border fw-semibold">Phase 5</span>
+            </div>
+            <p class="text-muted small mb-0 mt-1">
+                Official transport purchase ledger, statutory GST components, verification tracking, and Tally export readiness.
+            </p>
+        </div>
+
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+            <!-- Export Filtered Register to Excel -->
+            <a href="?{{ request.GET.urlencode }}&export=excel" class="btn btn-sm btn-outline-success fw-bold shadow-sm" title="Export currently filtered view to Excel">
+                <i class="bi bi-file-earmark-excel-fill me-1"></i>Export Register (.xlsx)
+            </a>
+
+            <!-- Tally Structured Accounting Export -->
+            <a href="{% url 'invoices:export_tally_excel' %}?filter=verified_only" class="btn btn-sm btn-primary fw-bold shadow-sm">
+                <i class="bi bi-box-arrow-down me-1"></i>Tally Excel Export
+            </a>
+
+            <!-- GSTR-2A Reconciliation Desk -->
+            <a href="{% url 'invoices:gst_reconciliation' %}" class="btn btn-sm btn-outline-primary fw-semibold">
+                <i class="bi bi-shield-check me-1"></i>GSTR-2A Recon
+            </a>
+
+            <!-- Ledger Mapping -->
+            {% if user.is_naveen or user.is_admin_role %}
+            <a href="{% url 'invoices:ledger_mappings' %}" class="btn btn-sm btn-outline-secondary" title="Configure Tally Ledgers">
+                <i class="bi bi-gear-fill"></i>
+            </a>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Live Aggregation Summary Cards -->
+    <div class="row g-2 mb-3">
+        <div class="col-6 col-md-3 col-xl-2">
+            <div class="card card-enterprise shadow-sm p-2 text-center h-100 border-start border-4 border-primary">
+                <div class="text-muted small text-uppercase fw-semibold" style="font-size: 0.72rem;">Filtered Purchases</div>
+                <div class="fs-5 fw-bold text-primary mt-1">{{ total_count }}</div>
+                <div class="small text-muted" style="font-size: 0.7rem;">Invoices matching filter</div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3 col-xl-2">
+            <div class="card card-enterprise shadow-sm p-2 text-center h-100 border-start border-4 border-success">
+                <div class="text-muted small text-uppercase fw-semibold" style="font-size: 0.72rem;">Total Purchase Value</div>
+                <div class="fs-5 fw-bold text-success mt-1">&#8377;{{ aggregates.total_val|default:"0.00"|floatformat:2 }}</div>
+                <div class="small text-muted" style="font-size: 0.7rem;">Gross invoice amount</div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3 col-xl-2">
+            <div class="card card-enterprise shadow-sm p-2 text-center h-100 border-start border-4 border-info">
+                <div class="text-muted small text-uppercase fw-semibold" style="font-size: 0.72rem;">Taxable Purchases</div>
+                <div class="fs-5 fw-bold text-dark mt-1">&#8377;{{ aggregates.total_taxable|default:"0.00"|floatformat:2 }}</div>
+                <div class="small text-muted" style="font-size: 0.7rem;">Net taxable base</div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3 col-xl-2">
+            <div class="card card-enterprise shadow-sm p-2 text-center h-100 border-start border-4 border-warning">
+                <div class="text-muted small text-uppercase fw-semibold" style="font-size: 0.72rem;">Total Input GST</div>
+                <div class="fs-5 fw-bold text-dark mt-1">
+                    &#8377;{{ aggregates.total_cgst|default:0|add:aggregates.total_sgst|default:0|add:aggregates.total_igst|default:0|floatformat:2 }}
+                </div>
+                <div class="small text-muted" style="font-size: 0.7rem;">CGST + SGST + IGST</div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3 col-xl-2">
+            <div class="card card-enterprise shadow-sm p-2 text-center h-100 border-start border-4 border-secondary">
+                <div class="text-muted small text-uppercase fw-semibold" style="font-size: 0.72rem;">CGST / SGST</div>
+                <div class="fw-bold text-dark small mt-1">
+                    C: &#8377;{{ aggregates.total_cgst|default:"0.00"|floatformat:2 }}<br>
+                    S: &#8377;{{ aggregates.total_sgst|default:"0.00"|floatformat:2 }}
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3 col-xl-2">
+            <div class="card card-enterprise shadow-sm p-2 text-center h-100 border-start border-4 border-dark">
+                <div class="text-muted small text-uppercase fw-semibold" style="font-size: 0.72rem;">Interstate IGST</div>
+                <div class="fs-5 fw-bold text-dark mt-1">&#8377;{{ aggregates.total_igst|default:"0.00"|floatformat:2 }}</div>
+                <div class="small text-muted" style="font-size: 0.7rem;">Out of state input credit</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filter & Search Toolbar Card -->
+    <div class="card card-enterprise shadow-sm mb-3">
+        <div class="card-body p-3">
+            <form method="GET" action="{% url 'invoices:purchase_register' %}" class="row g-2 align-items-end">
+                <!-- Search Term -->
+                <div class="col-12 col-md-4 col-lg-3">
+                    <label class="form-label small fw-semibold text-secondary mb-1">Search Keywords</label>
+                    <div class="input-group input-group-sm">
+                        <span class="input-group-text bg-light"><i class="bi bi-search"></i></span>
+                        <input type="text" name="q" value="{{ params.q }}" class="form-control" placeholder="Supplier, GSTIN, Bill #, BTI-...">
+                    </div>
+                </div>
+
+                <!-- Verification Status -->
+                <div class="col-6 col-md-2 col-lg-2">
+                    <label class="form-label small fw-semibold text-secondary mb-1">Verification Status</label>
+                    <select name="status" class="form-select form-select-sm">
+                        <option value="ALL" {% if not params.status or params.status == 'ALL' %}selected{% endif %}>All Statuses</option>
+                        <option value="SUBMITTED" {% if params.status == 'SUBMITTED' %}selected{% endif %}>Submitted (New)</option>
+                        <option value="RESUBMITTED" {% if params.status == 'RESUBMITTED' %}selected{% endif %}>Resubmitted</option>
+                        <option value="RETURNED" {% if params.status == 'RETURNED' %}selected{% endif %}>Needs Correction</option>
+                        <option value="VERIFIED" {% if params.status == 'VERIFIED' %}selected{% endif %}>Verified ✓</option>
+                    </select>
+                </div>
+
+                <!-- Tally Entry Status -->
+                <div class="col-6 col-md-2 col-lg-2">
+                    <label class="form-label small fw-semibold text-secondary mb-1">Tally Entry</label>
+                    <select name="tally_status" class="form-select form-select-sm">
+                        <option value="" {% if not params.tally_status %}selected{% endif %}>All Vouchers</option>
+                        <option value="PENDING" {% if params.tally_status == 'PENDING' %}selected{% endif %}>Pending Entry (0)</option>
+                        <option value="ENTERED" {% if params.tally_status == 'ENTERED' %}selected{% endif %}>Entered in Tally ✓</option>
+                    </select>
+                </div>
+
+                <!-- From Date -->
+                <div class="col-6 col-md-2 col-lg-2">
+                    <label class="form-label small fw-semibold text-secondary mb-1">From Date</label>
+                    <input type="date" name="from_date" value="{{ params.from_date }}" class="form-control form-control-sm">
+                </div>
+
+                <!-- To Date -->
+                <div class="col-6 col-md-2 col-lg-2">
+                    <label class="form-label small fw-semibold text-secondary mb-1">To Date</label>
+                    <input type="date" name="to_date" value="{{ params.to_date }}" class="form-control form-control-sm">
+                </div>
+
+                <!-- Action Filter Buttons -->
+                <div class="col-12 col-md-auto col-lg-1 d-flex gap-1">
+                    <button type="submit" class="btn btn-sm btn-primary fw-semibold w-100">
+                        <i class="bi bi-funnel-fill me-1"></i>Filter
+                    </button>
+                    {% if params.q or params.status or params.tally_status or params.from_date or params.to_date %}
+                    <a href="{% url 'invoices:purchase_register' %}" class="btn btn-sm btn-outline-secondary" title="Clear Filters">
+                        <i class="bi bi-x-circle"></i>
+                    </a>
+                    {% endif %}
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Main Purchase Register Table Card -->
+    <div class="card card-enterprise shadow-sm">
+        <div class="card-enterprise-header d-flex align-items-center justify-content-between py-2 px-3 bg-white border-bottom flex-wrap gap-2">
+            <div class="d-flex align-items-center gap-2">
+                <span class="fw-bold text-dark fs-6">Purchase Invoices</span>
+                <span class="badge bg-secondary-subtle text-secondary small">{{ total_count }} total entries</span>
+            </div>
+            <div class="d-flex align-items-center gap-2 small text-muted">
+                <i class="bi bi-info-circle me-1"></i>Click any Tracking ID to open the Two-Panel Verification Desk.
+            </div>
+        </div>
+
+        {% if page_obj %}
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0" style="font-size: 0.88rem;">
+                <thead class="table-light text-secondary" style="font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.5px;">
+                    <tr>
+                        <th style="width: 40px;" class="text-center">#</th>
+                        <th style="min-width: 140px;">Tracking ID</th>
+                        <th style="min-width: 220px;">Supplier (Party) & GSTIN</th>
+                        <th style="min-width: 130px;">Bill No & Date</th>
+                        <th style="min-width: 140px;">Tally Ledger</th>
+                        <th style="min-width: 100px;" class="text-end">Taxable (&#8377;)</th>
+                        <th style="min-width: 90px;" class="text-end">CGST (&#8377;)</th>
+                        <th style="min-width: 90px;" class="text-end">SGST (&#8377;)</th>
+                        <th style="min-width: 90px;" class="text-end">IGST (&#8377;)</th>
+                        <th style="min-width: 110px;" class="text-end fw-bold">Total (&#8377;)</th>
+                        <th style="min-width: 110px;" class="text-center">Status</th>
+                        <th style="min-width: 110px;" class="text-center">Tally Entry</th>
+                        <th style="min-width: 90px;" class="text-center">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for sub in page_obj %}
+                    <tr class="{% if sub.is_duplicate_suspected %}table-warning bg-opacity-10{% endif %}">
+                        <td class="text-center text-muted small">{{ forloop.counter0|add:page_obj.start_index }}</td>
+                        
+                        <!-- Tracking ID -->
+                        <td>
+                            <a href="{% url 'invoices:verification_workspace' sub.submission_id %}" class="font-monospace fw-bold text-primary text-decoration-none" title="Open verification desk">
+                                {{ sub.submission_id }}
+                            </a>
+                            <div class="text-muted" style="font-size: 0.7rem;">
+                                Captured by {{ sub.employee.get_full_name|default:sub.employee.username }}
+                            </div>
+                            {% if sub.source_document and sub.source_document.total_pages > 1 %}
+                            <div class="mt-1">
+                                <span class="badge bg-info bg-opacity-15 text-info border border-info border-opacity-25" style="font-size: 0.65rem;" title="Extracted from {{ sub.source_document.file_name }}">
+                                    <i class="bi bi-file-earmark-pdf me-1"></i>Pg {{ sub.start_page }}{% if sub.start_page != sub.end_page %}–{{ sub.end_page }}{% endif %} of {{ sub.source_document.total_pages }}
+                                </span>
+                            </div>
+                            {% endif %}
+                            {% if sub.is_duplicate_suspected %}
+                            <span class="badge bg-warning bg-opacity-25 text-dark border border-warning fw-normal mt-1" style="font-size: 0.68rem;" title="Informational warning only: employee permitted duplicate upload">
+                                <i class="bi bi-copy me-1"></i>Duplicate Upload
+                            </span>
+                            {% endif %}
+                        </td>
+
+                        <!-- Supplier Name & GSTIN -->
+                        <td>
+                            <div class="fw-bold text-dark text-truncate" style="max-width: 210px;" title="{{ sub.party_name }}">
+                                {% if sub.party_name %}{{ sub.party_name }}{% else %}<span class="text-muted fst-italic">Pending Name Check</span>{% endif %}
+                            </div>
+                            <div class="mt-1 d-flex align-items-center gap-1">
+                                {% if sub.party_gstin %}
+                                <span class="badge bg-light text-secondary border font-monospace" style="font-size: 0.72rem;">{{ sub.party_gstin }}</span>
+                                {% else %}
+                                <span class="badge bg-danger-subtle text-danger border border-danger small" style="font-size: 0.68rem;" title="GSTIN missing on invoice receipt">
+                                    <i class="bi bi-exclamation-circle me-1"></i>No GSTIN
+                                </span>
+                                {% endif %}
+                            </div>
+                        </td>
+
+                        <!-- Bill No & Date -->
+                        <td>
+                            <span class="font-monospace fw-semibold text-dark">{{ sub.invoice_number|default:"-" }}</span>
+                            <div class="text-muted small" style="font-size: 0.72rem;">
+                                {{ sub.invoice_date|date:"d-M-Y"|default:sub.created_at|date:"d-M-Y" }}
+                            </div>
+                        </td>
+
+                        <!-- Expense Ledger -->
+                        <td>
+                            <span class="badge bg-primary bg-opacity-10 text-primary border border-primary border-opacity-25 fw-semibold" style="font-size: 0.75rem;">
+                                {{ sub.expense_ledger|default:"Diesel Expenses" }}
+                            </span>
+                        </td>
+
+                        <!-- Taxable Amount -->
+                        <td class="text-end font-monospace">{{ sub.taxable_amount|floatformat:2 }}</td>
+
+                        <!-- CGST -->
+                        <td class="text-end font-monospace text-muted">{{ sub.cgst_amount|floatformat:2 }}</td>
+
+                        <!-- SGST -->
+                        <td class="text-end font-monospace text-muted">{{ sub.sgst_amount|floatformat:2 }}</td>
+
+                        <!-- IGST -->
+                        <td class="text-end font-monospace text-muted">{{ sub.igst_amount|floatformat:2 }}</td>
+
+                        <!-- Total Invoice Amount -->
+                        <td class="text-end font-monospace fw-bold text-success fs-6">
+                            &#8377;{{ sub.total_amount|floatformat:2 }}
+                        </td>
+
+                        <!-- Verification Status -->
+                        <td class="text-center">
+                            {% if sub.status == 'VERIFIED' %}
+                            <span class="badge bg-success-subtle text-success border border-success small">
+                                <i class="bi bi-check-circle-fill me-1"></i>Verified
+                            </span>
+                            {% elif sub.status == 'RETURNED' %}
+                            <span class="badge bg-danger-subtle text-danger border border-danger small">
+                                <i class="bi bi-arrow-return-left me-1"></i>Correction
+                            </span>
+                            {% elif sub.status == 'RESUBMITTED' %}
+                            <span class="badge bg-info-subtle text-info border border-info small">
+                                <i class="bi bi-arrow-repeat me-1"></i>Resubmitted
+                            </span>
+                            {% else %}
+                            <span class="badge bg-warning-subtle text-warning border border-warning small">
+                                <i class="bi bi-hourglass-split me-1"></i>Pending Check
+                            </span>
+                            {% endif %}
+                        </td>
+
+                        <!-- Tally Status -->
+                        <td class="text-center">
+                            {% if sub.is_entered_in_tally %}
+                            <span class="badge bg-success text-white small px-2 py-1" title="Voucher recorded in Tally">
+                                <i class="bi bi-check-all me-1"></i>Done in Tally
+                            </span>
+                            {% else %}
+                            <form method="POST" action="{% url 'invoices:toggle_tally' sub.submission_id %}" class="d-inline">
+                                {% csrf_token %}
+                                <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                                <button type="submit" class="btn btn-xs btn-outline-warning text-dark py-0 px-2 fw-semibold" style="font-size: 0.72rem;" title="Click to mark voucher as entered in Tally">
+                                    <i class="bi bi-check2 me-1"></i>Mark Done
+                                </button>
+                            </form>
+                            {% endif %}
+                        </td>
+
+                        <!-- Action Buttons -->
+                        <td class="text-center">
+                            <div class="btn-group btn-group-sm">
+                                <a href="{% url 'invoices:verification_workspace' sub.submission_id %}" class="btn btn-xs btn-outline-primary" title="Open Verification Desk">
+                                    <i class="bi bi-pencil-square"></i>
+                                </a>
+                                <a href="{% url 'invoices:submission_detail' sub.submission_id %}" class="btn btn-xs btn-outline-secondary" title="View Full Bill Document">
+                                    <i class="bi bi-eye"></i>
+                                </a>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination Controls -->
+        {% if page_obj.has_other_pages %}
+        <div class="card-footer bg-white d-flex align-items-center justify-content-between py-2 px-3 border-top flex-wrap gap-2">
+            <div class="small text-muted">
+                Showing entries {{ page_obj.start_index }} to {{ page_obj.end_index }} of {{ total_count }}
+            </div>
+            <nav>
+                <ul class="pagination pagination-sm mb-0">
+                    {% if page_obj.has_previous %}
+                    <li class="page-item">
+                        <a class="page-link" href="?{{ request.GET.urlencode }}&page={{ page_obj.previous_page_number }}">Previous</a>
+                    </li>
+                    {% else %}
+                    <li class="page-item disabled"><span class="page-link">Previous</span></li>
+                    {% endif %}
+
+                    {% for p in page_obj.paginator.page_range %}
+                        {% if p == page_obj.number %}
+                        <li class="page-item active"><span class="page-link">{{ p }}</span></li>
+                        {% elif p > page_obj.number|add:"-3" and p < page_obj.number|add:"3" %}
+                        <li class="page-item">
+                            <a class="page-link" href="?{{ request.GET.urlencode }}&page={{ p }}">{{ p }}</a>
+                        </li>
+                        {% endif %}
+                    {% endfor %}
+
+                    {% if page_obj.has_next %}
+                    <li class="page-item">
+                        <a class="page-link" href="?{{ request.GET.urlencode }}&page={{ page_obj.next_page_number }}">Next</a>
+                    </li>
+                    {% else %}
+                    <li class="page-item disabled"><span class="page-link">Next</span></li>
+                    {% endif %}
+                </ul>
+            </nav>
+        </div>
+        {% endif %}
+
+        {% else %}
+        <div class="card-body text-center py-5">
+            <i class="bi bi-journal-x text-muted" style="font-size: 3rem;"></i>
+            <h5 class="fw-bold text-dark mt-3">No Purchase Invoices Found</h5>
+            <p class="text-muted small">No invoice records match the specified search or filter criteria.</p>
+            <a href="{% url 'invoices:purchase_register' %}" class="btn btn-sm btn-outline-primary fw-semibold">
+                Clear Filters
+            </a>
+        </div>
+        {% endif %}
+    </div>
+
+</div>
+{% endblock %}
+

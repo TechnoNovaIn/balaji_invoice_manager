@@ -1,0 +1,300 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}GSTR-2A / 2B Tax Reconciliation Desk{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-3 px-lg-4 py-3">
+
+    <!-- Header & Action Bar -->
+    <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3">
+        <div>
+            <div class="d-flex align-items-center gap-2">
+                <h4 class="fw-bold text-dark mb-0">
+                    <i class="bi bi-shield-check text-primary me-2"></i>GSTR-2A / 2B Tax Reconciliation Desk
+                </h4>
+                <span class="badge bg-primary-subtle text-primary border fw-semibold">Phase 5.7</span>
+            </div>
+            <p class="text-muted small mb-0 mt-1">
+                Automated statutory cross-check of internal purchase receipts against the 104 verified GSTR-2A Balaji suppliers.
+            </p>
+        </div>
+
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+            <a href="{% url 'invoices:export_gst_portal_excel' %}" class="btn btn-sm btn-outline-success fw-bold shadow-sm">
+                <i class="bi bi-file-earmark-excel-fill me-1"></i>GST Portal B2B Excel
+            </a>
+            <a href="{% url 'invoices:export_gst_csv' %}" class="btn btn-sm btn-outline-primary fw-semibold">
+                <i class="bi bi-filetype-csv me-1"></i>ITC CSV Export
+            </a>
+            <a href="{% url 'invoices:purchase_register' %}" class="btn btn-sm btn-secondary">
+                <i class="bi bi-journal-bookmark me-1"></i>Purchase Register
+            </a>
+        </div>
+    </div>
+
+    <!-- Reconciliation Metric Summary Cards -->
+    <div class="row g-2 mb-3">
+        <div class="col-6 col-md-3">
+            <div class="card card-enterprise shadow-sm p-3 text-center border-start border-4 border-primary h-100">
+                <div class="text-muted small text-uppercase fw-semibold" style="font-size: 0.72rem;">Total Recorded Purchases</div>
+                <div class="fs-4 fw-bold text-dark mt-1">{{ results.total_invoices }}</div>
+                <div class="small text-muted" style="font-size: 0.7rem;">In internal system</div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card card-enterprise shadow-sm p-3 text-center border-start border-4 border-success h-100">
+                <div class="text-muted small text-uppercase fw-semibold" style="font-size: 0.72rem;">Verified GSTR-2A Matches</div>
+                <div class="fs-4 fw-bold text-success mt-1">{{ results.matched_count }}</div>
+                <div class="small text-success fw-semibold" style="font-size: 0.7rem;">Matches 104 verified suppliers</div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card card-enterprise shadow-sm p-3 text-center border-start border-4 border-warning h-100">
+                <div class="text-muted small text-uppercase fw-semibold" style="font-size: 0.72rem;">Missing in GSTR-2A</div>
+                <div class="fs-4 fw-bold text-warning mt-1">{{ results.missing_in_2a_count }}</div>
+                <div class="small text-muted" style="font-size: 0.7rem;">Supplier not in directory</div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card card-enterprise shadow-sm p-3 text-center border-start border-4 border-danger h-100">
+                <div class="text-muted small text-uppercase fw-semibold" style="font-size: 0.72rem;">Tax / GSTIN Discrepancies</div>
+                <div class="fs-4 fw-bold text-danger mt-1">
+                    {{ results.tax_discrepancies_count|add:results.missing_gstin_count }}
+                </div>
+                <div class="small text-danger fw-semibold" style="font-size: 0.7rem;">Requires manual inspection</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Informational Advisory Banner -->
+    <div class="alert alert-info py-2 px-3 small d-flex align-items-center gap-2 mb-3 shadow-sm border-info">
+        <i class="bi bi-info-circle-fill fs-5 text-info"></i>
+        <div>
+            <strong>Advisory Reconciliation:</strong> This tool assists Naveen in identifying missing invoices and tax rate mismatches. No automatic ITC claim or automated GST filing is performed without manual review.
+        </div>
+    </div>
+
+    <!-- Reconciliation Detail Tabs -->
+    <div class="card card-enterprise shadow-sm">
+        <div class="card-header bg-white border-bottom p-0">
+            <ul class="nav nav-tabs card-header-tabs mx-3 mt-2 border-0" id="reconTabs" role="tablist">
+                <li class="nav-item">
+                    <button class="nav-link active fw-semibold small" id="matched-tab" data-bs-toggle="tab" data-bs-target="#matched" type="button" role="tab">
+                        <i class="bi bi-check-circle-fill text-success me-1"></i>Verified GSTR-2A Matches ({{ results.matched_count }})
+                    </button>
+                </li>
+                <li class="nav-item">
+                    <button class="nav-link fw-semibold small" id="missing2a-tab" data-bs-toggle="tab" data-bs-target="#missing2a" type="button" role="tab">
+                        <i class="bi bi-question-circle-fill text-warning me-1"></i>Unregistered / Not in 2A ({{ results.missing_in_2a_count }})
+                    </button>
+                </li>
+                <li class="nav-item">
+                    <button class="nav-link fw-semibold small" id="missingGstin-tab" data-bs-toggle="tab" data-bs-target="#missingGstin" type="button" role="tab">
+                        <i class="bi bi-exclamation-triangle-fill text-danger me-1"></i>Missing GSTIN ({{ results.missing_gstin_count }})
+                    </button>
+                </li>
+                <li class="nav-item">
+                    <button class="nav-link fw-semibold small" id="discrepancy-tab" data-bs-toggle="tab" data-bs-target="#discrepancy" type="button" role="tab">
+                        <i class="bi bi-cash-coin text-danger me-1"></i>Tax Discrepancies ({{ results.tax_discrepancies_count }})
+                    </button>
+                </li>
+            </ul>
+        </div>
+
+        <div class="tab-content p-3" id="reconTabsContent">
+            
+            <!-- Tab 1: Matched Invoices -->
+            <div class="tab-pane fade show active" id="matched" role="tabpanel">
+                {% if results.matched %}
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0" style="font-size: 0.88rem;">
+                        <thead class="table-light text-secondary small">
+                            <tr>
+                                <th>Tracking ID</th>
+                                <th>Verified GSTR-2A Supplier</th>
+                                <th>GSTIN</th>
+                                <th>Bill No & Date</th>
+                                <th>Tally Ledger</th>
+                                <th class="text-end">Taxable (&#8377;)</th>
+                                <th class="text-end">Total Amount (&#8377;)</th>
+                                <th class="text-center">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for m in results.matched %}
+                            <tr>
+                                <td>
+                                    <a href="{% url 'invoices:verification_workspace' m.invoice.submission_id %}" class="font-monospace fw-bold text-decoration-none">
+                                        {{ m.invoice.submission_id }}
+                                    </a>
+                                </td>
+                                <td>
+                                    <div class="fw-bold text-dark">{{ m.gstr2a_vendor }}</div>
+                                    <div class="text-muted small" style="font-size: 0.72rem;">State: {{ m.gstr2a_state }}</div>
+                                </td>
+                                <td><span class="badge bg-light text-secondary border font-monospace">{{ m.invoice.party_gstin }}</span></td>
+                                <td>
+                                    <div class="font-monospace fw-semibold">{{ m.invoice.invoice_number|default:"-" }}</div>
+                                    <div class="text-muted small" style="font-size: 0.7rem;">{{ m.invoice.invoice_date|date:"d-M-Y"|default:m.invoice.created_at|date:"d-M-Y" }}</div>
+                                </td>
+                                <td><span class="badge bg-primary bg-opacity-10 text-primary border border-primary border-opacity-25 small">{{ m.ledger }}</span></td>
+                                <td class="text-end font-monospace">{{ m.invoice.taxable_amount|floatformat:2 }}</td>
+                                <td class="text-end font-monospace fw-bold text-success">&#8377;{{ m.invoice.total_amount|floatformat:2 }}</td>
+                                <td class="text-center">
+                                    <a href="{% url 'invoices:verification_workspace' m.invoice.submission_id %}" class="btn btn-xs btn-outline-primary">
+                                        Verify
+                                    </a>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="text-muted py-3 text-center mb-0">No matched invoices found.</p>
+                {% endif %}
+            </div>
+
+            <!-- Tab 2: Missing in GSTR-2A -->
+            <div class="tab-pane fade" id="missing2a" role="tabpanel">
+                {% if results.missing_in_2a %}
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0" style="font-size: 0.88rem;">
+                        <thead class="table-light text-secondary small">
+                            <tr>
+                                <th>Tracking ID</th>
+                                <th>Party Name</th>
+                                <th>GSTIN</th>
+                                <th>Bill No & Date</th>
+                                <th class="text-end">Total Amount (&#8377;)</th>
+                                <th>Issue / Status</th>
+                                <th class="text-center">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in results.missing_in_2a %}
+                            <tr>
+                                <td>
+                                    <a href="{% url 'invoices:verification_workspace' item.invoice.submission_id %}" class="font-monospace fw-bold text-decoration-none">
+                                        {{ item.invoice.submission_id }}
+                                    </a>
+                                </td>
+                                <td class="fw-bold text-dark">{{ item.invoice.party_name|default:"Unregistered Supplier" }}</td>
+                                <td><span class="badge bg-light text-secondary border font-monospace">{{ item.invoice.party_gstin }}</span></td>
+                                <td>{{ item.invoice.invoice_number|default:"-" }}</td>
+                                <td class="text-end font-monospace fw-bold">&#8377;{{ item.invoice.total_amount|floatformat:2 }}</td>
+                                <td><span class="badge bg-warning bg-opacity-25 text-dark border border-warning small">{{ item.issue }}</span></td>
+                                <td class="text-center">
+                                    <a href="{% url 'invoices:verification_workspace' item.invoice.submission_id %}" class="btn btn-xs btn-outline-primary">
+                                        Inspect
+                                    </a>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="text-muted py-3 text-center mb-0">All suppliers with valid GSTINs match verified directory records.</p>
+                {% endif %}
+            </div>
+
+            <!-- Tab 3: Missing GSTIN -->
+            <div class="tab-pane fade" id="missingGstin" role="tabpanel">
+                {% if results.missing_gstin %}
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0" style="font-size: 0.88rem;">
+                        <thead class="table-light text-secondary small">
+                            <tr>
+                                <th>Tracking ID</th>
+                                <th>Party Name</th>
+                                <th>Uploader</th>
+                                <th>Date</th>
+                                <th class="text-end">Total Amount (&#8377;)</th>
+                                <th>Issue</th>
+                                <th class="text-center">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in results.missing_gstin %}
+                            <tr>
+                                <td>
+                                    <a href="{% url 'invoices:verification_workspace' item.invoice.submission_id %}" class="font-monospace fw-bold text-decoration-none">
+                                        {{ item.invoice.submission_id }}
+                                    </a>
+                                </td>
+                                <td class="fw-bold text-dark">{{ item.invoice.party_name|default:"No Supplier Specified" }}</td>
+                                <td>{{ item.invoice.employee.get_full_name|default:item.invoice.employee.username }}</td>
+                                <td>{{ item.invoice.created_at|date:"d-M-Y" }}</td>
+                                <td class="text-end font-monospace fw-bold">&#8377;{{ item.invoice.total_amount|floatformat:2 }}</td>
+                                <td><span class="badge bg-danger-subtle text-danger border border-danger small">{{ item.issue }}</span></td>
+                                <td class="text-center">
+                                    <a href="{% url 'invoices:verification_workspace' item.invoice.submission_id %}" class="btn btn-xs btn-outline-primary">
+                                        Add GSTIN
+                                    </a>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="text-muted py-3 text-center mb-0">No invoices have missing GSTIN numbers.</p>
+                {% endif %}
+            </div>
+
+            <!-- Tab 4: Tax Discrepancies -->
+            <div class="tab-pane fade" id="discrepancy" role="tabpanel">
+                {% if results.tax_discrepancies %}
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0" style="font-size: 0.88rem;">
+                        <thead class="table-light text-secondary small">
+                            <tr>
+                                <th>Tracking ID</th>
+                                <th>Party Name & GSTIN</th>
+                                <th>Tax Breakdown</th>
+                                <th class="text-end">Recorded Total (&#8377;)</th>
+                                <th>Discrepancy Detail</th>
+                                <th class="text-center">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in results.tax_discrepancies %}
+                            <tr>
+                                <td>
+                                    <a href="{% url 'invoices:verification_workspace' item.invoice.submission_id %}" class="font-monospace fw-bold text-decoration-none">
+                                        {{ item.invoice.submission_id }}
+                                    </a>
+                                </td>
+                                <td>
+                                    <div class="fw-bold text-dark">{{ item.invoice.party_name }}</div>
+                                    <span class="badge bg-light text-secondary border font-monospace small">{{ item.invoice.party_gstin }}</span>
+                                </td>
+                                <td class="small font-monospace">
+                                    Taxable: {{ item.invoice.taxable_amount }} | 
+                                    C: {{ item.invoice.cgst_amount }} | S: {{ item.invoice.sgst_amount }} | I: {{ item.invoice.igst_amount }}
+                                </td>
+                                <td class="text-end font-monospace fw-bold text-danger">&#8377;{{ item.invoice.total_amount|floatformat:2 }}</td>
+                                <td><span class="badge bg-danger bg-opacity-10 text-danger border border-danger small">{{ item.issue }}</span></td>
+                                <td class="text-center">
+                                    <a href="{% url 'invoices:verification_workspace' item.invoice.submission_id %}" class="btn btn-xs btn-outline-danger">
+                                        Correct
+                                    </a>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="text-muted py-3 text-center mb-0">No tax computation discrepancies detected.</p>
+                {% endif %}
+            </div>
+
+        </div>
+    </div>
+
+</div>
+{% endblock %}
+

@@ -1,0 +1,375 @@
+/* Balaji InvoiceHub - Enterprise Modern Design System */
+
+:root {
+  --primary-navy: #0f172a;       /* Slate 900 */
+  --secondary-navy: #1e293b;     /* Slate 800 */
+  --sidebar-navy: #090d16;       /* Deepest Navy */
+  --sidebar-hover: #1e293b;      /* Slate 800 */
+  
+  --accent-teal: #0d9488;        /* Teal 600 */
+  --accent-teal-light: #14b8a6;  /* Teal 500 */
+  --accent-teal-subtle: #f0fdfa; /* Teal 50 */
+  --accent-teal-border: #99f6e4; /* Teal 200 */
+  
+  --accent-blue: #2563eb;        /* Blue 600 */
+  --accent-blue-subtle: #eff6ff; /* Blue 50 */
+  
+  --surface-bg: #f8fafc;         /* Slate 50 */
+  --surface-card: #ffffff;       /* Pure White */
+  --border-light: #e2e8f0;       /* Slate 200 */
+  --border-subtle: #f1f5f9;      /* Slate 100 */
+  
+  --text-primary: #0f172a;       /* Slate 900 */
+  --text-secondary: #475569;     /* Slate 600 */
+  --text-muted: #94a3b8;         /* Slate 400 */
+}
+
+/* Base resets & typography */
+body {
+  background-color: var(--surface-bg);
+  color: var(--text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+
+/* Application Layout Shell */
+.app-shell {
+  display: flex;
+  min-height: 100vh;
+}
+
+/* Desktop Sidebar */
+.app-sidebar {
+  width: 270px;
+  background-color: var(--primary-navy);
+  color: #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  transition: all 0.25s ease-in-out;
+  z-index: 1040;
+}
+
+.sidebar-brand {
+  padding: 1.5rem 1.25rem 1.25rem 1.25rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  text-decoration: none;
+  color: #ffffff;
+}
+
+.sidebar-brand-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, var(--accent-teal), #0284c7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.35rem;
+  color: #ffffff;
+  box-shadow: 0 4px 10px rgba(13, 148, 136, 0.35);
+}
+
+.sidebar-brand-text {
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.sidebar-brand-sub {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--accent-teal-light);
+  text-transform: uppercase;
+}
+
+/* Sidebar Profile Card */
+.sidebar-profile {
+  padding: 1rem 1.25rem;
+  background: rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.sidebar-nav {
+  padding: 1rem 0.75rem;
+  flex-grow: 1;
+  overflow-y: auto;
+}
+
+.nav-section-title {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #64748b;
+  padding: 0.75rem 0.75rem 0.35rem 0.75rem;
+}
+
+.sidebar-link {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.65rem 0.85rem;
+  color: #94a3b8;
+  text-decoration: none;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  transition: all 0.15s ease;
+  margin-bottom: 0.2rem;
+}
+
+.sidebar-link i {
+  font-size: 1.15rem;
+  color: #64748b;
+  transition: color 0.15s ease;
+}
+
+.sidebar-link:hover {
+  background-color: var(--sidebar-hover);
+  color: #ffffff;
+}
+
+.sidebar-link:hover i {
+  color: var(--accent-teal-light);
+}
+
+.sidebar-link.active {
+  background: linear-gradient(90deg, rgba(13, 148, 136, 0.2), rgba(13, 148, 136, 0.05));
+  color: #ffffff;
+  border-left: 3px solid var(--accent-teal-light);
+  font-weight: 600;
+}
+
+.sidebar-link.active i {
+  color: var(--accent-teal-light);
+}
+
+.sidebar-footer {
+  padding: 1rem 1.25rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 0.75rem;
+  color: #64748b;
+}
+
+/* App Main Content Area */
+.app-main {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background-color: var(--surface-bg);
+}
+
+/* Top Header Bar */
+.app-header {
+  height: 64px;
+  background-color: #ffffff;
+  border-bottom: 1px solid var(--border-light);
+  padding: 0 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: sticky;
+  top: 0;
+  z-index: 1020;
+}
+
+.header-title {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--primary-navy);
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+
+/* Role Badges */
+.role-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.25rem 0.6rem;
+  border-radius: 9999px;
+  letter-spacing: 0.02em;
+}
+
+.role-badge-EMPLOYEE {
+  background-color: #f0fdfa;
+  color: #0f766e;
+  border: 1px solid #ccfbf1;
+}
+
+.role-badge-NAVEEN {
+  background-color: #f0f9ff;
+  color: #0369a1;
+  border: 1px solid #e0f2fe;
+}
+
+.role-badge-ADMIN {
+  background-color: #fff1f2;
+  color: #be123c;
+  border: 1px solid #ffe4e6;
+}
+
+.role-badge-MANAGEMENT {
+  background-color: #f8fafc;
+  color: #334155;
+  border: 1px solid #e2e8f0;
+}
+
+/* Cards & Surfaces */
+.card-enterprise {
+  background-color: #ffffff;
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.04), 0 1px 2px -1px rgba(0, 0, 0, 0.03);
+  transition: box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.card-enterprise:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.03);
+}
+
+.card-enterprise-header {
+  padding: 1.15rem 1.5rem;
+  background-color: #ffffff;
+  border-bottom: 1px solid var(--border-subtle);
+  border-top-left-radius: 12px;
+  border-top-right-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.card-enterprise-body {
+  padding: 1.5rem;
+}
+
+/* Metric / Stat Cards */
+.metric-card {
+  background-color: #ffffff;
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  padding: 1.25rem;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.03);
+}
+
+.metric-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background-color: #cbd5e1;
+}
+
+.metric-card.accent-teal::before { background-color: var(--accent-teal); }
+.metric-card.accent-blue::before { background-color: var(--accent-blue); }
+.metric-card.accent-amber::before { background-color: #d97706; }
+.metric-card.accent-rose::before { background-color: #e11d48; }
+
+.metric-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.4rem;
+}
+
+.metric-value {
+  font-size: 1.65rem;
+  font-weight: 800;
+  color: var(--primary-navy);
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.metric-sub {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-top: 0.4rem;
+}
+
+/* Modern Enterprise Tables */
+.table-enterprise {
+  margin-bottom: 0;
+}
+
+.table-enterprise thead th {
+  background-color: #f8fafc;
+  color: #64748b;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0.85rem 1.25rem;
+  border-bottom: 1px solid var(--border-light);
+  border-top: none;
+}
+
+.table-enterprise tbody td {
+  padding: 0.95rem 1.25rem;
+  color: var(--text-primary);
+  font-size: 0.875rem;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.table-enterprise tbody tr:hover {
+  background-color: #f8fafc;
+}
+
+/* Enterprise Buttons */
+.btn-primary-dark {
+  background-color: var(--primary-navy);
+  color: #ffffff;
+  border: 1px solid var(--primary-navy);
+  font-weight: 600;
+  border-radius: 8px;
+  padding: 0.55rem 1.15rem;
+  transition: all 0.15s ease;
+}
+
+.btn-primary-dark:hover {
+  background-color: var(--secondary-navy);
+  border-color: var(--secondary-navy);
+  color: #ffffff;
+}
+
+.btn-teal {
+  background-color: var(--accent-teal);
+  color: #ffffff;
+  border: 1px solid var(--accent-teal);
+  font-weight: 600;
+  border-radius: 8px;
+  padding: 0.55rem 1.15rem;
+  transition: all 0.15s ease;
+}
+
+.btn-teal:hover {
+  background-color: var(--accent-teal-light);
+  border-color: var(--accent-teal-light);
+  color: #ffffff;
+}
+
+/* Mobile responsive adjustments */
+@media (max-width: 991.98px) {
+  .app-sidebar {
+    display: none;
+  }
+}
+

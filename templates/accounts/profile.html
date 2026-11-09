@@ -1,0 +1,91 @@
+{% extends 'base.html' %}
+
+{% block title %}My Profile - Balaji InvoiceHub{% endblock %}
+{% block page_heading %}User Profile{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-12 col-md-8 col-lg-7">
+        <div class="card card-enterprise">
+            <div class="card-enterprise-header">
+                <span class="fs-6 fw-bold text-dark"><i class="bi bi-person-lines-fill me-2 text-teal"></i>Account Credentials & Role</span>
+                <span class="role-badge role-badge-{{ user.role }}">{{ user.get_role_display }}</span>
+            </div>
+            <div class="card-body p-4">
+                <div class="d-flex align-items-center mb-4 pb-3 border-bottom gap-3">
+                    <div class="rounded-circle d-flex align-items-center justify-content-center text-white fw-bold shadow-sm" style="width: 54px; height: 54px; background: linear-gradient(135deg, var(--primary-navy), var(--secondary-navy)); font-size: 1.4rem;">
+                        {{ user.first_name|default:user.username|slice:":1"|upper }}
+                    </div>
+                    <div>
+                        <h4 class="mb-0 fw-bold" style="color: var(--primary-navy);">{{ user.get_full_name|default:user.username }}</h4>
+                        <div class="text-secondary small">System Username: <code>{{ user.username }}</code></div>
+                    </div>
+                </div>
+
+                <div class="row g-3">
+                    <div class="col-sm-6">
+                        <label class="text-secondary small fw-semibold">Assigned Role</label>
+                        <div class="fw-bold mt-1 text-dark">{{ user.get_role_display }}</div>
+                    </div>
+                    <div class="col-sm-6">
+                        <label class="text-secondary small fw-semibold">Assigned Department</label>
+                        <div class="fw-bold mt-1 text-dark">{{ user.department.name|default:"General Operations" }}</div>
+                    </div>
+                    <div class="col-sm-6">
+                        <label class="text-secondary small fw-semibold">Email Address</label>
+                        <div class="text-dark mt-1">{{ user.email|default:"Not Provided" }}</div>
+                    </div>
+                    <div class="col-sm-6">
+                        <label class="text-secondary small fw-semibold">Contact Phone</label>
+                        <div class="text-dark mt-1">{{ user.phone_number|default:"Not Provided" }}</div>
+                    </div>
+                    <div class="col-sm-6">
+                        <label class="text-secondary small fw-semibold">Account Status</label>
+                        <div class="mt-1">
+                            {% if user.is_active %}
+                            <span class="badge bg-success-subtle text-success border border-success-subtle"><i class="bi bi-check-circle me-1"></i>Active</span>
+                            {% else %}
+                            <span class="badge bg-danger-subtle text-danger border border-danger-subtle"><i class="bi bi-x-circle me-1"></i>Deactivated</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="col-sm-6">
+                        <label class="text-secondary small fw-semibold">Member Since</label>
+                        <div class="text-dark mt-1">{{ user.date_joined|date:"M d, Y" }}</div>
+                    </div>
+                </div>
+
+                <div class="mt-4 pt-3 border-top">
+                    <h6 class="fw-bold mb-2 text-dark">Active RBAC Permissions Matrix</h6>
+                    <ul class="list-group list-group-flush small">
+                        {% if user.can_submit_invoices %}
+                        <li class="list-group-item px-0 text-success d-flex align-items-center"><i class="bi bi-check2-circle me-2 fs-5"></i>Invoice Document Submission via Mobile Browser</li>
+                        {% endif %}
+                        {% if user.can_verify_invoices %}
+                        <li class="list-group-item px-0 text-success d-flex align-items-center"><i class="bi bi-check2-circle me-2 fs-5"></i>Centralized Invoice Verification & Return for Correction</li>
+                        {% endif %}
+                        {% if user.can_record_advances %}
+                        <li class="list-group-item px-0 text-success d-flex align-items-center"><i class="bi bi-check2-circle me-2 fs-5"></i>Advance & Partial Settlement Financial Ledger Recording</li>
+                        {% endif %}
+                        {% if user.can_manage_reminders %}
+                        <li class="list-group-item px-0 text-success d-flex align-items-center"><i class="bi bi-check2-circle me-2 fs-5"></i>Automated Daily WhatsApp Payment Reminders Scheduling</li>
+                        {% endif %}
+                        {% if user.can_convert_tally %}
+                        <li class="list-group-item px-0 text-success d-flex align-items-center"><i class="bi bi-check2-circle me-2 fs-5"></i>GST Excel Ingestion & Verified Tally XML Conversion</li>
+                        {% endif %}
+                        {% if user.can_view_financial_reports %}
+                        <li class="list-group-item px-0 text-success d-flex align-items-center"><i class="bi bi-check2-circle me-2 fs-5"></i>Executive & Operational Monthly Reporting Access</li>
+                        {% endif %}
+                        {% if user.can_manage_users %}
+                        <li class="list-group-item px-0 text-success d-flex align-items-center"><i class="bi bi-check2-circle me-2 fs-5"></i>User Account Administration & Role Management</li>
+                        {% endif %}
+                        {% if user.can_trigger_backups %}
+                        <li class="list-group-item px-0 text-success d-flex align-items-center"><i class="bi bi-check2-circle me-2 fs-5"></i>Database & Document Backup Trigger & Disaster Recovery Drills</li>
+                        {% endif %}
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

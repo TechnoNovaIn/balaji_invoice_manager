@@ -1,0 +1,13 @@
+.env
+*.pyc
+__pycache__/
+*.dump
+media/invoices/originals/*
+media/invoices/processed/*
+!media/invoices/originals/.gitkeep
+!media/invoices/processed/.gitkeep
+backups/*
+!backups/.gitkeep
+staticfiles/
+.pytest_cache/
+

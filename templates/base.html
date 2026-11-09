@@ -1,0 +1,360 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#0f172a">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Balaji InvoiceHub">
+    <title>{% block title %}{{ APP_NAME }}{% endblock %} | {{ COMPANY_NAME }}</title>
+    
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+    <!-- Bootstrap Icons -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <!-- Balaji Enterprise Stylesheet -->
+    <link rel="stylesheet" href="{% static 'css/enterprise.css' %}">
+    
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+
+<div class="app-shell">
+    {% if user.is_authenticated %}
+    <!-- Desktop Sidebar Navigation -->
+    <aside class="app-sidebar d-none d-lg-flex">
+        <!-- Brand Header -->
+        <a class="sidebar-brand" href="{% url 'core:dashboard_router' %}">
+            <div class="sidebar-brand-icon">
+                <i class="bi bi-truck-flatbed"></i>
+            </div>
+            <div>
+                <div class="sidebar-brand-text">Balaji <span style="color: var(--accent-teal-light);">InvoiceHub</span></div>
+                <div class="sidebar-brand-sub">{{ COMPANY_NAME }}</div>
+            </div>
+        </a>
+
+        <!-- Current User Profile Card -->
+        <div class="sidebar-profile">
+            <div class="d-flex align-items-center gap-3">
+                <div class="rounded-circle text-white d-flex align-items-center justify-content-center fw-bold" style="width: 38px; height: 38px; font-size: 0.95rem; background-color: var(--secondary-navy) !important; border: 1px solid rgba(255,255,255,0.15);">
+                    {{ user.first_name|default:user.username|slice:":1"|upper }}
+                </div>
+                <div class="text-truncate">
+                    <div class="fw-bold text-white small text-truncate">{{ user.get_full_name|default:user.username }}</div>
+                    <div class="d-flex align-items-center gap-1 mt-1">
+                        <span class="role-badge role-badge-{{ user.role }}">
+                            {{ user.get_role_display }}
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sidebar Navigation Links -->
+        <nav class="sidebar-nav">
+            <div class="nav-section-title">Operations Menu</div>
+
+            {% if user.is_employee %}
+            <a href="{% url 'core:employee_dashboard' %}" class="sidebar-link {% if request.resolver_match.url_name == 'employee_dashboard' %}active{% endif %}">
+                <i class="bi bi-speedometer"></i>
+                <span>Employee Portal</span>
+            </a>
+            <a href="{% url 'invoices:upload' %}" class="sidebar-link {% if request.resolver_match.url_name == 'upload' %}active{% endif %}">
+                <i class="bi bi-camera-fill"></i>
+                <span>Upload Invoice</span>
+            </a>
+            <a href="{% url 'invoices:my_submissions' %}" class="sidebar-link {% if request.resolver_match.url_name == 'my_submissions' %}active{% endif %}">
+                <i class="bi bi-folder2-open"></i>
+                <span>My Submissions</span>
+            </a>
+            {% endif %}
+
+            {% if user.is_naveen %}
+            <a href="{% url 'core:naveen_dashboard' %}" class="sidebar-link {% if request.resolver_match.url_name == 'naveen_dashboard' %}active{% endif %}">
+                <i class="bi bi-inboxes-fill"></i>
+                <span>Accounts Dashboard</span>
+            </a>
+            <a href="{% url 'invoices:analytics_dashboard' %}" class="sidebar-link {% if request.resolver_match.url_name == 'analytics_dashboard' %}active{% endif %}">
+                <i class="bi bi-graph-up-arrow"></i>
+                <span>Analytics & Reports</span>
+            </a>
+            <a href="{% url 'invoices:my_submissions' %}" class="sidebar-link {% if request.resolver_match.url_name == 'my_submissions' %}active{% endif %}">
+                <i class="bi bi-folder2-open"></i>
+                <span>All Invoices Queue</span>
+            </a>
+            {% endif %}
+
+            {% if user.is_admin_role %}
+            <a href="{% url 'core:admin_dashboard' %}" class="sidebar-link {% if request.resolver_match.url_name == 'admin_dashboard' %}active{% endif %}">
+                <i class="bi bi-speedometer2"></i>
+                <span>Admin Console</span>
+            </a>
+            <a href="{% url 'invoices:analytics_dashboard' %}" class="sidebar-link {% if request.resolver_match.url_name == 'analytics_dashboard' %}active{% endif %}">
+                <i class="bi bi-graph-up-arrow"></i>
+                <span>Analytics & Reports</span>
+            </a>
+            <a href="{% url 'backup:dashboard' %}" class="sidebar-link {% if request.resolver_match.app_name == 'backup' %}active{% endif %}">
+                <i class="bi bi-shield-shaded"></i>
+                <span>Backup & Recovery</span>
+            </a>
+            <a href="{% url 'accounts:user_list' %}" class="sidebar-link {% if request.resolver_match.url_name == 'user_list' %}active{% endif %}">
+                <i class="bi bi-people"></i>
+                <span>User Management</span>
+            </a>
+            {% endif %}
+
+            {% if user.is_management %}
+            <a href="{% url 'core:management_dashboard' %}" class="sidebar-link {% if request.resolver_match.url_name == 'management_dashboard' %}active{% endif %}">
+                <i class="bi bi-graph-up-arrow"></i>
+                <span>Executive Overview</span>
+            </a>
+            <a href="{% url 'invoices:analytics_dashboard' %}" class="sidebar-link {% if request.resolver_match.url_name == 'analytics_dashboard' %}active{% endif %}">
+                <i class="bi bi-pie-chart-fill"></i>
+                <span>Analytics & Reports</span>
+            </a>
+            {% endif %}
+
+            <div class="nav-section-title mt-3">Account & Access</div>
+            <a href="{% url 'accounts:profile' %}" class="sidebar-link {% if request.resolver_match.url_name == 'profile' %}active{% endif %}">
+                <i class="bi bi-person-badge"></i>
+                <span>My Profile</span>
+            </a>
+            {% if user.is_admin_role %}
+            <a href="{% url 'admin:index' %}" class="sidebar-link" target="_blank">
+                <i class="bi bi-sliders"></i>
+                <span>Django Admin</span>
+            </a>
+            {% endif %}
+        </nav>
+
+        <!-- Sidebar Footer Status -->
+        <div class="sidebar-footer">
+            <div class="d-flex align-items-center gap-2 mb-1">
+                <span class="rounded-circle bg-success" style="width: 8px; height: 8px; display: inline-block;"></span>
+                <span class="text-white small fw-semibold">PostgreSQL 18 Connected</span>
+            </div>
+            <div>Balaji InvoiceHub &copy; 2026</div>
+        </div>
+    </aside>
+
+    <!-- Mobile Offcanvas Sidebar Drawer -->
+    <div class="offcanvas offcanvas-start bg-dark text-white d-lg-none" tabindex="-1" id="mobileSidebar" aria-labelledby="mobileSidebarLabel" style="background-color: var(--primary-navy) !important; width: 280px;">
+        <div class="offcanvas-header border-bottom border-secondary border-opacity-25 py-3">
+            <div class="d-flex align-items-center gap-2">
+                <i class="bi bi-truck-flatbed text-info fs-4"></i>
+                <h6 class="offcanvas-title fw-bold mb-0 text-white" id="mobileSidebarLabel">Balaji InvoiceHub</h6>
+            </div>
+            <button type="button" class="btn-close btn-close-white text-reset" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+        </div>
+        <div class="offcanvas-body p-0 d-flex flex-column">
+            <!-- Mobile User Profile -->
+            <div class="sidebar-profile">
+                <div class="d-flex align-items-center gap-2">
+                    <div class="rounded-circle bg-secondary text-white d-flex align-items-center justify-content-center fw-bold" style="width: 36px; height: 36px;">
+                        {{ user.first_name|default:user.username|slice:":1"|upper }}
+                    </div>
+                    <div>
+                        <div class="fw-bold small text-white">{{ user.get_full_name|default:user.username }}</div>
+                        <span class="role-badge role-badge-{{ user.role }}">{{ user.get_role_display }}</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Mobile Links -->
+            <nav class="sidebar-nav">
+                {% if user.is_employee %}
+                <a href="{% url 'core:employee_dashboard' %}" class="sidebar-link {% if request.resolver_match.url_name == 'employee_dashboard' %}active{% endif %}">
+                    <i class="bi bi-speedometer"></i>
+                    <span>Employee Portal</span>
+                </a>
+                <a href="{% url 'invoices:upload' %}" class="sidebar-link {% if request.resolver_match.url_name == 'upload' %}active{% endif %}">
+                    <i class="bi bi-camera-fill"></i>
+                    <span>Upload Invoice</span>
+                </a>
+                <a href="{% url 'invoices:my_submissions' %}" class="sidebar-link {% if request.resolver_match.url_name == 'my_submissions' %}active{% endif %}">
+                    <i class="bi bi-folder2-open"></i>
+                    <span>My Submissions</span>
+                </a>
+                {% endif %}
+
+                {% if user.is_naveen %}
+                <a href="{% url 'core:naveen_dashboard' %}" class="sidebar-link {% if request.resolver_match.url_name == 'naveen_dashboard' %}active{% endif %}">
+                    <i class="bi bi-inboxes-fill"></i>
+                    <span>Accounts Dashboard</span>
+                </a>
+                <a href="{% url 'invoices:analytics_dashboard' %}" class="sidebar-link {% if request.resolver_match.url_name == 'analytics_dashboard' %}active{% endif %}">
+                    <i class="bi bi-graph-up-arrow"></i>
+                    <span>Analytics & Reports</span>
+                </a>
+                <a href="{% url 'invoices:my_submissions' %}" class="sidebar-link {% if request.resolver_match.url_name == 'my_submissions' %}active{% endif %}">
+                    <i class="bi bi-folder2-open"></i>
+                    <span>All Invoices Queue</span>
+                </a>
+                {% endif %}
+
+                {% if user.is_admin_role %}
+                <a href="{% url 'core:admin_dashboard' %}" class="sidebar-link {% if request.resolver_match.url_name == 'admin_dashboard' %}active{% endif %}">
+                    <i class="bi bi-speedometer2"></i>
+                    <span>Admin Console</span>
+                </a>
+                <a href="{% url 'invoices:analytics_dashboard' %}" class="sidebar-link {% if request.resolver_match.url_name == 'analytics_dashboard' %}active{% endif %}">
+                    <i class="bi bi-graph-up-arrow"></i>
+                    <span>Analytics & Reports</span>
+                </a>
+                <a href="{% url 'backup:dashboard' %}" class="sidebar-link {% if request.resolver_match.app_name == 'backup' %}active{% endif %}">
+                    <i class="bi bi-shield-shaded"></i>
+                    <span>Backup & Recovery</span>
+                </a>
+                <a href="{% url 'accounts:user_list' %}" class="sidebar-link {% if request.resolver_match.url_name == 'user_list' %}active{% endif %}">
+                    <i class="bi bi-people"></i>
+                    <span>User Management</span>
+                </a>
+                {% endif %}
+
+                {% if user.is_management %}
+                <a href="{% url 'core:management_dashboard' %}" class="sidebar-link {% if request.resolver_match.url_name == 'management_dashboard' %}active{% endif %}">
+                    <i class="bi bi-graph-up-arrow"></i>
+                    <span>Executive Overview</span>
+                </a>
+                <a href="{% url 'invoices:analytics_dashboard' %}" class="sidebar-link {% if request.resolver_match.url_name == 'analytics_dashboard' %}active{% endif %}">
+                    <i class="bi bi-pie-chart-fill"></i>
+                    <span>Analytics & Reports</span>
+                </a>
+                {% endif %}
+
+                <a href="{% url 'accounts:profile' %}" class="sidebar-link mt-3">
+                    <i class="bi bi-person-badge"></i>
+                    <span>My Profile</span>
+                </a>
+                <a href="{% url 'accounts:change_password' %}" class="sidebar-link">
+                    <i class="bi bi-key"></i>
+                    <span>Change Password</span>
+                </a>
+            </nav>
+
+            <div class="p-3 border-top border-secondary border-opacity-25 mt-auto">
+                <form method="post" action="{% url 'accounts:logout' %}">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-outline-danger btn-sm w-100">
+                        <i class="bi bi-box-arrow-right me-1"></i> Sign Out
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Main Content App Surface -->
+    <div class="app-main">
+        {% if user.is_authenticated %}
+        <!-- Top Sticky Header -->
+        <header class="app-header">
+            <div class="d-flex align-items-center gap-3">
+                <button class="btn btn-sm btn-outline-secondary d-lg-none" type="button" data-bs-toggle="offcanvas" data-bs-target="#mobileSidebar" aria-controls="mobileSidebar" aria-label="Toggle Navigation">
+                    <i class="bi bi-list fs-5"></i>
+                </button>
+                <h1 class="header-title">{% block page_heading %}{{ page_title|default:"Balaji InvoiceHub" }}{% endblock %}</h1>
+            </div>
+
+            <!-- Top Right Identity & Quick Actions -->
+            <div class="d-flex align-items-center gap-3">
+                <div class="d-none d-md-flex align-items-center gap-2">
+                    <span class="role-badge role-badge-{{ user.role }}">
+                        <i class="bi bi-shield-check"></i> {{ user.get_role_display }}
+                    </span>
+                    {% if user.department %}
+                    <span class="badge bg-light text-secondary border small">{{ user.department.name }}</span>
+                    {% endif %}
+                </div>
+
+                <div class="dropdown">
+                    <button class="btn btn-sm btn-light border dropdown-toggle d-flex align-items-center gap-2" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                        <i class="bi bi-person-circle text-secondary"></i>
+                        <span class="d-none d-sm-inline fw-semibold">{{ user.first_name|default:user.username }}</span>
+                    </button>
+                    <ul class="dropdown-menu dropdown-menu-end shadow-sm border-0 mt-2" style="border: 1px solid var(--border-light) !important;">
+                        <li>
+                            <div class="px-3 py-2 border-bottom">
+                                <div class="fw-bold small">{{ user.get_full_name|default:user.username }}</div>
+                                <div class="text-muted" style="font-size: 0.75rem;">@{{ user.username }}</div>
+                            </div>
+                        </li>
+                        <li><a class="dropdown-item py-2" href="{% url 'accounts:profile' %}"><i class="bi bi-person me-2 text-secondary"></i>My Profile</a></li>
+                        <li><a class="dropdown-item py-2" href="{% url 'accounts:change_password' %}"><i class="bi bi-key me-2 text-secondary"></i>Change Password</a></li>
+                        {% if user.is_admin_role %}
+                        <li><a class="dropdown-item py-2" href="{% url 'admin:index' %}" target="_blank"><i class="bi bi-sliders me-2 text-secondary"></i>Django Admin</a></li>
+                        {% endif %}
+                        <li><hr class="dropdown-divider my-1"></li>
+                        <li>
+                            <form method="post" action="{% url 'accounts:logout' %}">
+                                {% csrf_token %}
+                                <button type="submit" class="dropdown-item py-2 text-danger">
+                                    <i class="bi bi-box-arrow-right me-2"></i>Sign Out
+                                </button>
+                            </form>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </header>
+        {% else %}
+        <!-- Unauthenticated Top Bar -->
+        <nav class="navbar navbar-light bg-white border-bottom py-3">
+            <div class="container d-flex justify-content-between align-items-center">
+                <div class="d-flex align-items-center gap-2">
+                    <div class="rounded p-2 text-white d-flex align-items-center justify-content-center" style="background-color: var(--primary-navy); width: 34px; height: 34px;">
+                        <i class="bi bi-truck-flatbed text-info"></i>
+                    </div>
+                    <span class="fw-bold" style="color: var(--primary-navy);">Balaji <span style="color: var(--accent-teal);">InvoiceHub</span></span>
+                </div>
+                <span class="text-muted small fw-semibold d-none d-sm-inline">{{ COMPANY_NAME }}</span>
+            </div>
+        </nav>
+        {% endif %}
+
+        <!-- System Alert Messages -->
+        <div class="px-3 px-md-4 pt-3">
+            {% if messages %}
+            <div class="messages">
+                {% for message in messages %}
+                <div class="alert alert-{{ message.tags|default:'info' }} alert-dismissible fade show shadow-sm border-0" role="alert">
+                    {% if message.tags == 'success' %}<i class="bi bi-check-circle-fill me-2 text-success"></i>{% endif %}
+                    {% if message.tags == 'error' or message.tags == 'danger' %}<i class="bi bi-exclamation-triangle-fill me-2 text-danger"></i>{% endif %}
+                    {% if message.tags == 'warning' %}<i class="bi bi-exclamation-circle-fill me-2 text-warning"></i>{% endif %}
+                    {% if message.tags == 'info' %}<i class="bi bi-info-circle-fill me-2 text-info"></i>{% endif %}
+                    {{ message }}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Single Unique Main Page Content Block -->
+        <main class="{% if user.is_authenticated %}p-3 p-md-4 flex-grow-1{% else %}container my-auto py-5 flex-grow-1{% endif %}">
+            {% block content %}{% endblock %}
+        </main>
+
+        <!-- Footer -->
+        <footer class="bg-white border-top py-3 px-4 text-center text-md-start">
+            <div class="d-flex flex-column flex-md-row justify-content-between align-items-center gap-2 text-muted small">
+                <div><strong>{{ COMPANY_NAME }}</strong> — Balaji InvoiceHub &copy; 2026. All rights reserved.</div>
+                <div class="d-flex align-items-center gap-3">
+                    <span><i class="bi bi-shield-check text-success me-1"></i>RBAC Active</span>
+                    <span><i class="bi bi-database text-primary me-1"></i>PostgreSQL 18</span>
+                    <a href="{% url 'core:health_check' %}" target="_blank" class="text-decoration-none text-muted">Health</a>
+                </div>
+            </div>
+        </footer>
+    </div>
+</div>
+
+<!-- Bootstrap 5 Bundle JS -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
+{% block extra_js %}{% endblock %}
+</body>
+</html>
