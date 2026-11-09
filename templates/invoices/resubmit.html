@@ -1,0 +1,244 @@
+{% extends 'base.html' %}
+
+{% block title %}Resubmit Invoice {{ submission.submission_id }} - Balaji InvoiceHub{% endblock %}
+{% block page_heading %}Resubmit Corrected Invoice{% endblock %}
+
+{% block content %}
+<div class="mx-auto" style="max-width: 600px;">
+
+    <!-- Breadcrumb / Back Link -->
+    <div class="mb-3">
+        <a href="{% url 'invoices:submission_detail' submission.submission_id %}" class="text-decoration-none small text-secondary">
+            <i class="bi bi-arrow-left me-1"></i> Back to Invoice Details
+        </a>
+    </div>
+
+    <!-- Naveen's Return Note Banner -->
+    <div class="alert alert-warning border-warning shadow-sm mb-4">
+        <div class="d-flex align-items-start gap-2">
+            <i class="bi bi-exclamation-triangle-fill fs-4 text-warning"></i>
+            <div>
+                <h6 class="fw-bold mb-1 text-dark">Naveen Returned This Invoice:</h6>
+                <p class="mb-0 text-dark small"><strong>Correction Requested:</strong> {{ submission.return_reason|default:"Please upload clearer photos or missing pages." }}</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Resubmit Form Card -->
+    <div class="card card-enterprise shadow-sm">
+        <div class="card-enterprise-header">
+            <div>
+                <h5 class="fw-bold mb-0" style="color: var(--primary-navy);">
+                    <i class="bi bi-arrow-clockwise me-2 text-warning"></i>Resubmit {{ submission.submission_id }}
+                </h5>
+                <p class="text-secondary small mb-0">Upload replacement photos or PDF document.</p>
+            </div>
+            <span class="badge bg-warning bg-opacity-25 text-dark border border-warning">
+                Action Required
+            </span>
+        </div>
+
+        <div class="card-body p-4">
+            <form id="resubmitForm" method="POST" enctype="multipart/form-data" action="{% url 'invoices:resubmit' submission.submission_id %}">
+                {% csrf_token %}
+
+                <!-- Big Touch Buttons: Camera & Files -->
+                <div class="row g-3 mb-4">
+                    <div class="col-6">
+                        <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display: none;">
+                        <button type="button" id="btnCamera" class="btn btn-teal w-100 py-3 d-flex flex-column align-items-center justify-content-center shadow-sm">
+                            <i class="bi bi-camera-fill fs-1 mb-1"></i>
+                            <span class="fw-bold fs-6">Take Photo</span>
+                            <small class="text-white-50" style="font-size: 0.72rem;">Camera</small>
+                        </button>
+                    </div>
+                    <div class="col-6">
+                        <input type="file" id="galleryInput" accept="image/jpeg,image/png,application/pdf" multiple style="display: none;">
+                        <button type="button" id="btnGallery" class="btn btn-outline-secondary w-100 py-3 d-flex flex-column align-items-center justify-content-center bg-white shadow-sm border-2">
+                            <i class="bi bi-file-earmark-arrow-up-fill fs-1 mb-1 text-primary"></i>
+                            <span class="fw-bold fs-6 text-dark">Upload PDF / Files</span>
+                            <small class="text-secondary" style="font-size: 0.72rem;">Gallery or Document</small>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Hidden Input -->
+                <input type="file" name="files" id="finalFilesInput" multiple style="display: none;" required>
+
+                <!-- Document Selection & Previews -->
+                <div class="mb-4">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <label class="form-label fw-bold mb-0 small text-uppercase tracking-wider" style="color: var(--primary-navy);">
+                            New Documents (<span id="fileCount">0</span>)
+                        </label>
+                        <button type="button" id="btnClearAll" class="btn btn-link btn-sm text-danger text-decoration-none p-0 d-none">
+                            <i class="bi bi-trash me-1"></i>Clear
+                        </button>
+                    </div>
+
+                    <div id="emptyPlaceholder" class="border rounded-3 p-4 text-center bg-light">
+                        <i class="bi bi-images display-6 text-muted opacity-50 mb-2"></i>
+                        <p class="text-secondary small mb-0 fw-semibold">No replacement documents selected</p>
+                        <p class="text-muted small mb-0" style="font-size: 0.78rem;">Tap <strong>Take Photo</strong> or <strong>Upload PDF / Files</strong> to replace returned documents</p>
+                    </div>
+
+                    <div id="previewGrid" class="row g-2 d-none"></div>
+                </div>
+
+                <!-- Submit Button -->
+                <div class="d-grid mt-4">
+                    <button type="submit" id="btnSubmit" class="btn btn-warning text-dark py-3 fw-bold shadow-sm fs-6" disabled>
+                        <i class="bi bi-send-fill me-2"></i>Resubmit to Naveen
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const cameraInput = document.getElementById('cameraInput');
+    const galleryInput = document.getElementById('galleryInput');
+    const btnCamera = document.getElementById('btnCamera');
+    const btnGallery = document.getElementById('btnGallery');
+    const btnClearAll = document.getElementById('btnClearAll');
+    const btnSubmit = document.getElementById('btnSubmit');
+    const previewGrid = document.getElementById('previewGrid');
+    const emptyPlaceholder = document.getElementById('emptyPlaceholder');
+    const fileCountSpan = document.getElementById('fileCount');
+    const finalFilesInput = document.getElementById('finalFilesInput');
+    const resubmitForm = document.getElementById('resubmitForm');
+
+    const MAX_FILES = 10;
+    const MAX_FILE_SIZE = 100 * 1024 * 1024;
+    let selectedFiles = [];
+
+    btnCamera.addEventListener('click', () => cameraInput.click());
+    btnGallery.addEventListener('click', () => galleryInput.click());
+
+    cameraInput.addEventListener('change', (e) => handleFileSelection(e.target.files));
+    galleryInput.addEventListener('change', (e) => handleFileSelection(e.target.files));
+
+    function handleFileSelection(newFiles) {
+        if (!newFiles || newFiles.length === 0) return;
+
+        for (let i = 0; i < newFiles.length; i++) {
+            const file = newFiles[i];
+            if (selectedFiles.length >= MAX_FILES) break;
+            if (file.size > MAX_FILE_SIZE) {
+                alert(`File "${file.name}" exceeds the 100 MB limit.`);
+                continue;
+            }
+            selectedFiles.push({
+                file: file,
+                rotation: 0,
+                id: 'file_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7)
+            });
+        }
+        cameraInput.value = '';
+        galleryInput.value = '';
+        renderPreviews();
+    }
+
+    function renderPreviews() {
+        previewGrid.innerHTML = '';
+        const count = selectedFiles.length;
+        fileCountSpan.textContent = count;
+
+        if (count === 0) {
+            emptyPlaceholder.classList.remove('d-none');
+            previewGrid.classList.add('d-none');
+            btnClearAll.classList.add('d-none');
+            btnSubmit.disabled = true;
+            syncFinalInput();
+            return;
+        }
+
+        emptyPlaceholder.classList.add('d-none');
+        previewGrid.classList.remove('d-none');
+        btnClearAll.classList.remove('d-none');
+        btnSubmit.disabled = false;
+
+        selectedFiles.forEach((item, index) => {
+            const col = document.createElement('div');
+            col.className = 'col-6 col-sm-4';
+
+            const card = document.createElement('div');
+            card.className = 'border rounded p-2 text-center bg-white position-relative shadow-sm h-100 d-flex flex-column';
+
+            const actions = document.createElement('div');
+            actions.className = 'd-flex justify-content-between align-items-center mb-1';
+            
+            const badge = document.createElement('span');
+            badge.className = 'badge bg-dark bg-opacity-75 small';
+            badge.textContent = `Page ${index + 1}`;
+            actions.appendChild(badge);
+
+            const removeBtn = document.createElement('button');
+            removeBtn.type = 'button';
+            removeBtn.className = 'btn btn-sm btn-outline-danger py-0 px-1 border-0';
+            removeBtn.innerHTML = '<i class="bi bi-x-circle-fill"></i>';
+            removeBtn.addEventListener('click', () => {
+                selectedFiles = selectedFiles.filter(f => f.id !== item.id);
+                renderPreviews();
+            });
+            actions.appendChild(removeBtn);
+            card.appendChild(actions);
+
+            const previewBox = document.createElement('div');
+            previewBox.className = 'd-flex align-items-center justify-content-center bg-light rounded mb-2 overflow-hidden position-relative';
+            previewBox.style.height = '100px';
+
+            const isPdf = item.file.type === 'application/pdf' || item.file.name.toLowerCase().endsWith('.pdf');
+            if (isPdf) {
+                previewBox.innerHTML = '<div class="text-danger small fw-bold"><i class="bi bi-file-earmark-pdf fs-1 d-block"></i>PDF</div>';
+            } else {
+                const img = document.createElement('img');
+                img.style.maxHeight = '90px';
+                img.style.maxWidth = '100%';
+                img.style.objectFit = 'contain';
+                const reader = new FileReader();
+                reader.onload = (e) => { img.src = e.target.result; };
+                reader.readAsDataURL(item.file);
+                previewBox.appendChild(img);
+            }
+            card.appendChild(previewBox);
+
+            const info = document.createElement('div');
+            info.className = 'mt-auto small text-truncate';
+            info.innerHTML = `<div class="text-truncate fw-semibold">${item.file.name}</div>`;
+            card.appendChild(info);
+
+            col.appendChild(card);
+            previewGrid.appendChild(col);
+        });
+
+        syncFinalInput();
+    }
+
+    btnClearAll.addEventListener('click', () => {
+        selectedFiles = [];
+        renderPreviews();
+    });
+
+    function syncFinalInput() {
+        const dt = new DataTransfer();
+        selectedFiles.forEach(item => {
+            dt.items.add(item.file);
+        });
+        finalFilesInput.files = dt.files;
+    }
+
+    resubmitForm.addEventListener('submit', function(e) {
+        if (selectedFiles.length === 0) {
+            e.preventDefault();
+            alert('Please select at least one replacement document.');
+            return false;
+        }
+        btnSubmit.disabled = true;
+        btnSubmit.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Resubmitting to Naveen...';
+    });
+});
+</script>
+{% endblock %}

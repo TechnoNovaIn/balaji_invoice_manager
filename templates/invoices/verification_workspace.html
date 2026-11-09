@@ -1,0 +1,727 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Verify Invoice {{ submission.submission_id }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .split-pane-container {
+        height: calc(100vh - 120px);
+        min-height: 650px;
+    }
+    @media (max-width: 991.98px) {
+        .split-pane-container {
+            height: auto;
+        }
+    }
+    .doc-viewer-pane {
+        background-color: #0f172a;
+        border-radius: 8px;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        position: relative;
+    }
+    .doc-viewer-toolbar {
+        background-color: rgba(15, 23, 42, 0.95);
+        padding: 8px 12px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+    .doc-viewport {
+        flex: 1;
+        overflow: auto;
+        display: flex;
+        align-items: flex-start;
+        justify-content: center;
+        padding: 16px;
+        background-color: #1e293b;
+        cursor: grab;
+    }
+    .doc-viewport:active {
+        cursor: grabbing;
+    }
+    .doc-viewport img {
+        max-width: 100%;
+        transition: transform 0.15s ease-out;
+        transform-origin: top center;
+        box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+        border-radius: 4px;
+        image-rendering: -webkit-optimize-contrast;
+        image-rendering: crisp-edges;
+    }
+    .form-pane {
+        height: 100%;
+        overflow-y: auto;
+        padding-right: 4px;
+    }
+    .confidence-meter {
+        height: 6px;
+        border-radius: 3px;
+        background-color: #e2e8f0;
+        overflow: hidden;
+    }
+    .confidence-fill {
+        height: 100%;
+        border-radius: 3px;
+        transition: width 0.3s ease;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-3 px-lg-4 py-2">
+
+    <!-- Top Navigation Header -->
+    <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2 pb-2 border-bottom">
+        <div class="d-flex align-items-center gap-2">
+            <a href="{% url 'core:naveen_dashboard' %}" class="btn btn-sm btn-outline-secondary py-1 px-2" title="Back to Dashboard">
+                <i class="bi bi-arrow-left"></i>
+            </a>
+            <div>
+                <span class="font-monospace fw-bold fs-6 text-dark">{{ submission.submission_id }}</span>
+                <span class="text-muted small ms-2">
+                    by <strong>{{ submission.employee.get_full_name|default:submission.employee.username }}</strong> on {{ submission.created_at|date:"d M Y, h:i A" }}
+                </span>
+            </div>
+            {% if submission.is_duplicate_suspected %}
+            <span class="badge bg-warning bg-opacity-25 text-dark border border-warning small ms-2" title="Informational only: employee uploaded duplicate copy">
+                <i class="bi bi-copy me-1"></i>Duplicate Upload
+            </span>
+            {% endif %}
+        </div>
+
+        <div class="d-flex align-items-center gap-2">
+            <!-- Status Badge -->
+            {% if submission.status == 'VERIFIED' %}
+            <span class="badge bg-success-subtle text-success border border-success px-2 py-1">
+                <i class="bi bi-check-circle-fill me-1"></i>Verified & Approved
+            </span>
+            {% else %}
+            <span class="badge bg-warning-subtle text-warning border border-warning px-2 py-1">
+                <i class="bi bi-clock me-1"></i>{{ submission.get_status_display }}
+            </span>
+            {% endif %}
+
+            <!-- Tally Status -->
+            {% if submission.is_entered_in_tally %}
+            <span class="badge bg-success text-white px-2 py-1">
+                <i class="bi bi-check-all me-1"></i>Done in Tally
+            </span>
+            {% else %}
+            <span class="badge bg-secondary-subtle text-secondary px-2 py-1">
+                Pending Tally
+            </span>
+            {% endif %}
+
+            <!-- Stream Navigation -->
+            <div class="btn-group btn-group-sm ms-2">
+                {% if prev_sub %}
+                <a href="{% url 'invoices:verification_workspace' prev_sub.submission_id %}" class="btn btn-outline-secondary" title="Newer Invoice">
+                    <i class="bi bi-chevron-left"></i> Prev
+                </a>
+                {% else %}
+                <button class="btn btn-outline-secondary" disabled><i class="bi bi-chevron-left"></i></button>
+                {% endif %}
+
+                {% if next_sub %}
+                <a href="{% url 'invoices:verification_workspace' next_sub.submission_id %}" class="btn btn-outline-secondary" title="Older Invoice">
+                    Next <i class="bi bi-chevron-right"></i>
+                </a>
+                {% else %}
+                <button class="btn btn-outline-secondary" disabled><i class="bi bi-chevron-right"></i></button>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Two-Panel Split Layout -->
+    <div class="row g-3 split-pane-container">
+        
+        <!-- =================================================================== -->
+        <!-- LEFT PANEL: High-Resolution Document Viewer (50%) -->
+        <!-- =================================================================== -->
+        <div class="col-12 col-lg-6 h-100">
+            <div class="doc-viewer-pane shadow-sm">
+                <!-- Viewer Sticky Toolbar -->
+                <div class="doc-viewer-toolbar">
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="badge bg-secondary text-white" id="pageIndicator">Page 1 of {{ active_docs.count }}</span>
+                        {% if submission.source_document and submission.source_document.total_pages > 1 %}
+                        <span class="badge bg-info bg-opacity-25 text-info border border-info" title="Pages in original PDF">
+                            Pg {{ submission.start_page }}{% if submission.start_page != submission.end_page %}–{{ submission.end_page }}{% endif %} of {{ submission.source_document.total_pages }}
+                        </span>
+                        {% endif %}
+                        {% for doc in active_docs %}
+                        {% if forloop.first %}
+                        <span class="small text-light text-truncate" style="max-width: 150px;" id="docFilename">{{ doc.original_filename }}</span>
+                        {% endif %}
+                        {% endfor %}
+                    </div>
+
+                    <!-- Viewer Controls -->
+                    <div class="d-flex align-items-center gap-1 flex-wrap">
+                        <div class="btn-group btn-group-sm">
+                            <button type="button" class="btn btn-xs btn-outline-light py-1 px-2" id="btnZoomOut" title="Zoom Out (-)">
+                                <i class="bi bi-zoom-out"></i>
+                            </button>
+                            <button type="button" class="btn btn-xs btn-outline-light py-1 px-2 fw-bold font-monospace" id="btnResetZoom" title="100% Full Uncompressed Scale">
+                                100%
+                            </button>
+                            <button type="button" class="btn btn-xs btn-outline-light py-1 px-2" id="btnZoomIn" title="Zoom In (+)">
+                                <i class="bi bi-zoom-in"></i>
+                            </button>
+                        </div>
+
+                        <div class="btn-group btn-group-sm ms-1">
+                            <button type="button" class="btn btn-xs btn-outline-light py-1 px-2" id="btnFitWidth" title="Fit to Pane Width">
+                                <i class="bi bi-arrows-expand-vertical me-1"></i>Width
+                            </button>
+                            <button type="button" class="btn btn-xs btn-outline-light py-1 px-2" id="btnFitScreen" title="Fit to Screen Height">
+                                <i class="bi bi-aspect-ratio me-1"></i>Screen
+                            </button>
+                        </div>
+
+                        <button type="button" class="btn btn-xs btn-outline-light py-1 px-2 ms-1" id="btnRotate" title="Rotate 90 degrees">
+                            <i class="bi bi-arrow-clockwise"></i>
+                        </button>
+                        <button type="button" class="btn btn-xs btn-outline-light py-1 px-2" id="btnEnhance" title="Enhance Contrast for Faded Receipts">
+                            <i class="bi bi-magic"></i>
+                        </button>
+                        {% for doc in active_docs %}
+                        {% if forloop.first %}
+                        <a href="{% url 'invoices:serve_document' doc.id %}" target="_blank" class="btn btn-xs btn-outline-info py-1 px-2 ms-1" title="Open Page File in New Tab">
+                            <i class="bi bi-box-arrow-up-right"></i>
+                        </a>
+                        {% endif %}
+                        {% endfor %}
+                        {% if submission.source_document %}
+                        <a href="{% url 'invoices:download_source_document' submission.source_document.id %}" class="btn btn-xs btn-outline-warning py-1 px-2 ms-1" title="Download Complete Original Source Document ({{ submission.source_document.file_name }})">
+                            <i class="bi bi-file-earmark-arrow-down-fill me-1"></i>Full Source
+                        </a>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <!-- Viewport Canvas with Smooth Scroll & Pan -->
+                <div class="doc-viewport position-relative" id="docViewport" style="flex: 1; overflow: auto; cursor: grab; user-select: none; -webkit-overflow-scrolling: touch; background-color: #1e293b;">
+                    <div id="panSurface" class="d-flex align-items-center justify-content-center p-3" style="min-width: 100%; min-height: 100%; width: max-content; height: max-content; margin: auto;">
+                        {% for doc in active_docs %}
+                        {% if doc.is_image %}
+                        <img src="{% url 'invoices:serve_document' doc.id %}" id="docImage_{{ doc.id }}" class="doc-img {% if not forloop.first %}d-none{% endif %}" alt="Invoice Scan" data-docid="{{ doc.id }}" style="display: block; max-width: none; height: auto; transform-origin: center center; transition: width 0.12s ease-out, transform 0.12s ease-out; image-rendering: -webkit-optimize-contrast; pointer-events: none;" draggable="false">
+                        {% elif doc.is_pdf %}
+                        <iframe src="{% url 'invoices:serve_document' doc.id %}#toolbar=0" style="width: 100%; height: 100%; min-height: 550px; border: none;" class="doc-pdf {% if not forloop.first %}d-none{% endif %}"></iframe>
+                        {% endif %}
+                        {% endfor %}
+                    </div>
+
+                    <!-- Drag Hint Overlay -->
+                    <div class="position-absolute bottom-0 start-0 m-2 px-2 py-1 bg-dark bg-opacity-75 text-white rounded small" style="font-size: 0.72rem; pointer-events: none; z-index: 10;">
+                        <i class="bi bi-arrows-move me-1"></i>Scroll or Click &amp; Drag to pan &bull; Zoom controls above
+                    </div>
+                </div>
+
+                <!-- Multi-Page Thumbnail Selector -->
+                {% if active_docs.count > 1 %}
+                <div class="bg-dark p-2 border-top border-secondary border-opacity-25 d-flex gap-2 overflow-auto">
+                    {% for doc in active_docs %}
+                    <button type="button" class="btn btn-xs btn-outline-light doc-page-thumb {% if forloop.first %}active{% endif %}" data-target="{{ doc.id }}" data-page="{{ doc.page_number }}" data-filename="{{ doc.original_filename }}">
+                        Page {{ doc.page_number }}
+                    </button>
+                    {% endfor %}
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- =================================================================== -->
+        <!-- RIGHT PANEL: Candidate Extraction & Verification Desk (50%) -->
+        <!-- =================================================================== -->
+        <div class="col-12 col-lg-6 h-100">
+            <div class="form-pane">
+                
+                <!-- Advisory OCR Confidence Indicator Banner -->
+                <div class="card card-enterprise shadow-sm p-3 mb-3 bg-light border">
+                    <div class="d-flex align-items-center justify-content-between mb-1">
+                        <span class="small fw-bold text-dark">
+                            <i class="bi bi-robot text-primary me-1"></i>Advisory OCR Extraction Candidate
+                        </span>
+                        <span class="badge {% if submission.ocr_confidence >= 0.85 %}bg-success{% elif submission.ocr_confidence >= 0.60 %}bg-warning text-dark{% else %}bg-secondary{% endif %}">
+                            Confidence: {% if submission.ocr_confidence > 0 %}{{ submission.ocr_confidence|floatformat:2 }}{% else %}Manual Review Required{% endif %}
+                        </span>
+                    </div>
+                    <div class="confidence-meter mb-2">
+                        <div class="confidence-fill {% if submission.ocr_confidence >= 0.85 %}bg-success{% elif submission.ocr_confidence >= 0.60 %}bg-warning{% else %}bg-secondary{% endif %}" style="width: {% if submission.ocr_confidence > 0 %}{{ submission.ocr_confidence|floatformat:0 }}%{% else %}15%{% endif %};"></div>
+                    </div>
+                    <div class="small text-muted" style="font-size: 0.73rem;">
+                        <i class="bi bi-shield-lock-fill text-warning me-1"></i><strong>Financial Safety Gate:</strong> OCR extracted fields are strictly advisory. Review and confirm all values before approving.
+                    </div>
+                </div>
+
+                <!-- Invoice Boundary Management (Split / Merge Tools for Multi-Invoice Documents) -->
+                {% if submission.source_document and submission.source_document.total_pages > 1 %}
+                <div class="card card-enterprise shadow-sm p-2 mb-3 border-info border-opacity-50 bg-info bg-opacity-10">
+                    <div class="d-flex align-items-center justify-content-between">
+                        <div class="small fw-bold text-dark">
+                            <i class="bi bi-segmented-nav text-info me-1"></i>Document Provenance &amp; Boundaries
+                        </div>
+                        <span class="badge bg-secondary font-monospace" style="font-size: 0.7rem;">
+                            {{ submission.source_document.file_name }} &bull; Pg {{ submission.start_page }}–{{ submission.end_page }} of {{ submission.source_document.total_pages }}
+                        </span>
+                    </div>
+                    <div class="d-flex gap-2 mt-2 flex-wrap">
+                        {% if submission.start_page < submission.end_page %}
+                        <form method="POST" action="{% url 'invoices:split_invoice' submission.submission_id %}" class="d-flex align-items-center gap-1">
+                            {% csrf_token %}
+                            <span class="small text-muted" style="font-size: 0.72rem;">Split at Pg:</span>
+                            <input type="number" name="split_at_page" min="{{ submission.start_page|add:1 }}" max="{{ submission.end_page }}" value="{{ submission.start_page|add:1 }}" class="form-control form-control-sm text-center" style="width: 55px; height: 26px; font-size: 0.75rem;">
+                            <button type="submit" class="btn btn-xs btn-outline-danger py-0 px-2" style="height: 26px;" onclick="return confirm('Split this invoice into two independent purchase records?');">
+                                <i class="bi bi-scissors me-1"></i>Split
+                            </button>
+                        </form>
+                        {% endif %}
+                        <a href="{% url 'invoices:download_source_document' submission.source_document.id %}" class="btn btn-xs btn-outline-secondary py-0 px-2 ms-auto" style="height: 26px; line-height: 24px;">
+                            <i class="bi bi-download me-1"></i>Download Full PDF ({{ submission.source_document.total_pages }} pages)
+                        </a>
+                    </div>
+                </div>
+                {% endif %}
+
+                <!-- Verification & Corrections Form -->
+                <form method="POST" action="{% url 'invoices:verification_workspace' submission.submission_id %}" id="verificationForm" class="card card-enterprise shadow-sm p-3 mb-3">
+                    {% csrf_token %}
+
+                    <div class="row g-2 mb-2">
+                        <!-- Supplier / Party Name -->
+                        <div class="col-12 col-md-8">
+                            <label class="form-label small fw-bold text-dark mb-1">
+                                Supplier / Party Name <span class="text-danger">*</span>
+                            </label>
+                            <input type="text" name="party_name" id="fieldPartyName" value="{{ submission.party_name }}" class="form-control form-control-sm fw-semibold" placeholder="e.g. Murugan Diesel / Essar Auto Spares" required>
+                        </div>
+
+                        <!-- Supplier GSTIN -->
+                        <div class="col-12 col-md-4">
+                            <label class="form-label small fw-bold text-dark mb-1">
+                                Supplier GSTIN
+                            </label>
+                            <input type="text" name="party_gstin" id="fieldGstin" value="{{ submission.party_gstin }}" maxlength="15" class="form-control form-control-sm font-monospace text-uppercase" placeholder="29XXXXX0000X0ZX">
+                        </div>
+                    </div>
+
+                    <div class="row g-2 mb-2">
+                        <!-- Invoice Number -->
+                        <div class="col-12 col-md-4">
+                            <label class="form-label small fw-bold text-dark mb-1">
+                                Bill / Invoice Number <span class="text-danger">*</span>
+                            </label>
+                            <input type="text" name="invoice_number" id="fieldInvoiceNumber" value="{{ submission.invoice_number|default:submission.submission_id }}" class="form-control form-control-sm font-monospace fw-semibold" required>
+                        </div>
+
+                        <!-- Invoice Date -->
+                        <div class="col-12 col-md-4">
+                            <label class="form-label small fw-bold text-dark mb-1">
+                                Bill Date <span class="text-danger">*</span>
+                            </label>
+                            <input type="date" name="invoice_date" id="fieldInvoiceDate" value="{{ submission.invoice_date|date:'Y-m-d'|default:submission.created_at|date:'Y-m-d' }}" class="form-control form-control-sm" required>
+                        </div>
+
+                        <!-- HSN / SAC Code -->
+                        <div class="col-12 col-md-4">
+                            <label class="form-label small fw-semibold text-secondary mb-1">
+                                HSN / SAC Code
+                            </label>
+                            <input type="text" name="hsn_sac_code" value="{{ submission.hsn_sac_code }}" maxlength="10" class="form-control form-control-sm font-monospace" placeholder="e.g. 2710 / 9965">
+                        </div>
+                    </div>
+
+                    <!-- Tally Expense Ledger Selector -->
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold text-dark mb-1">
+                            Tally Purchase Expense Ledger <span class="text-danger">*</span>
+                        </label>
+                        <select name="expense_ledger" class="form-select form-select-sm fw-semibold text-primary">
+                            {% for m in ledger_mappings %}
+                            <option value="{{ m.tally_expense_ledger }}" {% if submission.expense_ledger == m.tally_expense_ledger %}selected{% endif %}>
+                                {{ m.tally_expense_ledger }} ({{ m.category_name }})
+                            </option>
+                            {% endfor %}
+                            <option value="Diesel Expenses" {% if submission.expense_ledger == 'Diesel Expenses' %}selected{% endif %}>Diesel Expenses</option>
+                            <option value="Purchase Spares & Consumables" {% if submission.expense_ledger == 'Purchase Spares & Consumables' %}selected{% endif %}>Purchase Spares & Consumables</option>
+                            <option value="Vehicle Repairs & Maintenance" {% if submission.expense_ledger == 'Vehicle Repairs & Maintenance' %}selected{% endif %}>Vehicle Repairs & Maintenance</option>
+                            <option value="Tyre & Tube Expenses" {% if submission.expense_ledger == 'Tyre & Tube Expenses' %}selected{% endif %}>Tyre & Tube Expenses</option>
+                            <option value="Toll & Permit Expenses" {% if submission.expense_ledger == 'Toll & Permit Expenses' %}selected{% endif %}>Toll & Permit Expenses</option>
+                        </select>
+                    </div>
+
+                    <!-- Financial Values Grid -->
+                    <div class="p-2 bg-light border rounded-3 mb-3">
+                        <div class="d-flex align-items-center justify-content-between mb-2">
+                            <span class="small fw-bold text-dark">Financial & Tax Breakdown</span>
+                            <button type="button" class="btn btn-xs btn-outline-primary py-0 px-2" id="btnAutoCalcTax" style="font-size: 0.72rem;">
+                                <i class="bi bi-calculator me-1"></i>Auto-Calc 18% GST (CGST 9% + SGST 9%)
+                            </button>
+                        </div>
+
+                        <div class="row g-2 mb-2">
+                            <div class="col-6 col-md-3">
+                                <label class="form-label small text-muted mb-0" style="font-size: 0.72rem;">Taxable Base (&#8377;)</label>
+                                <input type="number" step="0.01" name="taxable_amount" id="valTaxable" value="{{ submission.taxable_amount }}" class="form-control form-control-sm text-end font-monospace">
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <label class="form-label small text-muted mb-0" style="font-size: 0.72rem;">CGST (&#8377;)</label>
+                                <input type="number" step="0.01" name="cgst_amount" id="valCgst" value="{{ submission.cgst_amount }}" class="form-control form-control-sm text-end font-monospace">
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <label class="form-label small text-muted mb-0" style="font-size: 0.72rem;">SGST (&#8377;)</label>
+                                <input type="number" step="0.01" name="sgst_amount" id="valSgst" value="{{ submission.sgst_amount }}" class="form-control form-control-sm text-end font-monospace">
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <label class="form-label small text-muted mb-0" style="font-size: 0.72rem;">IGST (&#8377;)</label>
+                                <input type="number" step="0.01" name="igst_amount" id="valIgst" value="{{ submission.igst_amount }}" class="form-control form-control-sm text-end font-monospace">
+                            </div>
+                        </div>
+
+                        <div class="row g-2 align-items-center pt-2 border-top">
+                            <div class="col-6 text-end small fw-bold text-dark">
+                                Total Invoice Amount (Gross &#8377;):
+                            </div>
+                            <div class="col-6">
+                                <input type="number" step="0.01" name="total_amount" id="valTotal" value="{{ submission.total_amount }}" class="form-control form-control-sm text-end font-monospace fw-bold fs-6 text-success border-success" required>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Audit Reason Note (Optional) -->
+                    <div class="mb-3">
+                        <label class="form-label small text-muted mb-1" style="font-size: 0.72rem;">Correction / Verification Reason (Audit Log)</label>
+                        <input type="text" name="audit_reason" class="form-control form-control-sm" placeholder="e.g. Corrected handwritten bill total from original scan">
+                    </div>
+
+                    <!-- Submission Action Buttons -->
+                    <div class="d-flex align-items-center justify-content-between gap-2 pt-2 border-top flex-wrap">
+                        <button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#returnModal">
+                            <i class="bi bi-arrow-return-left me-1"></i>Return for Correction
+                        </button>
+
+                        <div class="d-flex align-items-center gap-2">
+                            <button type="submit" name="action" value="save_only" class="btn btn-sm btn-outline-secondary fw-semibold">
+                                <i class="bi bi-save me-1"></i>Save Corrections
+                            </button>
+                            <button type="submit" name="action" value="verify" class="btn btn-sm btn-success fw-bold px-3 shadow-sm">
+                                <i class="bi bi-check2-circle me-1"></i>Verify & Approve Purchase
+                            </button>
+                        </div>
+                    </div>
+                </form>
+
+                <!-- Field Modification Audit Trail Table -->
+                <div class="card card-enterprise shadow-sm p-3 mb-3">
+                    <div class="d-flex align-items-center justify-content-between mb-2">
+                        <span class="small fw-bold text-dark">
+                            <i class="bi bi-clock-history text-secondary me-1"></i>Field Modification Audit Trail
+                        </span>
+                        <span class="badge bg-light text-secondary border small">{{ audit_trails.count }} Edit{{ audit_trails.count|pluralize }}</span>
+                    </div>
+
+                    {% if audit_trails %}
+                    <div class="table-responsive">
+                        <table class="table table-sm table-bordered mb-0" style="font-size: 0.78rem;">
+                            <thead class="table-light text-secondary">
+                                <tr>
+                                    <th>Field Modified</th>
+                                    <th>Old Candidate</th>
+                                    <th>Verified Value</th>
+                                    <th>Editor</th>
+                                    <th>Time</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for audit in audit_trails %}
+                                <tr>
+                                    <td class="fw-semibold text-dark">{{ audit.field_name }}</td>
+                                    <td class="text-danger font-monospace text-truncate" style="max-width: 120px;">{{ audit.old_value|default:"(empty)" }}</td>
+                                    <td class="text-success font-monospace fw-bold text-truncate" style="max-width: 120px;">{{ audit.new_value }}</td>
+                                    <td>{{ audit.changed_by.get_full_name|default:audit.changed_by.username }}</td>
+                                    <td class="text-muted">{{ audit.changed_at|date:"d-M h:i A" }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <p class="text-muted small mb-0">No manual corrections have been made to this invoice yet.</p>
+                    {% endif %}
+                </div>
+
+            </div>
+        </div>
+
+    </div>
+
+</div>
+
+<!-- Modal: Return Invoice to Employee -->
+<div class="modal fade" id="returnModal" tabindex="-1" aria-labelledby="returnModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <form method="POST" action="{% url 'invoices:naveen_return' submission.submission_id %}" class="modal-content">
+            {% csrf_token %}
+            <div class="modal-header bg-danger text-white py-2">
+                <h6 class="modal-title fw-bold" id="returnModalLabel">
+                    <i class="bi bi-exclamation-triangle-fill me-1"></i>Return Invoice to {{ submission.employee.get_full_name|default:submission.employee.username }}
+                </h6>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p class="small text-muted mb-2">
+                    Specify why this invoice cannot be verified. The employee will receive this feedback on their phone and be asked to resubmit a clear photo.
+                </p>
+                <div class="mb-3">
+                    <label class="form-label small fw-bold">Reason for Return <span class="text-danger">*</span></label>
+                    <textarea name="return_reason" class="form-control form-control-sm" rows="3" placeholder="e.g. Receipt is blurred, bill amount is torn, or please retake in proper lighting" required></textarea>
+                </div>
+            </div>
+            <div class="modal-footer py-2">
+                <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="submit" class="btn btn-sm btn-danger fw-bold">
+                    <i class="bi bi-arrow-return-left me-1"></i>Confirm Return
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const viewport = document.getElementById('docViewport');
+    const images = document.querySelectorAll('.doc-viewport img');
+    let activeImg = document.querySelector('.doc-viewport img:not(.d-none)') || images[0];
+
+    let currentScale = 1.0;
+    let currentRotation = 0;
+    let isEnhanced = false;
+
+    function getActiveImg() {
+        return document.querySelector('.doc-viewport img:not(.d-none)') || images[0];
+    }
+
+    function applyTransforms() {
+        const img = getActiveImg();
+        if (!img) return;
+
+        const baseWidth = img.naturalWidth || (viewport.clientWidth - 40);
+        const targetWidth = Math.round(baseWidth * currentScale);
+        img.style.width = targetWidth + 'px';
+
+        let filters = [];
+        if (isEnhanced) {
+            filters.push('contrast(1.65) brightness(1.05) saturate(0.2)');
+        }
+        img.style.filter = filters.join(' ');
+        img.style.transform = `rotate(${currentRotation}deg)`;
+
+        const percentEl = document.getElementById('btnResetZoom');
+        if (percentEl) {
+            percentEl.textContent = Math.round(currentScale * 100) + '%';
+        }
+    }
+
+    // Initialize width when loaded
+    images.forEach(img => {
+        img.addEventListener('load', function() {
+            fitWidth();
+        });
+        if (img.complete && img.naturalWidth) {
+            setTimeout(fitWidth, 50);
+        }
+    });
+
+    function fitWidth() {
+        const img = getActiveImg();
+        if (!img) return;
+        const availWidth = viewport.clientWidth - 48;
+        const natural = img.naturalWidth || availWidth;
+        currentScale = Math.max(0.2, Math.min(3.0, availWidth / natural));
+        currentRotation = 0;
+        applyTransforms();
+    }
+
+    function fitScreen() {
+        const img = getActiveImg();
+        if (!img) return;
+        const availHeight = viewport.clientHeight - 48;
+        const naturalHeight = img.naturalHeight || availHeight;
+        currentScale = Math.max(0.2, Math.min(3.0, availHeight / naturalHeight));
+        currentRotation = 0;
+        applyTransforms();
+    }
+
+    document.getElementById('btnZoomIn')?.addEventListener('click', function() {
+        currentScale = Math.min(currentScale + 0.25, 4.0);
+        applyTransforms();
+    });
+
+    document.getElementById('btnZoomOut')?.addEventListener('click', function() {
+        currentScale = Math.max(currentScale - 0.25, 0.25);
+        applyTransforms();
+    });
+
+    document.getElementById('btnResetZoom')?.addEventListener('click', function() {
+        currentScale = 1.0;
+        applyTransforms();
+    });
+
+    document.getElementById('btnFitWidth')?.addEventListener('click', fitWidth);
+    document.getElementById('btnFitScreen')?.addEventListener('click', fitScreen);
+
+    document.getElementById('btnRotate')?.addEventListener('click', function() {
+        currentRotation = (currentRotation + 90) % 360;
+        applyTransforms();
+    });
+
+    document.getElementById('btnEnhance')?.addEventListener('click', function() {
+        isEnhanced = !isEnhanced;
+        this.classList.toggle('btn-info', isEnhanced);
+        this.classList.toggle('btn-outline-light', !isEnhanced);
+        applyTransforms();
+    });
+
+    // Native mousewheel: standard wheel scrolls page, Ctrl+wheel zooms
+    viewport.addEventListener('wheel', function(e) {
+        if (e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+            const delta = e.deltaY < 0 ? 0.15 : -0.15;
+            currentScale = Math.max(0.25, Math.min(4.0, currentScale + delta));
+            applyTransforms();
+        }
+    }, { passive: false });
+
+    // Drag-to-pan implementation
+    let isDragging = false;
+    let startX = 0, startY = 0;
+    let initialScrollLeft = 0, initialScrollTop = 0;
+
+    viewport.addEventListener('mousedown', function(e) {
+        if (e.button !== 0) return;
+        isDragging = true;
+        viewport.style.cursor = 'grabbing';
+        startX = e.pageX;
+        startY = e.pageY;
+        initialScrollLeft = viewport.scrollLeft;
+        initialScrollTop = viewport.scrollTop;
+    });
+
+    window.addEventListener('mousemove', function(e) {
+        if (!isDragging) return;
+        e.preventDefault();
+        const deltaX = e.pageX - startX;
+        const deltaY = e.pageY - startY;
+        viewport.scrollLeft = initialScrollLeft - deltaX;
+        viewport.scrollTop = initialScrollTop - deltaY;
+    });
+
+    window.addEventListener('mouseup', function() {
+        if (isDragging) {
+            isDragging = false;
+            viewport.style.cursor = 'grab';
+        }
+    });
+
+    // Touch Support: Drag & Pinch-to-zoom
+    let touchStartX = 0, touchStartY = 0;
+    let touchInitialScrollLeft = 0, touchInitialScrollTop = 0;
+    let initialPinchDistance = null;
+    let initialPinchScale = 1.0;
+
+    viewport.addEventListener('touchstart', function(e) {
+        if (e.touches.length === 1) {
+            touchStartX = e.touches[0].pageX;
+            touchStartY = e.touches[0].pageY;
+            touchInitialScrollLeft = viewport.scrollLeft;
+            touchInitialScrollTop = viewport.scrollTop;
+            initialPinchDistance = null;
+        } else if (e.touches.length === 2) {
+            initialPinchDistance = Math.hypot(
+                e.touches[0].pageX - e.touches[1].pageX,
+                e.touches[0].pageY - e.touches[1].pageY
+            );
+            initialPinchScale = currentScale;
+        }
+    }, { passive: true });
+
+    viewport.addEventListener('touchmove', function(e) {
+        if (e.touches.length === 1 && initialPinchDistance === null) {
+            const deltaX = e.touches[0].pageX - touchStartX;
+            const deltaY = e.touches[0].pageY - touchStartY;
+            viewport.scrollLeft = touchInitialScrollLeft - deltaX;
+            viewport.scrollTop = touchInitialScrollTop - deltaY;
+        } else if (e.touches.length === 2 && initialPinchDistance !== null) {
+            e.preventDefault();
+            const currentDist = Math.hypot(
+                e.touches[0].pageX - e.touches[1].pageX,
+                e.touches[0].pageY - e.touches[1].pageY
+            );
+            const factor = currentDist / initialPinchDistance;
+            currentScale = Math.max(0.25, Math.min(4.0, initialPinchScale * factor));
+            applyTransforms();
+        }
+    }, { passive: false });
+
+    // 2. Multi-Page Thumbnail Switcher
+    const thumbs = document.querySelectorAll('.doc-page-thumb');
+    thumbs.forEach(thumb => {
+        thumb.addEventListener('click', function() {
+            thumbs.forEach(t => t.classList.remove('active'));
+            this.classList.add('active');
+
+            const targetId = this.dataset.target;
+            const pageNum = this.dataset.page;
+            const filename = this.dataset.filename;
+
+            const pageInd = document.getElementById('pageIndicator');
+            if (pageInd) pageInd.textContent = `Page ${pageNum} of {{ active_docs.count }}`;
+            const fileEl = document.getElementById('docFilename');
+            if (fileEl) fileEl.textContent = filename;
+
+            images.forEach(img => {
+                if (img.dataset.docid === targetId) {
+                    img.classList.remove('d-none');
+                } else {
+                    img.classList.add('d-none');
+                }
+            });
+            fitWidth();
+        });
+    });
+
+    // 3. Auto-Calculate Tax Helper Button
+    document.getElementById('btnAutoCalcTax')?.addEventListener('click', function() {
+        const taxable = parseFloat(document.getElementById('valTaxable').value) || 0;
+        if (taxable > 0) {
+            const isInterstate = (document.getElementById('fieldGstin').value.substring(0, 2) !== '29');
+            if (isInterstate) {
+                const igst = (taxable * 0.18).toFixed(2);
+                document.getElementById('valIgst').value = igst;
+                document.getElementById('valCgst').value = '0.00';
+                document.getElementById('valSgst').value = '0.00';
+                document.getElementById('valTotal').value = (taxable + parseFloat(igst)).toFixed(2);
+            } else {
+                const halfTax = (taxable * 0.09).toFixed(2);
+                document.getElementById('valCgst').value = halfTax;
+                document.getElementById('valSgst').value = halfTax;
+                document.getElementById('valIgst').value = '0.00';
+                document.getElementById('valTotal').value = (taxable + (parseFloat(halfTax) * 2)).toFixed(2);
+            }
+        }
+    });
+});
+</script>
+{% endblock %}
+

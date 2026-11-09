@@ -1,0 +1,307 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Executive Purchase Analytics & Insights{% endblock %}
+
+{% block extra_css %}
+<style>
+    .progress-bar-thin {
+        height: 8px;
+        border-radius: 4px;
+    }
+    .metric-card-kpi {
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+    .metric-card-kpi:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 16px rgba(0,0,0,0.08);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-3 px-lg-4 py-3">
+
+    <!-- Header & Download Reports Bar -->
+    <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3">
+        <div>
+            <div class="d-flex align-items-center gap-2">
+                <h4 class="fw-bold text-dark mb-0">
+                    <i class="bi bi-graph-up-arrow text-primary me-2"></i>Executive Purchase Analytics & Insights
+                </h4>
+                <span class="badge bg-primary-subtle text-primary border fw-semibold">Phase 7</span>
+            </div>
+            <p class="text-muted small mb-0 mt-1">
+                Real database-calculated metrics, monthly transport spend trends, supplier turnover, and audit reports.
+            </p>
+        </div>
+
+        <!-- Downloadable Executive Excel Reports -->
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+            <div class="dropdown">
+                <button class="btn btn-sm btn-outline-success dropdown-toggle fw-bold shadow-sm" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                    <i class="bi bi-file-earmark-spreadsheet-fill me-1"></i>Download Executive Reports (.xlsx)
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+                    <li><h6 class="dropdown-header text-uppercase small" style="font-size: 0.7rem;">Official Audit Reports</h6></li>
+                    <li>
+                        <a class="dropdown-item small" href="{% url 'invoices:download_executive_report' 'monthly_summary' %}">
+                            <i class="bi bi-calendar3 me-2 text-primary"></i>Monthly Purchase & Tax Summary
+                        </a>
+                    </li>
+                    <li>
+                        <a class="dropdown-item small" href="{% url 'invoices:download_executive_report' 'supplier_summary' %}">
+                            <i class="bi bi-building me-2 text-success"></i>Supplier Turnover & Tax Report
+                        </a>
+                    </li>
+                    <li>
+                        <a class="dropdown-item small" href="{% url 'invoices:download_executive_report' 'compliance_audit' %}">
+                            <i class="bi bi-shield-exclamation me-2 text-danger"></i>GST Compliance & Exception Audit
+                        </a>
+                    </li>
+                </ul>
+            </div>
+
+
+        </div>
+    </div>
+
+    <!-- Core Financial KPI Metric Cards -->
+    <div class="row g-2 mb-3">
+        <!-- Total Purchases -->
+        <div class="col-6 col-md-4 col-xl-2">
+            <div class="card card-enterprise shadow-sm p-3 h-100 metric-card-kpi border-start border-4 border-primary">
+                <div class="text-muted small text-uppercase fw-semibold" style="font-size: 0.72rem;">Total Spend</div>
+                <div class="fs-4 fw-bold text-primary mt-1">&#8377;{{ kpis.total_value|floatformat:2 }}</div>
+                <div class="small text-muted" style="font-size: 0.7rem;">{{ kpis.total_invoices }} total invoices</div>
+            </div>
+        </div>
+
+        <!-- Taxable Purchases -->
+        <div class="col-6 col-md-4 col-xl-2">
+            <div class="card card-enterprise shadow-sm p-3 h-100 metric-card-kpi border-start border-4 border-info">
+                <div class="text-muted small text-uppercase fw-semibold" style="font-size: 0.72rem;">Taxable Purchases</div>
+                <div class="fs-4 fw-bold text-dark mt-1">&#8377;{{ kpis.total_taxable|floatformat:2 }}</div>
+                <div class="small text-muted" style="font-size: 0.7rem;">Net taxable base</div>
+            </div>
+        </div>
+
+        <!-- Total Input GST -->
+        <div class="col-6 col-md-4 col-xl-2">
+            <div class="card card-enterprise shadow-sm p-3 h-100 metric-card-kpi border-start border-4 border-warning">
+                <div class="text-muted small text-uppercase fw-semibold" style="font-size: 0.72rem;">Total Input GST</div>
+                <div class="fs-4 fw-bold text-dark mt-1">&#8377;{{ kpis.total_tax|floatformat:2 }}</div>
+                <div class="small text-muted" style="font-size: 0.7rem;">CGST+SGST+IGST</div>
+            </div>
+        </div>
+
+        <!-- Verification Pipeline -->
+        <div class="col-6 col-md-4 col-xl-2">
+            <div class="card card-enterprise shadow-sm p-3 h-100 metric-card-kpi border-start border-4 border-success">
+                <div class="text-muted small text-uppercase fw-semibold" style="font-size: 0.72rem;">Verified by Naveen</div>
+                <div class="fs-4 fw-bold text-success mt-1">{{ kpis.verified_count }}</div>
+                <div class="small text-muted" style="font-size: 0.7rem;">&#8377;{{ kpis.verified_value|floatformat:0 }} verified</div>
+            </div>
+        </div>
+
+        <!-- Tally Entry Rate -->
+        <div class="col-6 col-md-4 col-xl-2">
+            <div class="card card-enterprise shadow-sm p-3 h-100 metric-card-kpi border-start border-4 border-dark">
+                <div class="text-muted small text-uppercase fw-semibold" style="font-size: 0.72rem;">Tally Entry Progress</div>
+                <div class="fs-4 fw-bold text-dark mt-1">{{ kpis.tally_rate }}%</div>
+                <div class="small text-muted" style="font-size: 0.7rem;">{{ kpis.tally_done_count }} of {{ kpis.total_invoices }} entered</div>
+            </div>
+        </div>
+
+        <!-- Compliance Exceptions -->
+        <div class="col-6 col-md-4 col-xl-2">
+            <div class="card card-enterprise shadow-sm p-3 h-100 metric-card-kpi border-start border-4 border-danger">
+                <div class="text-muted small text-uppercase fw-semibold" style="font-size: 0.72rem;">Review Exceptions</div>
+                <div class="fs-4 fw-bold text-danger mt-1">
+                    {{ kpis.missing_gstin_count|add:kpis.ambiguous_vendor_count }}
+                </div>
+                <div class="small text-muted" style="font-size: 0.7rem;">GSTIN / Vendor flags</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Middle Row: Monthly Trends & Top Suppliers -->
+    <div class="row g-3 mb-3">
+        <!-- Monthly Spend Trends -->
+        <div class="col-12 col-xl-7">
+            <div class="card card-enterprise shadow-sm h-100">
+                <div class="card-enterprise-header py-2 px-3 bg-white border-bottom d-flex align-items-center justify-content-between">
+                    <span class="fw-bold text-dark fs-6">
+                        <i class="bi bi-calendar3 text-primary me-2"></i>Monthly Purchase Spend Trends
+                    </span>
+                    <span class="badge bg-light text-secondary border small">Current Financial Year</span>
+                </div>
+                <div class="p-3">
+                    {% if monthly_trends %}
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle mb-0" style="font-size: 0.88rem;">
+                            <thead class="table-light text-secondary small">
+                                <tr>
+                                    <th>Month</th>
+                                    <th class="text-center">Invoices</th>
+                                    <th class="text-end">Taxable (&#8377;)</th>
+                                    <th class="text-end">Input GST (&#8377;)</th>
+                                    <th class="text-end fw-bold">Gross Spend (&#8377;)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for m in monthly_trends %}
+                                <tr>
+                                    <td class="fw-semibold text-dark">{{ m.month_label }}</td>
+                                    <td class="text-center"><span class="badge bg-secondary-subtle text-secondary">{{ m.count }}</span></td>
+                                    <td class="text-end font-monospace">&#8377;{{ m.taxable_val|floatformat:2 }}</td>
+                                    <td class="text-end font-monospace text-muted">&#8377;{{ m.tax_val|floatformat:2 }}</td>
+                                    <td class="text-end font-monospace fw-bold text-success fs-6">&#8377;{{ m.total_val|floatformat:2 }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <p class="text-muted py-4 text-center mb-0">No monthly purchase records found.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Top 10 Suppliers by Spend -->
+        <div class="col-12 col-xl-5">
+            <div class="card card-enterprise shadow-sm h-100">
+                <div class="card-enterprise-header py-2 px-3 bg-white border-bottom d-flex align-items-center justify-content-between">
+                    <span class="fw-bold text-dark fs-6">
+                        <i class="bi bi-building text-primary me-2"></i>Top Suppliers by Total Spend
+                    </span>
+                    <span class="badge bg-light text-secondary border small">Top 10 Vendors</span>
+                </div>
+                <div class="p-3">
+                    {% if top_suppliers %}
+                    <div class="table-responsive">
+                        <table class="table table-sm table-hover align-middle mb-0" style="font-size: 0.85rem;">
+                            <thead class="table-light text-secondary small">
+                                <tr>
+                                    <th>Supplier Name</th>
+                                    <th>Ledger</th>
+                                    <th class="text-center">Bills</th>
+                                    <th class="text-end">Total Spend (&#8377;)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for s in top_suppliers %}
+                                <tr>
+                                    <td>
+                                        <div class="fw-bold text-dark text-truncate" style="max-width: 170px;" title="{{ s.party_name }}">
+                                            {{ s.party_name }}
+                                        </div>
+                                        <span class="text-muted font-monospace" style="font-size: 0.68rem;">{{ s.party_gstin|default:"No GSTIN" }}</span>
+                                    </td>
+                                    <td>
+                                        <span class="badge bg-light text-secondary border" style="font-size: 0.72rem;">{{ s.expense_ledger }}</span>
+                                    </td>
+                                    <td class="text-center font-monospace">{{ s.invoice_count }}</td>
+                                    <td class="text-end font-monospace fw-bold text-dark">
+                                        &#8377;{{ s.total_spend|floatformat:2 }}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <p class="text-muted py-4 text-center mb-0">No supplier spend data available.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bottom Row: Expense Ledger Breakdown & Employee Collector Volume -->
+    <div class="row g-3">
+        <!-- Expense Ledger Distribution -->
+        <div class="col-12 col-md-6">
+            <div class="card card-enterprise shadow-sm h-100">
+                <div class="card-enterprise-header py-2 px-3 bg-white border-bottom d-flex align-items-center justify-content-between">
+                    <span class="fw-bold text-dark fs-6">
+                        <i class="bi bi-pie-chart-fill text-primary me-2"></i>Tally Expense Ledger Breakdown
+                    </span>
+                </div>
+                <div class="p-3">
+                    {% if ledger_dist %}
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle mb-0" style="font-size: 0.85rem;">
+                            <thead class="table-light text-secondary small">
+                                <tr>
+                                    <th>Expense Ledger</th>
+                                    <th class="text-center">Invoices</th>
+                                    <th class="text-end">Total Amount (&#8377;)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for l in ledger_dist %}
+                                <tr>
+                                    <td class="fw-semibold text-primary">{{ l.expense_ledger }}</td>
+                                    <td class="text-center"><span class="badge bg-secondary-subtle text-secondary">{{ l.count }}</span></td>
+                                    <td class="text-end font-monospace fw-bold text-dark">&#8377;{{ l.total_val|floatformat:2 }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <p class="text-muted py-3 text-center mb-0">No ledger distribution data found.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Employee Capture Volume -->
+        <div class="col-12 col-md-6">
+            <div class="card card-enterprise shadow-sm h-100">
+                <div class="card-enterprise-header py-2 px-3 bg-white border-bottom d-flex align-items-center justify-content-between">
+                    <span class="fw-bold text-dark fs-6">
+                        <i class="bi bi-people-fill text-primary me-2"></i>Employee Invoice Collection Volume
+                    </span>
+                </div>
+                <div class="p-3">
+                    {% if employee_stats %}
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle mb-0" style="font-size: 0.85rem;">
+                            <thead class="table-light text-secondary small">
+                                <tr>
+                                    <th>Collector / Employee</th>
+                                    <th class="text-center">Invoices Captured</th>
+                                    <th class="text-center">Tally Entered</th>
+                                    <th class="text-end">Total Amount (&#8377;)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for e in employee_stats %}
+                                <tr>
+                                    <td class="fw-semibold text-dark">
+                                        {{ e.employee__first_name }} {{ e.employee__last_name|default:e.employee__username }}
+                                    </td>
+                                    <td class="text-center font-monospace">{{ e.count }}</td>
+                                    <td class="text-center">
+                                        <span class="badge bg-success-subtle text-success border border-success">{{ e.tally_entered_count }}</span>
+                                    </td>
+                                    <td class="text-end font-monospace fw-bold text-dark">&#8377;{{ e.total_val|floatformat:2 }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <p class="text-muted py-3 text-center mb-0">No employee collection records found.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+{% endblock %}
+

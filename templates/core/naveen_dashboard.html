@@ -1,0 +1,954 @@
+{% extends 'base.html' %}
+
+{% block title %}Naveen's Invoice Hub - Balaji Transports{% endblock %}
+{% block page_heading %}Invoice Documents Hub{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+    <!-- Header Row with Tools -->
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+        <div>
+            <h4 class="fw-bold mb-1" style="color: var(--primary-navy); letter-spacing: -0.02em;">
+                <i class="bi bi-inbox-fill me-2 text-teal"></i>Incoming Invoices & Receipts
+            </h4>
+            <p class="text-secondary small mb-0">
+                Direct chronological stream of employee invoice photos and PDFs. Check bills, update Tally, and mark entries as completed.
+            </p>
+        </div>
+        <div class="d-flex gap-2 align-items-center flex-wrap">
+            <!-- Tally Structured Excel Export -->
+            <a href="{% url 'invoices:export_tally_excel' %}?filter=verified_only" class="btn btn-sm btn-outline-success fw-bold shadow-sm" title="Structured Tally purchase voucher export">
+                <i class="bi bi-file-earmark-excel-fill me-1"></i> Tally Excel
+            </a>
+            <!-- Executive Analytics & Reports -->
+            <a href="{% url 'invoices:analytics_dashboard' %}" class="btn btn-sm btn-outline-info fw-semibold">
+                <i class="bi bi-graph-up-arrow me-1"></i> Analytics
+            </a>
+            <!-- Tally XML Export -->
+            <a href="{% url 'invoices:export_tally_xml' %}?filter=all" class="btn btn-sm btn-outline-secondary fw-semibold" title="Export XML for import into TallyPrime / Tally.ERP 9">
+                <i class="bi bi-filetype-xml me-1"></i> Tally XML
+            </a>
+            <a href="{% url 'core:naveen_dashboard' %}?tab={{ tab }}" class="btn btn-sm btn-light border" title="Refresh Feed">
+                <i class="bi bi-arrow-clockwise"></i> Refresh
+            </a>
+        </div>
+    </div>
+
+    <!-- Summary KPI Filter Cards -->
+    <div class="row g-3 mb-4">
+        <!-- Active Daily Pending Card -->
+        <div class="col-12 col-md-4">
+            <a href="{% url 'core:naveen_dashboard' %}?tab=pending" class="text-decoration-none">
+                <div class="metric-card accent-amber {% if tab == 'pending' %}shadow border-2 border-warning{% endif %}">
+                    <div class="metric-label d-flex justify-content-between align-items-center">
+                        <span>Active Pending Work</span>
+                        {% if carryover_count > 0 %}
+                        <span class="badge bg-danger text-white animate-pulse" style="font-size: 0.7rem;">
+                            {{ carryover_count }} Missed
+                        </span>
+                        {% endif %}
+                    </div>
+                    <div class="metric-value text-warning">{{ total_pending_count|default:0 }}</div>
+                    <div class="metric-sub">
+                        {% if carryover_count > 0 %}
+                        <span class="text-danger fw-bold"><i class="bi bi-exclamation-triangle-fill me-1"></i>{{ carryover_count }} carried over</span> + {{ today_pending_count }} today
+                        {% elif today_pending_count > 0 %}
+                        <i class="bi bi-hourglass-split me-1"></i>{{ today_pending_count }} today waiting for Tally entry
+                        {% else %}
+                        <span class="text-success fw-bold"><i class="bi bi-check-circle-fill me-1"></i>All caught up! Fresh feed</span>
+                        {% endif %}
+                    </div>
+                </div>
+            </a>
+        </div>
+
+        <!-- Completed in Tally Card -->
+        <div class="col-12 col-md-4">
+            <a href="{% url 'core:naveen_dashboard' %}?tab=completed" class="text-decoration-none">
+                <div class="metric-card accent-teal {% if tab == 'completed' %}shadow border-2 border-success{% endif %}">
+                    <div class="metric-label">Entered in Tally (Done)</div>
+                    <div class="metric-value text-success">{{ completed_count|default:0 }}</div>
+                    <div class="metric-sub"><i class="bi bi-check2-circle me-1"></i>Click to view completed archive</div>
+                </div>
+            </a>
+        </div>
+
+        <!-- Total Invoices Card -->
+        <div class="col-12 col-md-4">
+            <a href="{% url 'core:naveen_dashboard' %}?tab=all" class="text-decoration-none">
+                <div class="metric-card accent-blue {% if tab == 'all' %}shadow border-2 border-primary{% endif %}">
+                    <div class="metric-label">Total Invoices Received</div>
+                    <div class="metric-value">{{ total_received|default:0 }}</div>
+                    <div class="metric-sub"><i class="bi bi-receipt me-1"></i>Complete historical log ({{ total_pages }} pages)</div>
+                </div>
+            </a>
+        </div>
+    </div>
+
+    <!-- Navigation Tabs & Search -->
+    <div class="card card-enterprise mb-4">
+        <div class="card-body p-3">
+            <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+                <!-- Tabs -->
+                <ul class="nav nav-pills gap-2">
+                    <li class="nav-item">
+                        <a class="nav-link fw-semibold px-3 py-2 {% if tab == 'pending' %}active bg-warning text-dark{% else %}text-secondary bg-light{% endif %}" href="{% url 'core:naveen_dashboard' %}?tab=pending">
+                            <i class="bi bi-inbox-fill me-1"></i> Active Daily Feed
+                            {% if total_pending_count > 0 %}
+                            <span class="badge {% if carryover_count > 0 %}bg-danger text-white{% else %}bg-dark text-white{% endif %} ms-1">
+                                {{ total_pending_count }}
+                            </span>
+                            {% endif %}
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link fw-semibold px-3 py-2 {% if tab == 'completed' %}active bg-success text-white{% else %}text-secondary bg-light{% endif %}" href="{% url 'core:naveen_dashboard' %}?tab=completed">
+                            <i class="bi bi-check2-circle me-1"></i> Completed Archive
+                            <span class="badge bg-light text-dark ms-1">{{ completed_count }}</span>
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link fw-semibold px-3 py-2 {% if tab == 'all' %}active bg-dark text-white{% else %}text-secondary bg-light{% endif %}" href="{% url 'core:naveen_dashboard' %}?tab=all">
+                            <i class="bi bi-collection-fill me-1"></i> All Invoices
+                            <span class="badge bg-light text-dark ms-1">{{ total_received }}</span>
+                        </a>
+                    </li>
+                </ul>
+
+                <!-- Search Input -->
+                <form method="GET" action="{% url 'core:naveen_dashboard' %}" class="d-flex gap-2" style="min-width: 280px; max-width: 420px; flex-grow: 1;">
+                    <input type="hidden" name="tab" value="{{ tab }}">
+                    <div class="input-group">
+                        <span class="input-group-text bg-white border-end-0 text-muted"><i class="bi bi-search"></i></span>
+                        <input type="text" name="q" value="{{ query|default:'' }}" class="form-control border-start-0" placeholder="Search vendor, invoice no, ID, employee...">
+                        {% if query %}
+                        <a href="{% url 'core:naveen_dashboard' %}?tab={{ tab }}" class="btn btn-outline-secondary" title="Clear search">
+                            <i class="bi bi-x-lg"></i>
+                        </a>
+                        {% endif %}
+                        <button type="submit" class="btn btn-primary-dark">
+                            Search
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================================================================= -->
+    <!-- TAB 1: ACTIVE DAILY FEED (PENDING) -->
+    <!-- ================================================================= -->
+    {% if tab == 'pending' %}
+
+        {% if is_fresh_feed and not query %}
+        <!-- FRESH FEED CELEBRATION BANNER -->
+        <div class="card card-enterprise shadow-sm p-5 text-center my-3 border-2 border-success bg-white">
+            <div class="mx-auto mb-3" style="width: 80px; height: 80px; border-radius: 50%; background-color: rgba(25, 135, 84, 0.12); display: flex; align-items: center; justify-content: center;">
+                <i class="bi bi-check-circle-fill text-success" style="font-size: 3rem;"></i>
+            </div>
+            <h4 class="fw-bold text-dark mb-2">🎉 All Caught Up! Fresh Feed Ready</h4>
+            <p class="text-secondary mx-auto mb-3" style="max-width: 600px; font-size: 0.95rem;">
+                Every invoice from previous days and today has been checked and entered into Tally. There is zero pending backlog.
+            </p>
+            <div class="p-3 bg-light rounded-3 d-inline-block border mb-4 text-start" style="max-width: 620px;">
+                <div class="d-flex align-items-center gap-2">
+                    <i class="bi bi-info-circle-fill text-teal fs-5"></i>
+                    <span class="text-muted small">
+                        Today is <strong>{{ today_date_str }}</strong>. As employees capture photos or upload PDF receipts from their phones, they will appear here in chronological arrival order.
+                    </span>
+                </div>
+            </div>
+            <div>
+                <a href="{% url 'core:naveen_dashboard' %}?tab=completed" class="btn btn-outline-secondary me-2">
+                    <i class="bi bi-archive me-1"></i> View Completed Archive ({{ completed_count }})
+                </a>
+                <a href="{% url 'core:naveen_dashboard' %}?tab=pending" class="btn btn-teal fw-semibold">
+                    <i class="bi bi-arrow-clockwise me-1"></i> Refresh for New Bills
+                </a>
+            </div>
+        </div>
+        {% else %}
+
+        <!-- FORM WRAPPING ALL PENDING INVOICES FOR END-OF-DAY BATCH COMPLETION -->
+        <form method="POST" action="{% url 'invoices:batch_complete_tally' %}" id="batchCompleteForm">
+            {% csrf_token %}
+
+            <!-- SECTION A: MISSED / CARRY-OVER INVOICES FROM PREVIOUS DAYS -->
+            {% if carryover_invoices %}
+            <div class="alert alert-danger border-2 shadow-sm mb-4 p-3">
+                <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
+                    <div class="d-flex align-items-center">
+                        <i class="bi bi-exclamation-triangle-fill fs-3 text-danger me-2"></i>
+                        <div>
+                            <h5 class="fw-bold text-danger mb-0">
+                                ⚠️ {{ carryover_count }} Missed Invoice{{ carryover_count|pluralize }} Carried Over From Previous Days
+                            </h5>
+                            <small class="text-dark">
+                                These invoices arrived before today ({{ today_date_str }}) and were not marked as completed. Please update them in Tally first!
+                            </small>
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-outline-danger fw-bold" id="btnSelectAllCarryover">
+                        Select All Missed ({{ carryover_count }})
+                    </button>
+                </div>
+
+                <!-- Carry-over Table -->
+                <div class="table-responsive bg-white rounded border">
+                    <table class="table table-hover align-middle mb-0">
+                        <thead class="table-danger small">
+                            <tr>
+                                <th class="ps-3" style="width: 45px;">#</th>
+                                <th style="width: 120px;">Date & Time</th>
+                                <th style="width: 130px;">Sent By</th>
+                                <th style="width: 170px;">Party (Vendor)</th>
+                                <th style="width: 140px;">Invoice No / ID</th>
+                                <th style="width: 110px;">Amount (₹)</th>
+                                <th>Preview</th>
+                                <th class="text-center" style="width: 90px;">Action</th>
+                                <th class="text-center pe-3" style="width: 110px;">
+                                    <span class="text-danger fw-bold">Done in Tally?</span>
+                                </th>
+                            </tr>
+                        </thead>
+                        <tbody class="small">
+                            {% for sub in carryover_invoices %}
+                            <tr class="invoice-row carryover-row" id="row-{{ sub.submission_id }}">
+                                <td class="ps-3 fw-bold text-danger">{{ forloop.counter }}</td>
+                                
+                                <!-- Date and Time -->
+                                <td>
+                                    <div class="fw-bold text-danger">{{ sub.created_at|date:"d M Y" }}</div>
+                                    <small class="text-muted">{{ sub.created_at|date:"h:i A" }}</small>
+                                    <span class="badge bg-danger text-white d-block mt-1" style="font-size: 0.65rem;">
+                                        Carried Over
+                                    </span>
+                                </td>
+
+                                <!-- Sent By -->
+                                <td>
+                                    <div class="fw-bold text-dark">{{ sub.employee.get_full_name|default:sub.employee.username }}</div>
+                                    <small class="text-muted">{{ sub.employee.department.name|default:"Fleet" }}</small>
+                                </td>
+
+                                <!-- Party / Vendor Name -->
+                                <td>
+                                    <div class="fw-bold text-dark text-truncate" style="max-width: 180px;" title="{{ sub.party_name }}">
+                                        {% if sub.party_name %}
+                                            {{ sub.party_name }}
+                                        {% else %}
+                                            <span class="text-muted fst-italic">Pending Check</span>
+                                        {% endif %}
+                                    </div>
+                                    <div class="d-flex align-items-center gap-1 flex-wrap mt-1">
+                                        <span class="badge bg-light text-primary border border-primary border-opacity-25" style="font-size: 0.65rem;" title="Tally Expense Ledger">
+                                            <i class="bi bi-tag me-1"></i>{{ sub.expense_ledger|default:"Purchase Spares & Consumables" }}
+                                        </span>
+                                        {% if sub.party_gstin %}
+                                            <span class="badge bg-light text-secondary border font-monospace" style="font-size: 0.65rem;">{{ sub.party_gstin }}</span>
+                                        {% endif %}
+                                    </div>
+                                </td>
+
+                                <!-- Invoice Number & ID -->
+                                <td>
+                                    <div class="fw-bold font-monospace text-dark text-truncate" style="max-width: 140px;" title="{{ sub.invoice_number }}">
+                                        {% if sub.invoice_number %}
+                                            {{ sub.invoice_number }}
+                                        {% else %}
+                                            <span class="text-muted fst-italic">Pending Check</span>
+                                        {% endif %}
+                                    </div>
+                                    <small class="text-muted font-monospace" style="font-size: 0.68rem;">ID: {{ sub.submission_id }}</small>
+                            {% if sub.source_document and sub.source_document.total_pages > 1 %}
+                                <span class="badge bg-info bg-opacity-10 text-info border border-info border-opacity-25 ms-1" style="font-size: 0.62rem;" title="Extracted from {{ sub.source_document.file_name }}">
+                                    Pg {{ sub.start_page }}{% if sub.start_page != sub.end_page %}–{{ sub.end_page }}{% endif %}
+                                </span>
+                            {% endif %}
+                                    {% if sub.source_document and sub.source_document.total_pages > 1 %}
+                                        <span class="badge bg-info bg-opacity-10 text-info border border-info border-opacity-25 ms-1" style="font-size: 0.62rem;" title="Extracted from {{ sub.source_document.file_name }}">
+                                            Pg {{ sub.start_page }}{% if sub.start_page != sub.end_page %}–{{ sub.end_page }}{% endif %}
+                                        </span>
+                                    {% endif %}
+                                </td>
+
+                                <!-- Amount (₹) -->
+                                <td>
+                                    {% if sub.total_amount > 0 %}
+                                        <div class="fw-bold text-success font-monospace" style="font-size: 0.95rem;">₹{{ sub.total_amount|floatformat:2 }}</div>
+                                        {% if sub.cgst_amount > 0 or sub.sgst_amount > 0 or sub.igst_amount > 0 %}
+                                        <div class="text-muted" style="font-size: 0.68rem; line-height: 1.2;">
+                                            {% if sub.cgst_amount > 0 %}
+                                                <span class="text-primary font-monospace">CGST+SGST: ₹{{ sub.cgst_amount|add:sub.sgst_amount|floatformat:2 }}</span>
+                                            {% elif sub.igst_amount > 0 %}
+                                                <span class="text-info font-monospace">IGST: ₹{{ sub.igst_amount|floatformat:2 }}</span>
+                                            {% endif %}
+                                            {% if sub.taxable_amount > 0 %}
+                                                <span class="d-block text-secondary font-monospace" style="font-size: 0.65rem;">Base: ₹{{ sub.taxable_amount|floatformat:2 }}</span>
+                                            {% endif %}
+                                        </div>
+                                        {% endif %}
+                                    {% else %}
+                                        <span class="badge bg-light text-muted border font-monospace" style="font-size: 0.72rem;">Pending</span>
+                                    {% endif %}
+                                </td>
+
+                                <!-- Preview Thumbnail -->
+                                <td>
+                                    <div class="d-flex align-items-center gap-2 flex-wrap py-1">
+                                        {% for doc in sub.active_documents %}
+                                        <div class="border rounded p-1 bg-white text-center shadow-sm" style="width: 65px;">
+                                            {% if doc.is_image %}
+                                            <a href="{% url 'invoices:submission_detail' sub.submission_id %}" title="Click to view full clear bill">
+                                                <img src="{% url 'invoices:serve_document' doc.id %}" alt="Page {{ doc.page_number }}" style="width: 55px; height: 45px; object-fit: cover; image-rendering: -webkit-optimize-contrast;" class="rounded">
+                                            </a>
+                                            {% elif doc.is_pdf %}
+                                            <a href="{% url 'invoices:submission_detail' sub.submission_id %}" class="text-decoration-none text-danger d-block" style="height: 45px; padding-top: 5px;" title="Click to view PDF bill">
+                                                <i class="bi bi-file-earmark-pdf fs-4 d-block"></i>
+                                                <span style="font-size: 0.65rem;" class="fw-bold">PDF</span>
+                                            </a>
+                                            {% endif %}
+                                            <div class="text-muted" style="font-size: 0.65rem;">Pg {{ doc.page_number }}</div>
+                                        </div>
+                                        {% endfor %}
+                                    </div>
+                                </td>
+
+                                <!-- Action: View Bill -->
+                                <td class="text-center">
+                                    <a href="{% url 'invoices:submission_detail' sub.submission_id %}" class="btn btn-sm btn-teal fw-semibold shadow-sm">
+                                        <i class="bi bi-eye-fill me-1"></i>View
+                                    </a>
+                                </td>
+
+                                <!-- CHECKBOX AT RIGHT SIDE -->
+                                <td class="text-center pe-3 bg-light bg-opacity-50">
+                                    <div class="d-flex justify-content-center align-items-center">
+                                        <input type="checkbox" name="selected_invoices" value="{{ sub.submission_id }}" class="form-check-input invoice-checkbox carryover-checkbox" style="transform: scale(1.35); cursor: pointer;" title="Check when entered in Tally">
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- SECTION B: TODAY'S INCOMING INVOICES -->
+            <div class="card card-enterprise shadow-sm mb-4">
+                <div class="card-enterprise-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                    <div class="d-flex align-items-center gap-2">
+                        <h6 class="fw-bold mb-0 text-dark">
+                            <i class="bi bi-sun-fill me-2 text-warning"></i>
+                            Today's Incoming Invoices ({{ today_date_str }})
+                        </h6>
+                        <span class="badge bg-primary-subtle text-primary border small">
+                            {{ today_pending_count }} In Order
+                        </span>
+                    </div>
+
+                    <!-- SELECT CONTROLS INTEGRATED RIGHT NEAR SELECT TODAY'S -->
+                    <div class="d-flex align-items-center gap-2 flex-wrap">
+                        {% if today_invoices %}
+                        <div class="form-check form-check-inline mb-0 me-1">
+                            <input class="form-check-input" type="checkbox" id="selectAllMaster" style="transform: scale(1.15); cursor: pointer;" title="Select all pending">
+                            <label class="form-check-label fw-bold text-dark user-select-none small ms-1" for="selectAllMaster" style="cursor: pointer;">
+                                Select All ({{ total_pending_count }})
+                            </label>
+                        </div>
+                        <button type="button" class="btn btn-sm btn-outline-primary fw-semibold" id="btnSelectAllToday">
+                            <i class="bi bi-check-all me-1"></i>Select Today's ({{ today_pending_count }})
+                        </button>
+                        {% else %}
+                        <div class="d-none">
+                            <input type="checkbox" id="selectAllMaster">
+                        </div>
+                        {% endif %}
+
+                        <span class="badge bg-secondary px-2 py-1 fw-semibold" id="selectedCounter" style="font-size: 0.8rem;">
+                            0 selected
+                        </span>
+
+                        <button type="submit" id="btnBatchComplete" class="btn btn-sm btn-success fw-bold px-3 shadow-sm btn-batch-trigger" disabled>
+                            <i class="bi bi-check2-all me-1"></i>Save Day's Entries & Mark Completed
+                        </button>
+                    </div>
+                </div>
+
+                {% if today_invoices %}
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0">
+                        <thead class="table-light small">
+                            <tr>
+                                <th class="ps-3" style="width: 45px;">#</th>
+                                <th style="width: 120px;">Date & Time</th>
+                                <th style="width: 130px;">Sent By</th>
+                                <th style="width: 170px;">Party (Vendor)</th>
+                                <th style="width: 140px;">Invoice No / ID</th>
+                                <th style="width: 110px;">Amount (₹)</th>
+                                <th>Preview</th>
+                                <th class="text-center" style="width: 90px;">Action</th>
+                                <th class="text-center pe-3" style="width: 110px;">
+                                    <span class="text-primary fw-bold">Done in Tally?</span>
+                                </th>
+                            </tr>
+                        </thead>
+                        <tbody class="small">
+                            {% for sub in today_invoices %}
+                            <tr class="invoice-row today-row" id="row-{{ sub.submission_id }}">
+                                <td class="ps-3 fw-bold text-muted">{{ forloop.counter }}</td>
+
+                                <!-- Date and Time -->
+                                <td>
+                                    <div class="fw-bold text-dark">{{ sub.created_at|date:"d M Y" }}</div>
+                                    <small class="text-muted">{{ sub.created_at|date:"h:i A" }}</small>
+                                </td>
+
+                                <!-- Sent By -->
+                                <td>
+                                    <div class="fw-bold text-dark">{{ sub.employee.get_full_name|default:sub.employee.username }}</div>
+                                    <small class="text-muted">{{ sub.employee.department.name|default:"Fleet" }}</small>
+                                </td>
+
+                                <!-- Party / Vendor Name -->
+                                <td>
+                                    <div class="fw-bold text-dark text-truncate" style="max-width: 180px;" title="{{ sub.party_name }}">
+                                        {% if sub.party_name %}
+                                            {{ sub.party_name }}
+                                        {% else %}
+                                            <span class="text-muted fst-italic">Pending Check</span>
+                                        {% endif %}
+                                    </div>
+                                    <div class="d-flex align-items-center gap-1 flex-wrap mt-1">
+                                        <span class="badge bg-light text-primary border border-primary border-opacity-25" style="font-size: 0.65rem;" title="Tally Expense Ledger">
+                                            <i class="bi bi-tag me-1"></i>{{ sub.expense_ledger|default:"Purchase Spares & Consumables" }}
+                                        </span>
+                                        {% if sub.party_gstin %}
+                                            <span class="badge bg-light text-secondary border font-monospace" style="font-size: 0.65rem;">{{ sub.party_gstin }}</span>
+                                        {% endif %}
+                                    </div>
+                                </td>
+
+                                <!-- Invoice Number & ID -->
+                                <td>
+                                    <div class="fw-bold font-monospace text-dark text-truncate" style="max-width: 140px;" title="{{ sub.invoice_number }}">
+                                        {% if sub.invoice_number %}
+                                            {{ sub.invoice_number }}
+                                        {% else %}
+                                            <span class="text-muted fst-italic">Pending Check</span>
+                                        {% endif %}
+                                    </div>
+                                    <small class="text-muted font-monospace" style="font-size: 0.68rem;">ID: {{ sub.submission_id }}</small>
+                            {% if sub.source_document and sub.source_document.total_pages > 1 %}
+                                <span class="badge bg-info bg-opacity-10 text-info border border-info border-opacity-25 ms-1" style="font-size: 0.62rem;" title="Extracted from {{ sub.source_document.file_name }}">
+                                    Pg {{ sub.start_page }}{% if sub.start_page != sub.end_page %}–{{ sub.end_page }}{% endif %}
+                                </span>
+                            {% endif %}
+                                    {% if sub.source_document and sub.source_document.total_pages > 1 %}
+                                        <span class="badge bg-info bg-opacity-10 text-info border border-info border-opacity-25 ms-1" style="font-size: 0.62rem;" title="Extracted from {{ sub.source_document.file_name }}">
+                                            Pg {{ sub.start_page }}{% if sub.start_page != sub.end_page %}–{{ sub.end_page }}{% endif %}
+                                        </span>
+                                    {% endif %}
+                                </td>
+
+                                <!-- Amount (₹) -->
+                                <td>
+                                    {% if sub.total_amount > 0 %}
+                                        <div class="fw-bold text-success font-monospace" style="font-size: 0.95rem;">₹{{ sub.total_amount|floatformat:2 }}</div>
+                                        {% if sub.cgst_amount > 0 or sub.sgst_amount > 0 or sub.igst_amount > 0 %}
+                                        <div class="text-muted" style="font-size: 0.68rem; line-height: 1.2;">
+                                            {% if sub.cgst_amount > 0 %}
+                                                <span class="text-primary font-monospace">CGST+SGST: ₹{{ sub.cgst_amount|add:sub.sgst_amount|floatformat:2 }}</span>
+                                            {% elif sub.igst_amount > 0 %}
+                                                <span class="text-info font-monospace">IGST: ₹{{ sub.igst_amount|floatformat:2 }}</span>
+                                            {% endif %}
+                                            {% if sub.taxable_amount > 0 %}
+                                                <span class="d-block text-secondary font-monospace" style="font-size: 0.65rem;">Base: ₹{{ sub.taxable_amount|floatformat:2 }}</span>
+                                            {% endif %}
+                                        </div>
+                                        {% endif %}
+                                    {% else %}
+                                        <span class="badge bg-light text-muted border font-monospace" style="font-size: 0.72rem;">Pending</span>
+                                    {% endif %}
+                                </td>
+
+                                <!-- Preview Thumbnail -->
+                                <td>
+                                    <div class="d-flex align-items-center gap-2 flex-wrap py-1">
+                                        {% for doc in sub.active_documents %}
+                                        <div class="border rounded p-1 bg-white text-center shadow-sm" style="width: 65px;">
+                                            {% if doc.is_image %}
+                                            <a href="{% url 'invoices:submission_detail' sub.submission_id %}" title="Click to view full clear bill">
+                                                <img src="{% url 'invoices:serve_document' doc.id %}" alt="Page {{ doc.page_number }}" style="width: 55px; height: 45px; object-fit: cover; image-rendering: -webkit-optimize-contrast;" class="rounded">
+                                            </a>
+                                            {% elif doc.is_pdf %}
+                                            <a href="{% url 'invoices:submission_detail' sub.submission_id %}" class="text-decoration-none text-danger d-block" style="height: 45px; padding-top: 5px;" title="Click to view PDF bill">
+                                                <i class="bi bi-file-earmark-pdf fs-4 d-block"></i>
+                                                <span style="font-size: 0.65rem;" class="fw-bold">PDF</span>
+                                            </a>
+                                            {% endif %}
+                                            <div class="text-muted" style="font-size: 0.65rem;">Pg {{ doc.page_number }}</div>
+                                        </div>
+                                        {% endfor %}
+                                    </div>
+                                </td>
+
+                                <!-- Action: View Bill -->
+                                <td class="text-center">
+                                    <a href="{% url 'invoices:submission_detail' sub.submission_id %}" class="btn btn-sm btn-teal fw-semibold shadow-sm">
+                                        <i class="bi bi-eye-fill me-1"></i>View
+                                    </a>
+                                </td>
+
+                                <!-- CHECKBOX AT RIGHT SIDE -->
+                                <td class="text-center pe-3 bg-light bg-opacity-50">
+                                    <div class="d-flex justify-content-center align-items-center">
+                                        <input type="checkbox" name="selected_invoices" value="{{ sub.submission_id }}" class="form-check-input invoice-checkbox today-checkbox" style="transform: scale(1.35); cursor: pointer;" title="Check when entered in Tally">
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="card-body text-center py-4">
+                    <p class="text-muted mb-0 small">
+                        <i class="bi bi-clock me-1"></i> No invoices submitted by employees yet today ({{ today_date_str }}). Any new submissions will appear here automatically.
+                    </p>
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- BOTTOM BATCH SUBMIT BUTTON -->
+            <div class="d-flex justify-content-end align-items-center gap-3 p-3 bg-white border rounded shadow-sm">
+                <span class="text-muted small">
+                    Done checking your invoices in Tally? Click to save:
+                </span>
+                <button type="submit" class="btn btn-success btn-lg fw-bold px-4 shadow-sm btn-batch-trigger" disabled>
+                    <i class="bi bi-check2-all me-2"></i> Save Day's Entries & Mark Completed
+                </button>
+            </div>
+        </form>
+        {% endif %}
+
+    <!-- ================================================================= -->
+    <!-- TAB 2: COMPLETED ARCHIVE -->
+    <!-- ================================================================= -->
+    {% elif tab == 'completed' %}
+    <div class="card card-enterprise shadow-sm">
+        <div class="card-enterprise-header d-flex justify-content-between align-items-center">
+            <h6 class="fw-bold mb-0 text-dark">
+                <i class="bi bi-check2-circle me-2 text-success"></i>
+                Invoices Entered in Tally (Completed Archive)
+            </h6>
+            <span class="badge bg-success text-white">{{ completed_count }} Invoices Completed</span>
+        </div>
+
+        {% if completed_invoices %}
+        <form method="POST" action="{% url 'invoices:batch_undo_tally' %}">
+            {% csrf_token %}
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="table-light small">
+                        <tr>
+                            <th class="ps-3" style="width: 45px;">#</th>
+                            <th style="width: 120px;">Completed Date</th>
+                            <th style="width: 130px;">Sent By</th>
+                            <th style="width: 170px;">Party (Vendor)</th>
+                            <th style="width: 140px;">Invoice No / ID</th>
+                            <th style="width: 110px;">Amount (₹)</th>
+                            <th>Preview</th>
+                            <th style="width: 110px;">Tally Status</th>
+                            <th class="text-end pe-3" style="width: 130px;">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody class="small">
+                        {% for sub in completed_invoices %}
+                        <tr>
+                            <td class="ps-3 fw-bold text-muted">{{ forloop.counter }}</td>
+                            <td>
+                                <div class="fw-bold text-success">{{ sub.tally_entered_at|date:"d M Y"|default:sub.created_at|date:"d M Y" }}</div>
+                                <small class="text-muted">{{ sub.tally_entered_at|date:"h:i A" }}</small>
+                            </td>
+                            <td>
+                                <div class="fw-bold text-dark">{{ sub.employee.get_full_name|default:sub.employee.username }}</div>
+                                <small class="text-muted">{{ sub.employee.department.name|default:"Fleet" }}</small>
+                            </td>
+                            <td>
+                                <div class="fw-bold text-dark text-truncate" style="max-width: 170px;" title="{{ sub.party_name }}">
+                                    {% if sub.party_name %}
+                                        {{ sub.party_name }}
+                                    {% else %}
+                                        <span class="text-muted fst-italic">Standard Vendor</span>
+                                    {% endif %}
+                                </div>
+                                <div class="d-flex align-items-center gap-1 flex-wrap mt-1">
+                                    <span class="badge bg-light text-primary border border-primary border-opacity-25" style="font-size: 0.65rem;" title="Tally Expense Ledger">
+                                        <i class="bi bi-tag me-1"></i>{{ sub.expense_ledger|default:"Purchase Spares & Consumables" }}
+                                    </span>
+                                    {% if sub.party_gstin %}
+                                        <span class="badge bg-light text-secondary border font-monospace" style="font-size: 0.65rem;">{{ sub.party_gstin }}</span>
+                                    {% endif %}
+                                </div>
+                            </td>
+                            <td>
+                                <div class="fw-bold font-monospace text-dark text-truncate" style="max-width: 140px;" title="{{ sub.invoice_number }}">
+                                    {% if sub.invoice_number %}
+                                        {{ sub.invoice_number }}
+                                    {% else %}
+                                        <span class="text-muted fst-italic">Pending Check</span>
+                                    {% endif %}
+                                </div>
+                                <small class="text-muted font-monospace" style="font-size: 0.68rem;">ID: {{ sub.submission_id }}</small>
+                            {% if sub.source_document and sub.source_document.total_pages > 1 %}
+                                <span class="badge bg-info bg-opacity-10 text-info border border-info border-opacity-25 ms-1" style="font-size: 0.62rem;" title="Extracted from {{ sub.source_document.file_name }}">
+                                    Pg {{ sub.start_page }}{% if sub.start_page != sub.end_page %}–{{ sub.end_page }}{% endif %}
+                                </span>
+                            {% endif %}
+                            </td>
+                            <!-- Amount (₹) -->
+                            <td>
+                                {% if sub.total_amount > 0 %}
+                                    <div class="fw-bold text-success font-monospace" style="font-size: 0.95rem;">₹{{ sub.total_amount|floatformat:2 }}</div>
+                                    {% if sub.cgst_amount > 0 or sub.sgst_amount > 0 or sub.igst_amount > 0 %}
+                                    <div class="text-muted" style="font-size: 0.68rem; line-height: 1.2;">
+                                        {% if sub.cgst_amount > 0 %}
+                                            <span class="text-primary font-monospace">Tax: ₹{{ sub.cgst_amount|add:sub.sgst_amount|floatformat:2 }}</span>
+                                        {% elif sub.igst_amount > 0 %}
+                                            <span class="text-info font-monospace">IGST: ₹{{ sub.igst_amount|floatformat:2 }}</span>
+                                        {% endif %}
+                                        {% if sub.taxable_amount > 0 %}
+                                            <span class="d-block text-secondary font-monospace" style="font-size: 0.65rem;">Base: ₹{{ sub.taxable_amount|floatformat:2 }}</span>
+                                        {% endif %}
+                                    </div>
+                                    {% endif %}
+                                {% else %}
+                                    <span class="badge bg-light text-muted border font-monospace" style="font-size: 0.72rem;">₹0.00</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <div class="d-flex align-items-center gap-2 flex-wrap py-1">
+                                    {% for doc in sub.active_documents %}
+                                    <div class="border rounded p-1 bg-white text-center shadow-sm" style="width: 65px;">
+                                        {% if doc.is_image %}
+                                        <a href="{% url 'invoices:submission_detail' sub.submission_id %}" title="Click to view clear bill">
+                                            <img src="{% url 'invoices:serve_document' doc.id %}" alt="Page {{ doc.page_number }}" style="width: 55px; height: 45px; object-fit: cover; image-rendering: -webkit-optimize-contrast;" class="rounded shadow-sm">
+                                        </a>
+                                        {% elif doc.is_pdf %}
+                                        <a href="{% url 'invoices:submission_detail' sub.submission_id %}" class="text-decoration-none text-danger d-block" style="height: 45px; padding-top: 5px;" title="Click to view PDF bill">
+                                            <i class="bi bi-file-earmark-pdf fs-4 d-block"></i>
+                                            <span style="font-size: 0.65rem;" class="fw-bold">PDF</span>
+                                        </a>
+                                        {% endif %}
+                                        <div class="text-muted" style="font-size: 0.65rem;">Pg {{ doc.page_number }}</div>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                            </td>
+                            <td>
+                                <span class="badge bg-success bg-opacity-15 text-success border border-success px-2 py-1">
+                                    <i class="bi bi-check-circle-fill me-1"></i>Completed
+                                </span>
+                            </td>
+                            <td class="text-end pe-3">
+                                <div class="d-flex justify-content-end align-items-center gap-1">
+                                    <a href="{% url 'invoices:submission_detail' sub.submission_id %}" class="btn btn-sm btn-teal fw-semibold">
+                                        <i class="bi bi-eye-fill me-1"></i>View
+                                    </a>
+                                    <!-- 1-Click Move Back to Pending -->
+                                    <button type="submit" name="selected_invoices" value="{{ sub.submission_id }}" class="btn btn-sm btn-outline-secondary" title="Move back to pending">
+                                        Undo
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </form>
+        {% else %}
+        <div class="card-body text-center py-5">
+            <i class="bi bi-archive display-4 text-muted opacity-50 mb-3 d-block"></i>
+            <h6 class="fw-bold text-dark">No Completed Invoices Yet</h6>
+            <p class="text-muted small mb-0">Check invoices in the Active Daily Feed and click "Mark Completed" to archive them here.</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- ================================================================= -->
+    <!-- TAB 3: ALL INVOICES -->
+    <!-- ================================================================= -->
+    {% elif tab == 'all' %}
+    <div class="card card-enterprise shadow-sm">
+        <div class="card-enterprise-header d-flex justify-content-between align-items-center">
+            <h6 class="fw-bold mb-0 text-dark">
+                <i class="bi bi-collection-fill me-2 text-primary"></i>
+                All Invoices (Complete Historical Stream)
+            </h6>
+            <span class="badge bg-light text-dark border">{{ total_received }} Invoices</span>
+        </div>
+
+        {% if all_invoices %}
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light small">
+                    <tr>
+                        <th class="ps-3" style="width: 45px;">#</th>
+                        <th style="width: 120px;">Date & Time</th>
+                        <th style="width: 130px;">Sent By</th>
+                        <th style="width: 170px;">Party (Vendor)</th>
+                        <th style="width: 140px;">Invoice No / ID</th>
+                        <th style="width: 110px;">Amount (₹)</th>
+                        <th>Preview</th>
+                        <th style="width: 120px;">Status</th>
+                        <th class="text-end pe-3" style="width: 100px;">Action</th>
+                    </tr>
+                </thead>
+                <tbody class="small">
+                    {% for sub in all_invoices %}
+                    <tr>
+                        <td class="ps-3 fw-bold text-muted">{{ forloop.counter }}</td>
+                        <td>
+                            <div class="fw-bold text-dark">{{ sub.created_at|date:"d M Y" }}</div>
+                            <small class="text-muted">{{ sub.created_at|date:"h:i A" }}</small>
+                        </td>
+                        <td>
+                            <div class="fw-bold text-dark">{{ sub.employee.get_full_name|default:sub.employee.username }}</div>
+                            <small class="text-muted">{{ sub.employee.department.name|default:"Fleet" }}</small>
+                        </td>
+                        <td>
+                            <div class="fw-bold text-dark text-truncate" style="max-width: 170px;" title="{{ sub.party_name }}">
+                                {% if sub.party_name %}
+                                    {{ sub.party_name }}
+                                {% else %}
+                                    <span class="text-muted fst-italic">Standard Vendor</span>
+                                {% endif %}
+                            </div>
+                            <div class="d-flex align-items-center gap-1 flex-wrap mt-1">
+                                <span class="badge bg-light text-primary border border-primary border-opacity-25" style="font-size: 0.65rem;" title="Tally Expense Ledger">
+                                    <i class="bi bi-tag me-1"></i>{{ sub.expense_ledger|default:"Purchase Spares & Consumables" }}
+                                </span>
+                                {% if sub.party_gstin %}
+                                    <span class="badge bg-light text-secondary border font-monospace" style="font-size: 0.65rem;">{{ sub.party_gstin }}</span>
+                                {% endif %}
+                            </div>
+                        </td>
+                        <td>
+                            <div class="fw-bold font-monospace text-dark text-truncate" style="max-width: 140px;" title="{{ sub.invoice_number }}">
+                                {% if sub.invoice_number %}
+                                    {{ sub.invoice_number }}
+                                {% else %}
+                                    <span class="text-muted fst-italic">Pending Check</span>
+                                {% endif %}
+                            </div>
+                            <small class="text-muted font-monospace" style="font-size: 0.68rem;">ID: {{ sub.submission_id }}</small>
+                            {% if sub.source_document and sub.source_document.total_pages > 1 %}
+                                <span class="badge bg-info bg-opacity-10 text-info border border-info border-opacity-25 ms-1" style="font-size: 0.62rem;" title="Extracted from {{ sub.source_document.file_name }}">
+                                    Pg {{ sub.start_page }}{% if sub.start_page != sub.end_page %}–{{ sub.end_page }}{% endif %}
+                                </span>
+                            {% endif %}
+                        </td>
+                        <!-- Amount (₹) -->
+                        <td>
+                            {% if sub.total_amount > 0 %}
+                                <div class="fw-bold text-success font-monospace" style="font-size: 0.95rem;">₹{{ sub.total_amount|floatformat:2 }}</div>
+                                {% if sub.cgst_amount > 0 or sub.sgst_amount > 0 or sub.igst_amount > 0 %}
+                                <div class="text-muted" style="font-size: 0.68rem; line-height: 1.2;">
+                                    {% if sub.cgst_amount > 0 %}
+                                        <span class="text-primary font-monospace">CGST+SGST: ₹{{ sub.cgst_amount|add:sub.sgst_amount|floatformat:2 }}</span>
+                                    {% elif sub.igst_amount > 0 %}
+                                        <span class="text-info font-monospace">IGST: ₹{{ sub.igst_amount|floatformat:2 }}</span>
+                                    {% endif %}
+                                    {% if sub.taxable_amount > 0 %}
+                                        <span class="d-block text-secondary font-monospace" style="font-size: 0.65rem;">Base: ₹{{ sub.taxable_amount|floatformat:2 }}</span>
+                                    {% endif %}
+                                </div>
+                                {% endif %}
+                            {% else %}
+                                <span class="badge bg-light text-muted border font-monospace" style="font-size: 0.72rem;">Pending</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <div class="d-flex align-items-center gap-2 flex-wrap py-1">
+                                {% for doc in sub.active_documents %}
+                                <div class="border rounded p-1 bg-white text-center shadow-sm" style="width: 65px;">
+                                    {% if doc.is_image %}
+                                    <a href="{% url 'invoices:submission_detail' sub.submission_id %}" title="Click to view clear bill">
+                                        <img src="{% url 'invoices:serve_document' doc.id %}" alt="Page {{ doc.page_number }}" style="width: 55px; height: 45px; object-fit: cover; image-rendering: -webkit-optimize-contrast;" class="rounded shadow-sm">
+                                    </a>
+                                    {% elif doc.is_pdf %}
+                                    <a href="{% url 'invoices:submission_detail' sub.submission_id %}" class="text-decoration-none text-danger d-block" style="height: 45px; padding-top: 5px;" title="Click to view PDF bill">
+                                        <i class="bi bi-file-earmark-pdf fs-4 d-block"></i>
+                                        <span style="font-size: 0.65rem;" class="fw-bold">PDF</span>
+                                    </a>
+                                    {% endif %}
+                                    <div class="text-muted" style="font-size: 0.65rem;">Pg {{ doc.page_number }}</div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </td>
+                        <td>
+                            {% if sub.is_entered_in_tally %}
+                            <span class="badge bg-success bg-opacity-15 text-success border border-success px-2 py-1">
+                                <i class="bi bi-check-circle-fill me-1"></i>In Tally
+                            </span>
+                            {% else %}
+                            <span class="badge bg-warning bg-opacity-25 text-dark border border-warning px-2 py-1">
+                                <i class="bi bi-hourglass-split me-1"></i>Pending
+                            </span>
+                            {% endif %}
+                        </td>
+                        <td class="text-end pe-3">
+                            <a href="{% url 'invoices:submission_detail' sub.submission_id %}" class="btn btn-sm btn-teal fw-semibold">
+                                <i class="bi bi-eye-fill me-1"></i>View
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="card-body text-center py-5">
+            <h6 class="fw-bold text-dark">No Invoices Found</h6>
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+
+<!-- ================================================================= -->
+<!-- JAVASCRIPT: BATCH SELECTION & HIGHLIGHTING LOGIC -->
+<!-- ================================================================= -->
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const masterCheckbox = document.getElementById('selectAllMaster');
+    const invoiceCheckboxes = document.querySelectorAll('.invoice-checkbox');
+    const selectedCounter = document.getElementById('selectedCounter');
+    const btnBatchComplete = document.getElementById('btnBatchComplete');
+    const bottomButtons = document.querySelectorAll('.btn-batch-trigger');
+    const btnSelectAllCarryover = document.getElementById('btnSelectAllCarryover');
+    const btnSelectAllToday = document.getElementById('btnSelectAllToday');
+
+    function updateBatchState() {
+        const checkedBoxes = document.querySelectorAll('.invoice-checkbox:checked');
+        const count = checkedBoxes.length;
+
+        // Update counter label
+        if (selectedCounter) {
+            selectedCounter.textContent = count + ' selected';
+            if (count > 0) {
+                selectedCounter.className = 'badge bg-primary fs-6 px-3 py-2 fw-bold animate-pulse';
+            } else {
+                selectedCounter.className = 'badge bg-secondary fs-6 px-3 py-2 fw-semibold';
+            }
+        }
+
+        // Enable or disable submit buttons
+        const isEnabled = count > 0;
+        if (btnBatchComplete) btnBatchComplete.disabled = !isEnabled;
+        bottomButtons.forEach(btn => btn.disabled = !isEnabled);
+
+        // Update master checkbox indeterminate or checked state
+        if (masterCheckbox && invoiceCheckboxes.length > 0) {
+            if (count === invoiceCheckboxes.length) {
+                masterCheckbox.checked = true;
+                masterCheckbox.indeterminate = false;
+            } else if (count > 0) {
+                masterCheckbox.checked = false;
+                masterCheckbox.indeterminate = true;
+            } else {
+                masterCheckbox.checked = false;
+                masterCheckbox.indeterminate = false;
+            }
+        }
+
+        // Highlight table rows for visual confirmation
+        invoiceCheckboxes.forEach(cb => {
+            const row = cb.closest('tr');
+            if (row) {
+                if (cb.checked) {
+                    row.classList.add('table-success');
+                } else {
+                    row.classList.remove('table-success');
+                }
+            }
+        });
+    }
+
+    // Toggle individual checkboxes
+    invoiceCheckboxes.forEach(cb => {
+        cb.addEventListener('change', updateBatchState);
+    });
+
+    // Master checkbox toggles all checkboxes
+    if (masterCheckbox) {
+        masterCheckbox.addEventListener('change', function () {
+            const shouldCheck = masterCheckbox.checked;
+            invoiceCheckboxes.forEach(cb => {
+                cb.checked = shouldCheck;
+            });
+            updateBatchState();
+        });
+    }
+
+    // Quick select all Carry-Over
+    if (btnSelectAllCarryover) {
+        btnSelectAllCarryover.addEventListener('click', function () {
+            const carryoverBoxes = document.querySelectorAll('.carryover-checkbox');
+            const allChecked = Array.from(carryoverBoxes).every(cb => cb.checked);
+            carryoverBoxes.forEach(cb => cb.checked = !allChecked);
+            updateBatchState();
+        });
+    }
+
+    // Quick select all Today
+    if (btnSelectAllToday) {
+        btnSelectAllToday.addEventListener('click', function () {
+            const todayBoxes = document.querySelectorAll('.today-checkbox');
+            const allChecked = Array.from(todayBoxes).every(cb => cb.checked);
+            todayBoxes.forEach(cb => cb.checked = !allChecked);
+            updateBatchState();
+        });
+    }
+
+    // Initial check on load
+    updateBatchState();
+});
+</script>
+
+<style>
+.animate-pulse {
+    animation: pulseGlow 1.8s infinite;
+}
+@keyframes pulseGlow {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.05); }
+    100% { transform: scale(1); }
+}
+.invoice-row:hover {
+    background-color: rgba(13, 148, 136, 0.04) !important;
+}
+.table-success {
+    background-color: #e8f5e9 !important;
+}
+@media (max-width: 768px) {
+    .table-responsive table {
+        min-width: 720px;
+    }
+    .invoice-checkbox {
+        width: 22px;
+        height: 22px;
+        transform: scale(1.4) !important;
+        cursor: pointer;
+    }
+    .btn-batch-trigger {
+        font-size: 0.85rem;
+        padding: 0.4rem 0.8rem;
+    }
+}
+</style>
+{% endblock %}

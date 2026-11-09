@@ -1,0 +1,183 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Executive Management Overview - Balaji InvoiceHub{% endblock %}
+{% block page_heading %}Executive Management Overview{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h4 class="fw-bold mb-1" style="color: var(--primary-navy); letter-spacing: -0.02em;">
+                <i class="bi bi-graph-up-arrow me-2 text-primary"></i>Executive Purchase & Financial Overview
+            </h4>
+            <p class="text-secondary small mb-0">Live financial KPIs, verified invoice totals, and operational transparency for Balaji Transports leadership.</p>
+        </div>
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+            <span class="role-badge role-badge-MANAGEMENT py-1 px-3">
+                <i class="bi bi-eye"></i> Strictly Read-Only Executive Session
+            </span>
+            <div class="dropdown">
+                <button class="btn btn-sm btn-outline-success dropdown-toggle fw-bold shadow-sm" type="button" data-bs-toggle="dropdown">
+                    <i class="bi bi-file-earmark-spreadsheet-fill me-1"></i>Download Reports (.xlsx)
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+                    <li>
+                        <a class="dropdown-item small" href="{% url 'invoices:download_executive_report' 'monthly_summary' %}">
+                            <i class="bi bi-calendar3 me-2 text-primary"></i>Monthly Purchase Summary
+                        </a>
+                    </li>
+                    <li>
+                        <a class="dropdown-item small" href="{% url 'invoices:download_executive_report' 'supplier_summary' %}">
+                            <i class="bi bi-building me-2 text-success"></i>Supplier Turnover Report
+                        </a>
+                    </li>
+                    <li>
+                        <a class="dropdown-item small" href="{% url 'invoices:download_executive_report' 'compliance_audit' %}">
+                            <i class="bi bi-shield-exclamation me-2 text-danger"></i>GST Compliance Audit
+                        </a>
+                    </li>
+                </ul>
+            </div>
+            <a href="{% url 'invoices:analytics_dashboard' %}" class="btn btn-sm btn-primary fw-semibold">
+                <i class="bi bi-graph-up-arrow me-1"></i>Detailed Analytics
+            </a>
+        </div>
+    </div>
+</div>
+
+<!-- Key Performance Indicators (Live Database-Calculated) -->
+<div class="row g-3 mb-4">
+    <div class="col-12 col-md-4">
+        <div class="metric-card accent-teal shadow-sm">
+            <div class="metric-label">Total Purchases (Gross)</div>
+            <div class="metric-value text-primary">&#8377;{{ kpis.total_value|floatformat:2 }}</div>
+            <div class="metric-sub text-muted"><i class="bi bi-check2-circle me-1"></i>{{ kpis.total_invoices }} total invoices captured</div>
+        </div>
+    </div>
+    <div class="col-12 col-md-4">
+        <div class="metric-card accent-rose shadow-sm">
+            <div class="metric-label">Taxable Base & GST</div>
+            <div class="metric-value text-dark">&#8377;{{ kpis.total_taxable|floatformat:2 }}</div>
+            <div class="metric-sub text-muted"><i class="bi bi-percent me-1"></i>Input GST: &#8377;{{ kpis.total_tax|floatformat:2 }}</div>
+        </div>
+    </div>
+    <div class="col-12 col-md-4">
+        <div class="metric-card accent-blue shadow-sm">
+            <div class="metric-label">Tally Entry Progress</div>
+            <div class="metric-value text-success">{{ kpis.tally_rate }}%</div>
+            <div class="metric-sub text-muted"><i class="bi bi-check-all me-1"></i>{{ kpis.tally_done_count }} entered / {{ kpis.tally_pending_count }} pending</div>
+        </div>
+    </div>
+</div>
+
+<!-- Monthly Purchase Spend Trends Area -->
+<div class="row g-3 mb-4">
+    <div class="col-12 col-xl-7">
+        <div class="card card-enterprise shadow-sm h-100">
+            <div class="card-enterprise-header d-flex align-items-center justify-content-between py-2 px-3 bg-white border-bottom">
+                <h6 class="fw-bold mb-0 text-dark"><i class="bi bi-bar-chart-line-fill me-2 text-primary"></i>Monthly Purchase Spend & Tax</h6>
+                <span class="badge bg-light text-secondary border small">Actual Financial Data</span>
+            </div>
+            <div class="p-3">
+                {% if monthly_trends %}
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0" style="font-size: 0.88rem;">
+                        <thead class="table-light text-secondary small">
+                            <tr>
+                                <th>Month</th>
+                                <th class="text-center">Invoices</th>
+                                <th class="text-end">Taxable (&#8377;)</th>
+                                <th class="text-end">GST (&#8377;)</th>
+                                <th class="text-end fw-bold">Gross Spend (&#8377;)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for m in monthly_trends %}
+                            <tr>
+                                <td class="fw-semibold text-dark">{{ m.month_label }}</td>
+                                <td class="text-center font-monospace">{{ m.count }}</td>
+                                <td class="text-end font-monospace">&#8377;{{ m.taxable_val|floatformat:2 }}</td>
+                                <td class="text-end font-monospace text-muted">&#8377;{{ m.tax_val|floatformat:2 }}</td>
+                                <td class="text-end font-monospace fw-bold text-success fs-6">&#8377;{{ m.total_val|floatformat:2 }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="text-center py-4 text-muted">
+                    <i class="bi bi-calendar3 display-6 opacity-25"></i>
+                    <p class="small mt-2 mb-0">No monthly trends recorded yet.</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Top 5 Suppliers by Spend -->
+    <div class="col-12 col-xl-5">
+        <div class="card card-enterprise shadow-sm h-100">
+            <div class="card-enterprise-header d-flex align-items-center justify-content-between py-2 px-3 bg-white border-bottom">
+                <h6 class="fw-bold mb-0 text-dark"><i class="bi bi-building me-2 text-primary"></i>Top Verified Suppliers</h6>
+                <span class="badge bg-light text-secondary border small">By Spend</span>
+            </div>
+            <div class="p-3">
+                {% if top_suppliers %}
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover align-middle mb-0" style="font-size: 0.85rem;">
+                        <thead class="table-light text-secondary small">
+                            <tr>
+                                <th>Supplier</th>
+                                <th class="text-center">Bills</th>
+                                <th class="text-end">Total Spend (&#8377;)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for s in top_suppliers %}
+                            <tr>
+                                <td>
+                                    <div class="fw-bold text-dark text-truncate" style="max-width: 170px;">{{ s.party_name }}</div>
+                                    <span class="text-muted font-monospace" style="font-size: 0.68rem;">{{ s.party_gstin|default:"No GSTIN" }}</span>
+                                </td>
+                                <td class="text-center font-monospace">{{ s.invoice_count }}</td>
+                                <td class="text-end font-monospace fw-bold text-dark">&#8377;{{ s.total_spend|floatformat:2 }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="text-center py-4 text-muted">
+                    <i class="bi bi-building display-6 opacity-25"></i>
+                    <p class="small mt-2 mb-0">No supplier spend data recorded yet.</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Ledger Distribution Breakdown -->
+<div class="card card-enterprise shadow-sm">
+    <div class="card-enterprise-header py-2 px-3 bg-white border-bottom d-flex align-items-center justify-content-between">
+        <h6 class="fw-bold mb-0 text-dark"><i class="bi bi-tag-fill me-2 text-primary"></i>Tally Expense Head Summary</h6>
+        <a href="{% url 'invoices:analytics_dashboard' %}" class="btn btn-xs btn-outline-primary fw-semibold">View Full Analytics</a>
+    </div>
+    <div class="p-3">
+        <div class="row g-2">
+            {% for l in ledger_dist %}
+            <div class="col-6 col-md-4 col-xl-2">
+                <div class="p-2 border rounded-3 bg-light text-center h-100">
+                    <div class="text-muted small text-truncate" style="font-size: 0.72rem;" title="{{ l.expense_ledger }}">{{ l.expense_ledger }}</div>
+                    <div class="fw-bold text-dark mt-1" style="font-size: 0.95rem;">&#8377;{{ l.total_val|floatformat:0 }}</div>
+                    <div class="small text-muted" style="font-size: 0.68rem;">{{ l.count }} bills</div>
+                </div>
+            </div>
+            {% empty %}
+            <div class="col-12 text-center text-muted py-2 small">No ledger distributions available.</div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endblock %}

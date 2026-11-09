@@ -1,0 +1,223 @@
+{% extends 'base.html' %}
+
+{% block title %}Backup & Disaster Recovery - Balaji InvoiceHub{% endblock %}
+{% block page_heading %}Backup & Disaster Recovery Center{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h4 class="fw-bold mb-1" style="color: var(--primary-navy); letter-spacing: -0.02em;">
+                <i class="bi bi-shield-shaded me-2 text-teal"></i>System Backup & Disaster Recovery Center
+            </h4>
+            <p class="text-secondary small mb-0">Automated PostgreSQL 18 snapshots, document media archives, SHA-256 cryptographic verification, and sandbox drills.</p>
+        </div>
+        <form method="post" action="{% url 'backup:trigger_backup' %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-teal btn-sm shadow-sm">
+                <i class="bi bi-cloud-arrow-up-fill me-1"></i> Trigger Full System Backup
+            </button>
+        </form>
+    </div>
+</div>
+
+<!-- Real System Backup Metrics -->
+<div class="row g-3 mb-4">
+    <div class="col-12 col-sm-6 col-xl-3">
+        <div class="metric-card accent-blue">
+            <div class="metric-label">Last Backup</div>
+            <div class="metric-value fs-5">
+                {% if last_backup %}{{ last_backup.created_at|date:"d M Y, H:i" }}{% else %}Never{% endif %}
+            </div>
+            <div class="metric-sub">
+                {% if last_backup %}{{ last_backup.duration_seconds }}s execution time{% else %}No backups created{% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12 col-sm-6 col-xl-3">
+        <div class="metric-card accent-teal">
+            <div class="metric-label">Verified Restore Points</div>
+            <div class="metric-value">{{ successful_count }}</div>
+            <div class="metric-sub"><i class="bi bi-check-circle me-1"></i>Ready for recovery</div>
+        </div>
+    </div>
+
+    <div class="col-12 col-sm-6 col-xl-3">
+        <div class="metric-card accent-amber">
+            <div class="metric-label">External Storage Used</div>
+            <div class="metric-value">{{ total_storage_kb }} <span style="font-size: 1rem; font-weight: 500;">KB</span></div>
+            <div class="metric-sub"><i class="bi bi-hdd-network me-1"></i>Outside application folder</div>
+        </div>
+    </div>
+
+    <div class="col-12 col-sm-6 col-xl-3">
+        <div class="metric-card accent-teal">
+            <div class="metric-label">Cryptographic Integrity</div>
+            <div class="metric-value fs-5">
+                {% if successful_count > 0 %}
+                <span class="text-teal"><i class="bi bi-shield-check me-1"></i>SHA-256 Valid</span>
+                {% else %}
+                <span class="text-muted">Awaiting Backup</span>
+                {% endif %}
+            </div>
+            <div class="metric-sub">Dual-tier block hash validation</div>
+        </div>
+    </div>
+</div>
+
+<!-- Available Restore Points Table -->
+<div class="card card-enterprise mb-4">
+    <div class="card-enterprise-header">
+        <div class="d-flex align-items-center gap-2">
+            <h6 class="fw-bold mb-0 text-dark"><i class="bi bi-archive-fill me-2 text-teal"></i>Available System Restore Points</h6>
+            <span class="badge bg-light text-secondary border small">{{ total_backups }} Archives</span>
+        </div>
+        <span class="badge bg-light text-muted border small">Retention: 30 Days</span>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-enterprise align-middle">
+                <thead>
+                    <tr>
+                        <th class="ps-4">Backup ID</th>
+                        <th>Timestamp</th>
+                        <th>Trigger Source</th>
+                        <th>PostgreSQL Dump</th>
+                        <th>Documents ZIP</th>
+                        <th>SHA-256 Checksum</th>
+                        <th>Status</th>
+                        <th class="text-end pe-4">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for b in backups %}
+                    <tr>
+                        <td class="ps-4">
+                            <span class="font-monospace fw-bold text-dark">{{ b.backup_id }}</span>
+                        </td>
+                        <td>
+                            <small class="text-secondary">{{ b.created_at|date:"d M Y, H:i:s" }}</small>
+                        </td>
+                        <td>
+                            <span class="badge bg-light text-secondary border">{{ b.get_trigger_type_display }}</span>
+                        </td>
+                        <td>
+                            <span class="small font-monospace">{{ b.db_file_size|filesizeformat }}</span>
+                        </td>
+                        <td>
+                            <span class="small font-monospace">{{ b.media_file_size|filesizeformat }}</span>
+                        </td>
+                        <td>
+                            {% if b.integrity_verified %}
+                            <span class="badge bg-success-subtle text-success border border-success-subtle">
+                                <i class="bi bi-check-circle me-1"></i>Verified
+                            </span>
+                            <div class="text-muted" style="font-size: 0.68rem;" title="DB: {{ b.db_sha256 }}">
+                                Hash: {{ b.db_sha256|slice:":8" }}...
+                            </div>
+                            {% else %}
+                            <span class="badge bg-danger-subtle text-danger border border-danger-subtle">Unverified</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if b.status == 'SUCCESS' %}
+                            <span class="badge bg-success">Success</span>
+                            {% elif b.status == 'PENDING' %}
+                            <span class="badge bg-warning text-dark">In Progress</span>
+                            {% else %}
+                            <span class="badge bg-danger">Failed</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-end pe-4">
+                            {% if b.status == 'SUCCESS' %}
+                            <div class="btn-group btn-group-sm">
+                                <form method="post" action="{% url 'backup:trigger_restore_test' b.backup_id %}" class="d-inline">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn btn-outline-primary" title="Execute Sandbox Restoration Drill into test database">
+                                        <i class="bi bi-play-circle me-1"></i>Run Drill
+                                    </button>
+                                </form>
+                                <a href="{% url 'backup:download_backup' b.backup_id 'db' %}" class="btn btn-outline-secondary" title="Download PostgreSQL Dump">
+                                    <i class="bi bi-database-down"></i>
+                                </a>
+                                <a href="{% url 'backup:download_backup' b.backup_id 'media' %}" class="btn btn-outline-secondary" title="Download Documents ZIP">
+                                    <i class="bi bi-file-earmark-zip"></i>
+                                </a>
+                            </div>
+                            {% else %}
+                            <span class="text-muted small">{{ b.error_log|truncatechars:30 }}</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="8" class="text-center py-5 text-muted">
+                            <div class="mx-auto mb-3 text-muted" style="opacity: 0.35;">
+                                <i class="bi bi-inbox display-4"></i>
+                            </div>
+                            <h6 class="fw-bold mb-1" style="color: var(--primary-navy);">No System Backups Generated Yet</h6>
+                            <p class="small text-muted mb-0">Click the <strong>Trigger Full System Backup</strong> button above to generate the initial verified restore point.</p>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Sandbox Disaster Recovery Drill History -->
+<div class="card card-enterprise">
+    <div class="card-enterprise-header">
+        <div>
+            <h6 class="fw-bold mb-0 text-dark"><i class="bi bi-arrow-counterclockwise me-2 text-teal"></i>Disaster Recovery Sandbox Drills</h6>
+            <small class="text-secondary">Drills restore full backups into the isolated <code>balaji_test_restore</code> PostgreSQL database without touching production.</small>
+        </div>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-enterprise align-middle">
+                <thead>
+                    <tr>
+                        <th class="ps-4">Drill ID</th>
+                        <th>Source Backup</th>
+                        <th>Target Database</th>
+                        <th>Restored Row Counts</th>
+                        <th>Files Recovered</th>
+                        <th>Duration</th>
+                        <th>Status</th>
+                        <th class="pe-4">Execution Timestamp</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for r in restores %}
+                    <tr>
+                        <td class="ps-4 font-monospace fw-bold text-dark">{{ r.restore_id }}</td>
+                        <td class="font-monospace small text-secondary">{{ r.backup.backup_id }}</td>
+                        <td><span class="badge bg-light text-primary border font-monospace">{{ r.target_database }}</span></td>
+                        <td>
+                            <small class="font-monospace text-secondary">{{ r.records_verified_count }}</small>
+                        </td>
+                        <td><span class="fw-semibold">{{ r.files_verified_count }}</span> files</td>
+                        <td>{{ r.duration_seconds }}s</td>
+                        <td>
+                            <span class="badge bg-success-subtle text-success border border-success-subtle">
+                                <i class="bi bi-check-circle me-1"></i>Drill Passed
+                            </span>
+                        </td>
+                        <td class="pe-4 small text-secondary">{{ r.created_at|date:"d M Y, H:i:s" }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="8" class="text-center py-4 text-muted">
+                            <small>No disaster recovery drills executed yet. Click "Run Drill" on any valid restore point above.</small>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
