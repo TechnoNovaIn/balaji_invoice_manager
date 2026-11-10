@@ -199,25 +199,65 @@
                         <thead class="table-danger small">
                             <tr>
                                 <th class="ps-3" style="width: 45px;">#</th>
-                                <th style="width: 120px;">Date & Time</th>
-                                <th style="width: 130px;">Sent By</th>
-                                <th style="width: 185px;">
+                                <th style="width: 135px;">
+                                    <div class="d-flex align-items-center justify-content-between">
+                                        <span>Date & Time</span>
+                                        <div class="dropdown d-inline-block">
+                                            <button class="btn btn-sm btn-link text-decoration-none p-0 ms-1 text-danger" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Date Options" style="font-size: 0.72rem;">
+                                                <i class="bi bi-chevron-down"></i>
+                                            </button>
+                                            <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="min-width: 190px; font-size: 0.8rem; z-index: 1060;">
+                                                <li class="dropdown-header py-1 text-uppercase fw-bold text-muted" style="font-size: 0.65rem;">Sort Date & Time</li>
+                                                <li><a class="dropdown-item py-1" href="javascript:void(0);" onclick="sortDashboardTable(this, 'date', 'desc');"><i class="bi bi-sort-down me-2 text-danger"></i>Newest First</a></li>
+                                                <li><a class="dropdown-item py-1" href="javascript:void(0);" onclick="sortDashboardTable(this, 'date', 'asc');"><i class="bi bi-sort-up me-2 text-danger"></i>Oldest First</a></li>
+                                                <li><hr class="dropdown-divider my-1"></li>
+                                                <li class="dropdown-header py-1 text-uppercase fw-bold text-muted" style="font-size: 0.65rem;">Quick Filter</li>
+                                                <li><a class="dropdown-item py-1 fw-bold" href="javascript:void(0);" onclick="filterDashboardTable(this, 'all');">Show All Dates</a></li>
+                                                <li><a class="dropdown-item py-1" href="javascript:void(0);" onclick="filterDashboardTable(this, 'date_today');"><i class="bi bi-calendar-event me-2 text-info"></i>Today Only</a></li>
+                                                <li><a class="dropdown-item py-1" href="javascript:void(0);" onclick="filterDashboardTable(this, 'date_carried');"><i class="bi bi-exclamation-circle me-2 text-danger"></i>Carried Over Only</a></li>
+                                            </ul>
+                                        </div>
+                                    </div>
+                                </th>
+                                <th style="width: 140px;">
+                                    <div class="d-flex align-items-center justify-content-between">
+                                        <span>Sent By</span>
+                                        <div class="dropdown d-inline-block">
+                                            <button class="btn btn-sm btn-link text-decoration-none p-0 ms-1 text-danger" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Filter by Submitter" style="font-size: 0.72rem;">
+                                                <i class="bi bi-chevron-down"></i>
+                                            </button>
+                                            <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="max-height: 280px; overflow-y: auto; min-width: 220px; font-size: 0.8rem; z-index: 1060;">
+                                                <li class="dropdown-header py-1 text-uppercase fw-bold text-muted" style="font-size: 0.65rem;">Filter by Submitter</li>
+                                                <li><a class="dropdown-item py-1 fw-bold" href="javascript:void(0);" onclick="filterDashboardTable(this, 'submitter', 'ALL');">All Submitters (Show All)</a></li>
+                                                <li><hr class="dropdown-divider my-1"></li>
+                                                {% for sub_name in submitter_names %}
+                                                <li>
+                                                    <a class="dropdown-item py-1 text-truncate" href="javascript:void(0);" onclick="filterDashboardTable(this, 'submitter', '{{ sub_name|escapejs }}');">
+                                                        <i class="bi bi-person me-1 text-muted"></i>{{ sub_name }}
+                                                    </a>
+                                                </li>
+                                                {% endfor %}
+                                            </ul>
+                                        </div>
+                                    </div>
+                                </th>
+                                <th style="width: 195px;">
                                     <div class="d-flex align-items-center justify-content-between">
                                         <span>Party (Vendor)</span>
                                         <div class="dropdown d-inline-block">
-                                            <button class="btn btn-sm btn-link text-decoration-none dropdown-toggle p-0 ms-1 text-danger" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Filter by Vendor" style="font-size: 0.72rem;">
+                                            <button class="btn btn-sm btn-link text-decoration-none p-0 ms-1 text-danger" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Filter by Vendor" style="font-size: 0.72rem;">
                                                 <i class="bi bi-chevron-down"></i>
                                             </button>
                                             <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="max-height: 280px; overflow-y: auto; min-width: 230px; font-size: 0.8rem; z-index: 1060;">
                                                 <li class="dropdown-header py-1 text-uppercase fw-bold text-muted" style="font-size: 0.65rem;">Filter by Vendor</li>
-                                                <li><a class="dropdown-item py-1" href="{% url 'core:naveen_dashboard' %}?tab={{ tab }}">All Vendors (Clear)</a></li>
+                                                <li><a class="dropdown-item py-1 fw-bold" href="javascript:void(0);" onclick="filterDashboardTable(this, 'vendor', 'ALL');">All Vendors (Show All)</a></li>
                                                 <li><hr class="dropdown-divider my-1"></li>
                                                 <li class="px-2 pb-1">
                                                     <input type="text" class="form-control form-control-sm vendor-filter-input" placeholder="Type to filter..." onclick="event.stopPropagation();" onkeyup="filterHeaderVendorList(this);">
                                                 </li>
                                                 {% for v in frequent_vendors %}
                                                 <li>
-                                                    <a class="dropdown-item py-1 text-truncate header-vendor-item" href="{% url 'core:naveen_dashboard' %}?tab={{ tab }}&q={{ v|urlencode }}">
+                                                    <a class="dropdown-item py-1 text-truncate header-vendor-item" href="javascript:void(0);" onclick="filterDashboardTable(this, 'vendor', '{{ v|escapejs }}');">
                                                         {{ v }}
                                                     </a>
                                                 </li>
@@ -226,18 +266,54 @@
                                         </div>
                                     </div>
                                 </th>
-                                <th style="width: 140px;">Invoice No / ID</th>
+                                <th style="width: 155px;">
+                                    <div class="d-flex align-items-center justify-content-between">
+                                        <span>Invoice No / ID</span>
+                                        <div class="dropdown d-inline-block">
+                                            <button class="btn btn-sm btn-link text-decoration-none p-0 ms-1 text-danger" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Invoice Options" style="font-size: 0.72rem;">
+                                                <i class="bi bi-chevron-down"></i>
+                                            </button>
+                                            <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="min-width: 210px; font-size: 0.8rem; z-index: 1060;">
+                                                <li class="dropdown-header py-1 text-uppercase fw-bold text-muted" style="font-size: 0.65rem;">Filter Invoices</li>
+                                                <li><a class="dropdown-item py-1 fw-bold" href="javascript:void(0);" onclick="filterDashboardTable(this, 'invoice_status', 'ALL');">All Invoices</a></li>
+                                                <li><a class="dropdown-item py-1" href="javascript:void(0);" onclick="filterDashboardTable(this, 'invoice_status', 'DETECTED');"><i class="bi bi-check-circle text-success me-2"></i>Invoice No Detected</a></li>
+                                                <li><a class="dropdown-item py-1" href="javascript:void(0);" onclick="filterDashboardTable(this, 'invoice_status', 'PENDING');"><i class="bi bi-exclamation-triangle text-warning me-2"></i>Pending Check Only</a></li>
+                                                <li><hr class="dropdown-divider my-1"></li>
+                                                <li class="dropdown-header py-1 text-uppercase fw-bold text-muted" style="font-size: 0.65rem;">Sort Invoices</li>
+                                                <li><a class="dropdown-item py-1" href="javascript:void(0);" onclick="sortDashboardTable(this, 'invoice', 'asc');"><i class="bi bi-sort-alpha-down me-2 text-danger"></i>Invoice No (A → Z)</a></li>
+                                                <li><a class="dropdown-item py-1" href="javascript:void(0);" onclick="sortDashboardTable(this, 'invoice', 'desc');"><i class="bi bi-sort-alpha-up me-2 text-danger"></i>Invoice No (Z → A)</a></li>
+                                            </ul>
+                                        </div>
+                                    </div>
+                                </th>
                                 <th style="width: 110px;">Amount (₹)</th>
                                 <th>Preview</th>
                                 <th class="text-center" style="width: 90px;">Action</th>
-                                <th class="text-center pe-3" style="width: 110px;">
-                                    <span class="text-danger fw-bold">Done in Tally?</span>
+                                <th class="text-center pe-3" style="width: 130px;">
+                                    <div class="d-flex align-items-center justify-content-center gap-1">
+                                        <span class="text-danger fw-bold">Done in Tally?</span>
+                                        <div class="dropdown d-inline-block">
+                                            <button class="btn btn-sm btn-link text-decoration-none p-0 text-danger" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Batch & Filter" style="font-size: 0.72rem;">
+                                                <i class="bi bi-chevron-down"></i>
+                                            </button>
+                                            <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="min-width: 195px; font-size: 0.8rem; z-index: 1060;">
+                                                <li class="dropdown-header py-1 text-uppercase fw-bold text-muted" style="font-size: 0.65rem;">Batch Selection</li>
+                                                <li><a class="dropdown-item py-1" href="javascript:void(0);" onclick="batchSelectVisibleRows(this, true);"><i class="bi bi-check-square me-2 text-success"></i>Select All Visible</a></li>
+                                                <li><a class="dropdown-item py-1" href="javascript:void(0);" onclick="batchSelectVisibleRows(this, false);"><i class="bi bi-square me-2 text-secondary"></i>Deselect All</a></li>
+                                                <li><hr class="dropdown-divider my-1"></li>
+                                                <li class="dropdown-header py-1 text-uppercase fw-bold text-muted" style="font-size: 0.65rem;">Filter Rows</li>
+                                                <li><a class="dropdown-item py-1 fw-bold" href="javascript:void(0);" onclick="filterDashboardTable(this, 'tally_status', 'ALL');">Show All</a></li>
+                                                <li><a class="dropdown-item py-1" href="javascript:void(0);" onclick="filterDashboardTable(this, 'tally_status', 'UNCHECKED');"><i class="bi bi-hourglass-split me-2 text-warning"></i>Only Unchecked (Pending)</a></li>
+                                                <li><a class="dropdown-item py-1" href="javascript:void(0);" onclick="filterDashboardTable(this, 'tally_status', 'CHECKED');"><i class="bi bi-check2-circle me-2 text-success"></i>Only Checked</a></li>
+                                            </ul>
+                                        </div>
+                                    </div>
                                 </th>
                             </tr>
                         </thead>
                         <tbody class="small">
                             {% for sub in carryover_invoices %}
-                            <tr class="invoice-row carryover-row" id="row-{{ sub.submission_id }}">
+                            <tr class="invoice-row carryover-row" id="row-{{ sub.submission_id }}" data-timestamp="{{ sub.created_at|date:'U' }}" data-date-group="carried" data-submitter="{{ sub.employee.get_full_name|default:sub.employee.username|lower }}" data-vendor="{{ sub.party_name|lower }}" data-has-inv="{% if sub.invoice_number %}1{% else %}0{% endif %}" data-inv-num="{{ sub.invoice_number|lower }}">
                                 <td class="ps-3 fw-bold text-danger">{{ forloop.counter }}</td>
                                 
                                 <!-- Date and Time -->
@@ -255,35 +331,14 @@
                                     <small class="text-muted">{{ sub.employee.department.name|default:"Fleet" }}</small>
                                 </td>
 
-                                <!-- Party / Vendor Name -->
+                                <!-- Party / Vendor Name (Clean display, no row dropdown) -->
                                 <td>
-                                    <div class="d-flex align-items-center justify-content-between gap-1">
-                                        <div class="fw-bold text-dark text-truncate" style="max-width: 140px;" id="party-name-{{ sub.submission_id }}" title="{{ sub.party_name }}">
-                                            {% if sub.party_name %}
-                                                {{ sub.party_name }}
-                                            {% else %}
-                                                <span class="text-muted fst-italic">Pending Check</span>
-                                            {% endif %}
-                                        </div>
-                                        <div class="dropdown">
-                                            <button class="btn btn-sm btn-light border py-0 px-1 text-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Quick Select Vendor" style="font-size: 0.68rem; line-height: 1.1;">
-                                                <i class="bi bi-chevron-down"></i>
-                                            </button>
-                                            <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="max-height: 280px; overflow-y: auto; min-width: 240px; font-size: 0.8rem; z-index: 1055;">
-                                                <li class="dropdown-header py-1 text-uppercase fw-bold text-muted" style="font-size: 0.65rem;">Select Master Vendor</li>
-                                                <li class="px-2 pb-1">
-                                                    <input type="text" class="form-control form-control-sm row-vendor-search" placeholder="Search vendor..." onclick="event.stopPropagation();" onkeyup="filterRowVendorList(this);">
-                                                </li>
-                                                <li><hr class="dropdown-divider my-1"></li>
-                                                {% for v in frequent_vendors %}
-                                                <li>
-                                                    <a class="dropdown-item py-1 text-truncate row-vendor-item" href="javascript:void(0);" onclick="quickSelectVendor('{{ sub.submission_id }}', '{{ v|escapejs }}');">
-                                                        {{ v }}
-                                                    </a>
-                                                </li>
-                                                {% endfor %}
-                                            </ul>
-                                        </div>
+                                    <div class="fw-bold text-dark text-truncate" style="max-width: 170px;" id="party-name-{{ sub.submission_id }}" title="{{ sub.party_name }}">
+                                        {% if sub.party_name %}
+                                            {{ sub.party_name }}
+                                        {% else %}
+                                            <span class="text-muted fst-italic">Pending Check</span>
+                                        {% endif %}
                                     </div>
                                     <div class="d-flex align-items-center gap-1 flex-wrap mt-1">
                                         <span class="badge bg-light text-primary border border-primary border-opacity-25" id="ledger-badge-{{ sub.submission_id }}" style="font-size: 0.65rem;" title="Tally Expense Ledger">
@@ -305,11 +360,6 @@
                                         {% endif %}
                                     </div>
                                     <small class="text-muted font-monospace" style="font-size: 0.68rem;">ID: {{ sub.submission_id }}</small>
-                            {% if sub.source_document and sub.source_document.total_pages > 1 %}
-                                <span class="badge bg-info bg-opacity-10 text-info border border-info border-opacity-25 ms-1" style="font-size: 0.62rem;" title="Extracted from {{ sub.source_document.file_name }}">
-                                    Pg {{ sub.start_page }}{% if sub.start_page != sub.end_page %}–{{ sub.end_page }}{% endif %}
-                                </span>
-                            {% endif %}
                                     {% if sub.source_document and sub.source_document.total_pages > 1 %}
                                         <span class="badge bg-info bg-opacity-10 text-info border border-info border-opacity-25 ms-1" style="font-size: 0.62rem;" title="Extracted from {{ sub.source_document.file_name }}">
                                             Pg {{ sub.start_page }}{% if sub.start_page != sub.end_page %}–{{ sub.end_page }}{% endif %}
@@ -427,25 +477,64 @@
                         <thead class="table-light small">
                             <tr>
                                 <th class="ps-3" style="width: 45px;">#</th>
-                                <th style="width: 120px;">Date & Time</th>
-                                <th style="width: 130px;">Sent By</th>
-                                <th style="width: 185px;">
+                                <th style="width: 135px;">
+                                    <div class="d-flex align-items-center justify-content-between">
+                                        <span>Date & Time</span>
+                                        <div class="dropdown d-inline-block">
+                                            <button class="btn btn-sm btn-link text-decoration-none p-0 ms-1 text-primary" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Date Options" style="font-size: 0.72rem;">
+                                                <i class="bi bi-chevron-down"></i>
+                                            </button>
+                                            <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="min-width: 190px; font-size: 0.8rem; z-index: 1060;">
+                                                <li class="dropdown-header py-1 text-uppercase fw-bold text-muted" style="font-size: 0.65rem;">Sort Date & Time</li>
+                                                <li><a class="dropdown-item py-1" href="javascript:void(0);" onclick="sortDashboardTable(this, 'date', 'desc');"><i class="bi bi-sort-down me-2 text-primary"></i>Newest First</a></li>
+                                                <li><a class="dropdown-item py-1" href="javascript:void(0);" onclick="sortDashboardTable(this, 'date', 'asc');"><i class="bi bi-sort-up me-2 text-primary"></i>Oldest First</a></li>
+                                                <li><hr class="dropdown-divider my-1"></li>
+                                                <li class="dropdown-header py-1 text-uppercase fw-bold text-muted" style="font-size: 0.65rem;">Quick Filter</li>
+                                                <li><a class="dropdown-item py-1 fw-bold" href="javascript:void(0);" onclick="filterDashboardTable(this, 'all');">Show All Dates</a></li>
+                                                <li><a class="dropdown-item py-1" href="javascript:void(0);" onclick="filterDashboardTable(this, 'date_today');"><i class="bi bi-calendar-event me-2 text-info"></i>Today Only</a></li>
+                                            </ul>
+                                        </div>
+                                    </div>
+                                </th>
+                                <th style="width: 140px;">
+                                    <div class="d-flex align-items-center justify-content-between">
+                                        <span>Sent By</span>
+                                        <div class="dropdown d-inline-block">
+                                            <button class="btn btn-sm btn-link text-decoration-none p-0 ms-1 text-primary" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Filter by Submitter" style="font-size: 0.72rem;">
+                                                <i class="bi bi-chevron-down"></i>
+                                            </button>
+                                            <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="max-height: 280px; overflow-y: auto; min-width: 220px; font-size: 0.8rem; z-index: 1060;">
+                                                <li class="dropdown-header py-1 text-uppercase fw-bold text-muted" style="font-size: 0.65rem;">Filter by Submitter</li>
+                                                <li><a class="dropdown-item py-1 fw-bold" href="javascript:void(0);" onclick="filterDashboardTable(this, 'submitter', 'ALL');">All Submitters (Show All)</a></li>
+                                                <li><hr class="dropdown-divider my-1"></li>
+                                                {% for sub_name in submitter_names %}
+                                                <li>
+                                                    <a class="dropdown-item py-1 text-truncate" href="javascript:void(0);" onclick="filterDashboardTable(this, 'submitter', '{{ sub_name|escapejs }}');">
+                                                        <i class="bi bi-person me-1 text-muted"></i>{{ sub_name }}
+                                                    </a>
+                                                </li>
+                                                {% endfor %}
+                                            </ul>
+                                        </div>
+                                    </div>
+                                </th>
+                                <th style="width: 195px;">
                                     <div class="d-flex align-items-center justify-content-between">
                                         <span>Party (Vendor)</span>
                                         <div class="dropdown d-inline-block">
-                                            <button class="btn btn-sm btn-link text-decoration-none dropdown-toggle p-0 ms-1 text-danger" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Filter by Vendor" style="font-size: 0.72rem;">
+                                            <button class="btn btn-sm btn-link text-decoration-none p-0 ms-1 text-primary" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Filter by Vendor" style="font-size: 0.72rem;">
                                                 <i class="bi bi-chevron-down"></i>
                                             </button>
                                             <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="max-height: 280px; overflow-y: auto; min-width: 230px; font-size: 0.8rem; z-index: 1060;">
                                                 <li class="dropdown-header py-1 text-uppercase fw-bold text-muted" style="font-size: 0.65rem;">Filter by Vendor</li>
-                                                <li><a class="dropdown-item py-1" href="{% url 'core:naveen_dashboard' %}?tab={{ tab }}">All Vendors (Clear)</a></li>
+                                                <li><a class="dropdown-item py-1 fw-bold" href="javascript:void(0);" onclick="filterDashboardTable(this, 'vendor', 'ALL');">All Vendors (Show All)</a></li>
                                                 <li><hr class="dropdown-divider my-1"></li>
                                                 <li class="px-2 pb-1">
                                                     <input type="text" class="form-control form-control-sm vendor-filter-input" placeholder="Type to filter..." onclick="event.stopPropagation();" onkeyup="filterHeaderVendorList(this);">
                                                 </li>
                                                 {% for v in frequent_vendors %}
                                                 <li>
-                                                    <a class="dropdown-item py-1 text-truncate header-vendor-item" href="{% url 'core:naveen_dashboard' %}?tab={{ tab }}&q={{ v|urlencode }}">
+                                                    <a class="dropdown-item py-1 text-truncate header-vendor-item" href="javascript:void(0);" onclick="filterDashboardTable(this, 'vendor', '{{ v|escapejs }}');">
                                                         {{ v }}
                                                     </a>
                                                 </li>
@@ -454,18 +543,54 @@
                                         </div>
                                     </div>
                                 </th>
-                                <th style="width: 140px;">Invoice No / ID</th>
+                                <th style="width: 155px;">
+                                    <div class="d-flex align-items-center justify-content-between">
+                                        <span>Invoice No / ID</span>
+                                        <div class="dropdown d-inline-block">
+                                            <button class="btn btn-sm btn-link text-decoration-none p-0 ms-1 text-primary" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Invoice Options" style="font-size: 0.72rem;">
+                                                <i class="bi bi-chevron-down"></i>
+                                            </button>
+                                            <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="min-width: 210px; font-size: 0.8rem; z-index: 1060;">
+                                                <li class="dropdown-header py-1 text-uppercase fw-bold text-muted" style="font-size: 0.65rem;">Filter Invoices</li>
+                                                <li><a class="dropdown-item py-1 fw-bold" href="javascript:void(0);" onclick="filterDashboardTable(this, 'invoice_status', 'ALL');">All Invoices</a></li>
+                                                <li><a class="dropdown-item py-1" href="javascript:void(0);" onclick="filterDashboardTable(this, 'invoice_status', 'DETECTED');"><i class="bi bi-check-circle text-success me-2"></i>Invoice No Detected</a></li>
+                                                <li><a class="dropdown-item py-1" href="javascript:void(0);" onclick="filterDashboardTable(this, 'invoice_status', 'PENDING');"><i class="bi bi-exclamation-triangle text-warning me-2"></i>Pending Check Only</a></li>
+                                                <li><hr class="dropdown-divider my-1"></li>
+                                                <li class="dropdown-header py-1 text-uppercase fw-bold text-muted" style="font-size: 0.65rem;">Sort Invoices</li>
+                                                <li><a class="dropdown-item py-1" href="javascript:void(0);" onclick="sortDashboardTable(this, 'invoice', 'asc');"><i class="bi bi-sort-alpha-down me-2 text-primary"></i>Invoice No (A → Z)</a></li>
+                                                <li><a class="dropdown-item py-1" href="javascript:void(0);" onclick="sortDashboardTable(this, 'invoice', 'desc');"><i class="bi bi-sort-alpha-up me-2 text-primary"></i>Invoice No (Z → A)</a></li>
+                                            </ul>
+                                        </div>
+                                    </div>
+                                </th>
                                 <th style="width: 110px;">Amount (₹)</th>
                                 <th>Preview</th>
                                 <th class="text-center" style="width: 90px;">Action</th>
-                                <th class="text-center pe-3" style="width: 110px;">
-                                    <span class="text-primary fw-bold">Done in Tally?</span>
+                                <th class="text-center pe-3" style="width: 130px;">
+                                    <div class="d-flex align-items-center justify-content-center gap-1">
+                                        <span class="text-primary fw-bold">Done in Tally?</span>
+                                        <div class="dropdown d-inline-block">
+                                            <button class="btn btn-sm btn-link text-decoration-none p-0 text-primary" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Batch & Filter" style="font-size: 0.72rem;">
+                                                <i class="bi bi-chevron-down"></i>
+                                            </button>
+                                            <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="min-width: 195px; font-size: 0.8rem; z-index: 1060;">
+                                                <li class="dropdown-header py-1 text-uppercase fw-bold text-muted" style="font-size: 0.65rem;">Batch Selection</li>
+                                                <li><a class="dropdown-item py-1" href="javascript:void(0);" onclick="batchSelectVisibleRows(this, true);"><i class="bi bi-check-square me-2 text-success"></i>Select All Visible</a></li>
+                                                <li><a class="dropdown-item py-1" href="javascript:void(0);" onclick="batchSelectVisibleRows(this, false);"><i class="bi bi-square me-2 text-secondary"></i>Deselect All</a></li>
+                                                <li><hr class="dropdown-divider my-1"></li>
+                                                <li class="dropdown-header py-1 text-uppercase fw-bold text-muted" style="font-size: 0.65rem;">Filter Rows</li>
+                                                <li><a class="dropdown-item py-1 fw-bold" href="javascript:void(0);" onclick="filterDashboardTable(this, 'tally_status', 'ALL');">Show All</a></li>
+                                                <li><a class="dropdown-item py-1" href="javascript:void(0);" onclick="filterDashboardTable(this, 'tally_status', 'UNCHECKED');"><i class="bi bi-hourglass-split me-2 text-warning"></i>Only Unchecked (Pending)</a></li>
+                                                <li><a class="dropdown-item py-1" href="javascript:void(0);" onclick="filterDashboardTable(this, 'tally_status', 'CHECKED');"><i class="bi bi-check2-circle me-2 text-success"></i>Only Checked</a></li>
+                                            </ul>
+                                        </div>
+                                    </div>
                                 </th>
                             </tr>
                         </thead>
                         <tbody class="small">
                             {% for sub in today_invoices %}
-                            <tr class="invoice-row today-row" id="row-{{ sub.submission_id }}">
+                            <tr class="invoice-row today-row" id="row-{{ sub.submission_id }}" data-timestamp="{{ sub.created_at|date:'U' }}" data-date-group="today" data-submitter="{{ sub.employee.get_full_name|default:sub.employee.username|lower }}" data-vendor="{{ sub.party_name|lower }}" data-has-inv="{% if sub.invoice_number %}1{% else %}0{% endif %}" data-inv-num="{{ sub.invoice_number|lower }}">
                                 <td class="ps-3 fw-bold text-muted">{{ forloop.counter }}</td>
 
                                 <!-- Date and Time -->
@@ -480,35 +605,14 @@
                                     <small class="text-muted">{{ sub.employee.department.name|default:"Fleet" }}</small>
                                 </td>
 
-                                <!-- Party / Vendor Name -->
+                                <!-- Party / Vendor Name (Clean display, no row dropdown) -->
                                 <td>
-                                    <div class="d-flex align-items-center justify-content-between gap-1">
-                                        <div class="fw-bold text-dark text-truncate" style="max-width: 140px;" id="party-name-{{ sub.submission_id }}" title="{{ sub.party_name }}">
-                                            {% if sub.party_name %}
-                                                {{ sub.party_name }}
-                                            {% else %}
-                                                <span class="text-muted fst-italic">Pending Check</span>
-                                            {% endif %}
-                                        </div>
-                                        <div class="dropdown">
-                                            <button class="btn btn-sm btn-light border py-0 px-1 text-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Quick Select Vendor" style="font-size: 0.68rem; line-height: 1.1;">
-                                                <i class="bi bi-chevron-down"></i>
-                                            </button>
-                                            <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="max-height: 280px; overflow-y: auto; min-width: 240px; font-size: 0.8rem; z-index: 1055;">
-                                                <li class="dropdown-header py-1 text-uppercase fw-bold text-muted" style="font-size: 0.65rem;">Select Master Vendor</li>
-                                                <li class="px-2 pb-1">
-                                                    <input type="text" class="form-control form-control-sm row-vendor-search" placeholder="Search vendor..." onclick="event.stopPropagation();" onkeyup="filterRowVendorList(this);">
-                                                </li>
-                                                <li><hr class="dropdown-divider my-1"></li>
-                                                {% for v in frequent_vendors %}
-                                                <li>
-                                                    <a class="dropdown-item py-1 text-truncate row-vendor-item" href="javascript:void(0);" onclick="quickSelectVendor('{{ sub.submission_id }}', '{{ v|escapejs }}');">
-                                                        {{ v }}
-                                                    </a>
-                                                </li>
-                                                {% endfor %}
-                                            </ul>
-                                        </div>
+                                    <div class="fw-bold text-dark text-truncate" style="max-width: 170px;" id="party-name-{{ sub.submission_id }}" title="{{ sub.party_name }}">
+                                        {% if sub.party_name %}
+                                            {{ sub.party_name }}
+                                        {% else %}
+                                            <span class="text-muted fst-italic">Pending Check</span>
+                                        {% endif %}
                                     </div>
                                     <div class="d-flex align-items-center gap-1 flex-wrap mt-1">
                                         <span class="badge bg-light text-primary border border-primary border-opacity-25" id="ledger-badge-{{ sub.submission_id }}" style="font-size: 0.65rem;" title="Tally Expense Ledger">
@@ -530,11 +634,6 @@
                                         {% endif %}
                                     </div>
                                     <small class="text-muted font-monospace" style="font-size: 0.68rem;">ID: {{ sub.submission_id }}</small>
-                            {% if sub.source_document and sub.source_document.total_pages > 1 %}
-                                <span class="badge bg-info bg-opacity-10 text-info border border-info border-opacity-25 ms-1" style="font-size: 0.62rem;" title="Extracted from {{ sub.source_document.file_name }}">
-                                    Pg {{ sub.start_page }}{% if sub.start_page != sub.end_page %}–{{ sub.end_page }}{% endif %}
-                                </span>
-                            {% endif %}
                                     {% if sub.source_document and sub.source_document.total_pages > 1 %}
                                         <span class="badge bg-info bg-opacity-10 text-info border border-info border-opacity-25 ms-1" style="font-size: 0.62rem;" title="Extracted from {{ sub.source_document.file_name }}">
                                             Pg {{ sub.start_page }}{% if sub.start_page != sub.end_page %}–{{ sub.end_page }}{% endif %}
@@ -644,25 +743,60 @@
                     <thead class="table-light small">
                         <tr>
                             <th class="ps-3" style="width: 45px;">#</th>
-                            <th style="width: 120px;">Completed Date</th>
-                            <th style="width: 130px;">Sent By</th>
-                            <th style="width: 185px;">
+                            <th style="width: 135px;">
+                                <div class="d-flex align-items-center justify-content-between">
+                                    <span>Completed Date</span>
+                                    <div class="dropdown d-inline-block">
+                                        <button class="btn btn-sm btn-link text-decoration-none p-0 ms-1 text-secondary" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Date Options" style="font-size: 0.72rem;">
+                                            <i class="bi bi-chevron-down"></i>
+                                        </button>
+                                        <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="min-width: 190px; font-size: 0.8rem; z-index: 1060;">
+                                            <li class="dropdown-header py-1 text-uppercase fw-bold text-muted" style="font-size: 0.65rem;">Sort Date</li>
+                                            <li><a class="dropdown-item py-1" href="javascript:void(0);" onclick="sortDashboardTable(this, 'date', 'desc');"><i class="bi bi-sort-down me-2 text-primary"></i>Newest First</a></li>
+                                            <li><a class="dropdown-item py-1" href="javascript:void(0);" onclick="sortDashboardTable(this, 'date', 'asc');"><i class="bi bi-sort-up me-2 text-primary"></i>Oldest First</a></li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </th>
+                            <th style="width: 140px;">
+                                <div class="d-flex align-items-center justify-content-between">
+                                    <span>Sent By</span>
+                                    <div class="dropdown d-inline-block">
+                                        <button class="btn btn-sm btn-link text-decoration-none p-0 ms-1 text-secondary" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Filter by Submitter" style="font-size: 0.72rem;">
+                                            <i class="bi bi-chevron-down"></i>
+                                        </button>
+                                        <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="max-height: 280px; overflow-y: auto; min-width: 220px; font-size: 0.8rem; z-index: 1060;">
+                                            <li class="dropdown-header py-1 text-uppercase fw-bold text-muted" style="font-size: 0.65rem;">Filter by Submitter</li>
+                                            <li><a class="dropdown-item py-1 fw-bold" href="javascript:void(0);" onclick="filterDashboardTable(this, 'submitter', 'ALL');">All Submitters (Show All)</a></li>
+                                            <li><hr class="dropdown-divider my-1"></li>
+                                            {% for sub_name in submitter_names %}
+                                            <li>
+                                                <a class="dropdown-item py-1 text-truncate" href="javascript:void(0);" onclick="filterDashboardTable(this, 'submitter', '{{ sub_name|escapejs }}');">
+                                                    <i class="bi bi-person me-1 text-muted"></i>{{ sub_name }}
+                                                </a>
+                                            </li>
+                                            {% endfor %}
+                                        </ul>
+                                    </div>
+                                </div>
+                            </th>
+                            <th style="width: 195px;">
                                 <div class="d-flex align-items-center justify-content-between">
                                     <span>Party (Vendor)</span>
                                     <div class="dropdown d-inline-block">
-                                        <button class="btn btn-sm btn-link text-decoration-none dropdown-toggle p-0 ms-1 text-dark" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Filter by Vendor" style="font-size: 0.72rem;">
+                                        <button class="btn btn-sm btn-link text-decoration-none p-0 ms-1 text-secondary" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Filter by Vendor" style="font-size: 0.72rem;">
                                             <i class="bi bi-chevron-down"></i>
                                         </button>
                                         <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="max-height: 280px; overflow-y: auto; min-width: 230px; font-size: 0.8rem; z-index: 1060;">
                                             <li class="dropdown-header py-1 text-uppercase fw-bold text-muted" style="font-size: 0.65rem;">Filter by Vendor</li>
-                                            <li><a class="dropdown-item py-1" href="{% url 'core:naveen_dashboard' %}?tab={{ tab }}">All Vendors (Clear)</a></li>
+                                            <li><a class="dropdown-item py-1 fw-bold" href="javascript:void(0);" onclick="filterDashboardTable(this, 'vendor', 'ALL');">All Vendors (Show All)</a></li>
                                             <li><hr class="dropdown-divider my-1"></li>
                                             <li class="px-2 pb-1">
                                                 <input type="text" class="form-control form-control-sm vendor-filter-input" placeholder="Type to filter..." onclick="event.stopPropagation();" onkeyup="filterHeaderVendorList(this);">
                                             </li>
                                             {% for v in frequent_vendors %}
                                             <li>
-                                                <a class="dropdown-item py-1 text-truncate header-vendor-item" href="{% url 'core:naveen_dashboard' %}?tab={{ tab }}&q={{ v|urlencode }}">
+                                                <a class="dropdown-item py-1 text-truncate header-vendor-item" href="javascript:void(0);" onclick="filterDashboardTable(this, 'vendor', '{{ v|escapejs }}');">
                                                     {{ v }}
                                                 </a>
                                             </li>
@@ -671,7 +805,21 @@
                                     </div>
                                 </div>
                             </th>
-                            <th style="width: 140px;">Invoice No / ID</th>
+                            <th style="width: 155px;">
+                                <div class="d-flex align-items-center justify-content-between">
+                                    <span>Invoice No / ID</span>
+                                    <div class="dropdown d-inline-block">
+                                        <button class="btn btn-sm btn-link text-decoration-none p-0 ms-1 text-secondary" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Invoice Options" style="font-size: 0.72rem;">
+                                            <i class="bi bi-chevron-down"></i>
+                                        </button>
+                                        <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="min-width: 210px; font-size: 0.8rem; z-index: 1060;">
+                                            <li class="dropdown-header py-1 text-uppercase fw-bold text-muted" style="font-size: 0.65rem;">Sort Invoices</li>
+                                            <li><a class="dropdown-item py-1" href="javascript:void(0);" onclick="sortDashboardTable(this, 'invoice', 'asc');"><i class="bi bi-sort-alpha-down me-2 text-primary"></i>Invoice No (A → Z)</a></li>
+                                            <li><a class="dropdown-item py-1" href="javascript:void(0);" onclick="sortDashboardTable(this, 'invoice', 'desc');"><i class="bi bi-sort-alpha-up me-2 text-primary"></i>Invoice No (Z → A)</a></li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </th>
                             <th style="width: 110px;">Amount (₹)</th>
                             <th>Preview</th>
                             <th style="width: 110px;">Tally Status</th>
@@ -680,7 +828,7 @@
                     </thead>
                     <tbody class="small">
                         {% for sub in completed_invoices %}
-                        <tr>
+                        <tr class="invoice-row completed-row" id="row-{{ sub.submission_id }}" data-timestamp="{{ sub.tally_entered_at|default:sub.created_at|date:'U' }}" data-submitter="{{ sub.employee.get_full_name|default:sub.employee.username|lower }}" data-vendor="{{ sub.party_name|lower }}" data-has-inv="{% if sub.invoice_number %}1{% else %}0{% endif %}" data-inv-num="{{ sub.invoice_number|lower }}">
                             <td class="ps-3 fw-bold text-muted">{{ forloop.counter }}</td>
                             <td>
                                 <div class="fw-bold text-success">{{ sub.tally_entered_at|date:"d M Y"|default:sub.created_at|date:"d M Y" }}</div>
@@ -691,33 +839,12 @@
                                 <small class="text-muted">{{ sub.employee.department.name|default:"Fleet" }}</small>
                             </td>
                             <td>
-                                <div class="d-flex align-items-center justify-content-between gap-1">
-                                    <div class="fw-bold text-dark text-truncate" style="max-width: 140px;" id="party-name-{{ sub.submission_id }}" title="{{ sub.party_name }}">
-                                        {% if sub.party_name %}
-                                            {{ sub.party_name }}
-                                        {% else %}
-                                            <span class="text-muted fst-italic">Standard Vendor</span>
-                                        {% endif %}
-                                    </div>
-                                    <div class="dropdown">
-                                        <button class="btn btn-sm btn-light border py-0 px-1 text-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Quick Select Vendor" style="font-size: 0.68rem; line-height: 1.1;">
-                                            <i class="bi bi-chevron-down"></i>
-                                        </button>
-                                        <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="max-height: 280px; overflow-y: auto; min-width: 240px; font-size: 0.8rem; z-index: 1055;">
-                                            <li class="dropdown-header py-1 text-uppercase fw-bold text-muted" style="font-size: 0.65rem;">Select Master Vendor</li>
-                                            <li class="px-2 pb-1">
-                                                <input type="text" class="form-control form-control-sm row-vendor-search" placeholder="Search vendor..." onclick="event.stopPropagation();" onkeyup="filterRowVendorList(this);">
-                                            </li>
-                                            <li><hr class="dropdown-divider my-1"></li>
-                                            {% for v in frequent_vendors %}
-                                            <li>
-                                                <a class="dropdown-item py-1 text-truncate row-vendor-item" href="javascript:void(0);" onclick="quickSelectVendor('{{ sub.submission_id }}', '{{ v|escapejs }}');">
-                                                    {{ v }}
-                                                </a>
-                                            </li>
-                                            {% endfor %}
-                                        </ul>
-                                    </div>
+                                <div class="fw-bold text-dark text-truncate" style="max-width: 170px;" id="party-name-{{ sub.submission_id }}" title="{{ sub.party_name }}">
+                                    {% if sub.party_name %}
+                                        {{ sub.party_name }}
+                                    {% else %}
+                                        <span class="text-muted fst-italic">Standard Vendor</span>
+                                    {% endif %}
                                 </div>
                                 <div class="d-flex align-items-center gap-1 flex-wrap mt-1">
                                     <span class="badge bg-light text-primary border border-primary border-opacity-25" id="ledger-badge-{{ sub.submission_id }}" style="font-size: 0.65rem;" title="Tally Expense Ledger">
@@ -832,25 +959,60 @@
                 <thead class="table-light small">
                     <tr>
                         <th class="ps-3" style="width: 45px;">#</th>
-                        <th style="width: 120px;">Date & Time</th>
-                        <th style="width: 130px;">Sent By</th>
-                        <th style="width: 185px;">
+                        <th style="width: 135px;">
+                            <div class="d-flex align-items-center justify-content-between">
+                                <span>Date & Time</span>
+                                <div class="dropdown d-inline-block">
+                                    <button class="btn btn-sm btn-link text-decoration-none p-0 ms-1 text-secondary" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Date Options" style="font-size: 0.72rem;">
+                                        <i class="bi bi-chevron-down"></i>
+                                    </button>
+                                    <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="min-width: 190px; font-size: 0.8rem; z-index: 1060;">
+                                        <li class="dropdown-header py-1 text-uppercase fw-bold text-muted" style="font-size: 0.65rem;">Sort Date & Time</li>
+                                        <li><a class="dropdown-item py-1" href="javascript:void(0);" onclick="sortDashboardTable(this, 'date', 'desc');"><i class="bi bi-sort-down me-2 text-primary"></i>Newest First</a></li>
+                                        <li><a class="dropdown-item py-1" href="javascript:void(0);" onclick="sortDashboardTable(this, 'date', 'asc');"><i class="bi bi-sort-up me-2 text-primary"></i>Oldest First</a></li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </th>
+                        <th style="width: 140px;">
+                            <div class="d-flex align-items-center justify-content-between">
+                                <span>Sent By</span>
+                                <div class="dropdown d-inline-block">
+                                    <button class="btn btn-sm btn-link text-decoration-none p-0 ms-1 text-secondary" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Filter by Submitter" style="font-size: 0.72rem;">
+                                        <i class="bi bi-chevron-down"></i>
+                                    </button>
+                                    <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="max-height: 280px; overflow-y: auto; min-width: 220px; font-size: 0.8rem; z-index: 1060;">
+                                        <li class="dropdown-header py-1 text-uppercase fw-bold text-muted" style="font-size: 0.65rem;">Filter by Submitter</li>
+                                        <li><a class="dropdown-item py-1 fw-bold" href="javascript:void(0);" onclick="filterDashboardTable(this, 'submitter', 'ALL');">All Submitters (Show All)</a></li>
+                                        <li><hr class="dropdown-divider my-1"></li>
+                                        {% for sub_name in submitter_names %}
+                                        <li>
+                                            <a class="dropdown-item py-1 text-truncate" href="javascript:void(0);" onclick="filterDashboardTable(this, 'submitter', '{{ sub_name|escapejs }}');">
+                                                <i class="bi bi-person me-1 text-muted"></i>{{ sub_name }}
+                                            </a>
+                                        </li>
+                                        {% endfor %}
+                                    </ul>
+                                </div>
+                            </div>
+                        </th>
+                        <th style="width: 195px;">
                             <div class="d-flex align-items-center justify-content-between">
                                 <span>Party (Vendor)</span>
                                 <div class="dropdown d-inline-block">
-                                    <button class="btn btn-sm btn-link text-decoration-none dropdown-toggle p-0 ms-1 text-dark" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Filter by Vendor" style="font-size: 0.72rem;">
+                                    <button class="btn btn-sm btn-link text-decoration-none p-0 ms-1 text-secondary" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Filter by Vendor" style="font-size: 0.72rem;">
                                         <i class="bi bi-chevron-down"></i>
                                     </button>
                                     <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="max-height: 280px; overflow-y: auto; min-width: 230px; font-size: 0.8rem; z-index: 1060;">
                                         <li class="dropdown-header py-1 text-uppercase fw-bold text-muted" style="font-size: 0.65rem;">Filter by Vendor</li>
-                                        <li><a class="dropdown-item py-1" href="{% url 'core:naveen_dashboard' %}?tab={{ tab }}">All Vendors (Clear)</a></li>
+                                        <li><a class="dropdown-item py-1 fw-bold" href="javascript:void(0);" onclick="filterDashboardTable(this, 'vendor', 'ALL');">All Vendors (Show All)</a></li>
                                         <li><hr class="dropdown-divider my-1"></li>
                                         <li class="px-2 pb-1">
                                             <input type="text" class="form-control form-control-sm vendor-filter-input" placeholder="Type to filter..." onclick="event.stopPropagation();" onkeyup="filterHeaderVendorList(this);">
                                         </li>
                                         {% for v in frequent_vendors %}
                                         <li>
-                                            <a class="dropdown-item py-1 text-truncate header-vendor-item" href="{% url 'core:naveen_dashboard' %}?tab={{ tab }}&q={{ v|urlencode }}">
+                                            <a class="dropdown-item py-1 text-truncate header-vendor-item" href="javascript:void(0);" onclick="filterDashboardTable(this, 'vendor', '{{ v|escapejs }}');">
                                                 {{ v }}
                                             </a>
                                         </li>
@@ -859,7 +1021,21 @@
                                 </div>
                             </div>
                         </th>
-                        <th style="width: 140px;">Invoice No / ID</th>
+                        <th style="width: 155px;">
+                            <div class="d-flex align-items-center justify-content-between">
+                                <span>Invoice No / ID</span>
+                                <div class="dropdown d-inline-block">
+                                    <button class="btn btn-sm btn-link text-decoration-none p-0 ms-1 text-secondary" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Invoice Options" style="font-size: 0.72rem;">
+                                        <i class="bi bi-chevron-down"></i>
+                                    </button>
+                                    <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="min-width: 210px; font-size: 0.8rem; z-index: 1060;">
+                                        <li class="dropdown-header py-1 text-uppercase fw-bold text-muted" style="font-size: 0.65rem;">Sort Invoices</li>
+                                        <li><a class="dropdown-item py-1" href="javascript:void(0);" onclick="sortDashboardTable(this, 'invoice', 'asc');"><i class="bi bi-sort-alpha-down me-2 text-primary"></i>Invoice No (A → Z)</a></li>
+                                        <li><a class="dropdown-item py-1" href="javascript:void(0);" onclick="sortDashboardTable(this, 'invoice', 'desc');"><i class="bi bi-sort-alpha-up me-2 text-primary"></i>Invoice No (Z → A)</a></li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </th>
                         <th style="width: 110px;">Amount (₹)</th>
                         <th>Preview</th>
                         <th style="width: 120px;">Status</th>
@@ -868,7 +1044,7 @@
                 </thead>
                 <tbody class="small">
                     {% for sub in all_invoices %}
-                    <tr>
+                    <tr class="invoice-row all-row" id="row-{{ sub.submission_id }}" data-timestamp="{{ sub.created_at|date:'U' }}" data-submitter="{{ sub.employee.get_full_name|default:sub.employee.username|lower }}" data-vendor="{{ sub.party_name|lower }}" data-has-inv="{% if sub.invoice_number %}1{% else %}0{% endif %}" data-inv-num="{{ sub.invoice_number|lower }}">
                         <td class="ps-3 fw-bold text-muted">{{ forloop.counter }}</td>
                         <td>
                             <div class="fw-bold text-dark">{{ sub.created_at|date:"d M Y" }}</div>
@@ -879,33 +1055,12 @@
                             <small class="text-muted">{{ sub.employee.department.name|default:"Fleet" }}</small>
                         </td>
                         <td>
-                            <div class="d-flex align-items-center justify-content-between gap-1">
-                                <div class="fw-bold text-dark text-truncate" style="max-width: 140px;" id="party-name-{{ sub.submission_id }}" title="{{ sub.party_name }}">
-                                    {% if sub.party_name %}
-                                        {{ sub.party_name }}
-                                    {% else %}
-                                        <span class="text-muted fst-italic">Standard Vendor</span>
-                                    {% endif %}
-                                </div>
-                                <div class="dropdown">
-                                    <button class="btn btn-sm btn-light border py-0 px-1 text-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Quick Select Vendor" style="font-size: 0.68rem; line-height: 1.1;">
-                                        <i class="bi bi-chevron-down"></i>
-                                    </button>
-                                    <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="max-height: 280px; overflow-y: auto; min-width: 240px; font-size: 0.8rem; z-index: 1055;">
-                                        <li class="dropdown-header py-1 text-uppercase fw-bold text-muted" style="font-size: 0.65rem;">Select Master Vendor</li>
-                                        <li class="px-2 pb-1">
-                                            <input type="text" class="form-control form-control-sm row-vendor-search" placeholder="Search vendor..." onclick="event.stopPropagation();" onkeyup="filterRowVendorList(this);">
-                                        </li>
-                                        <li><hr class="dropdown-divider my-1"></li>
-                                        {% for v in frequent_vendors %}
-                                        <li>
-                                            <a class="dropdown-item py-1 text-truncate row-vendor-item" href="javascript:void(0);" onclick="quickSelectVendor('{{ sub.submission_id }}', '{{ v|escapejs }}');">
-                                                {{ v }}
-                                            </a>
-                                        </li>
-                                        {% endfor %}
-                                    </ul>
-                                </div>
+                            <div class="fw-bold text-dark text-truncate" style="max-width: 170px;" id="party-name-{{ sub.submission_id }}" title="{{ sub.party_name }}">
+                                {% if sub.party_name %}
+                                    {{ sub.party_name }}
+                                {% else %}
+                                    <span class="text-muted fst-italic">Standard Vendor</span>
+                                {% endif %}
                             </div>
                             <div class="d-flex align-items-center gap-1 flex-wrap mt-1">
                                 <span class="badge bg-light text-primary border border-primary border-opacity-25" id="ledger-badge-{{ sub.submission_id }}" style="font-size: 0.65rem;" title="Tally Expense Ledger">
@@ -1097,7 +1252,96 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // Initial check on load
     updateBatchState();
+    window.updateBatchStateGlobal = updateBatchState;
 });
+
+// Dashboard Header Dropdown Filter & Sort Helpers
+function filterDashboardTable(triggerEl, filterKey, filterVal) {
+    const table = triggerEl.closest('table');
+    if (!table) return;
+    const rows = table.querySelectorAll('tbody tr.invoice-row, tbody tr');
+    
+    rows.forEach(row => {
+        let show = true;
+        
+        if (filterKey === 'all') {
+            show = true;
+        } else if (filterKey === 'date_today') {
+            show = (row.dataset.dateGroup === 'today');
+        } else if (filterKey === 'date_carried') {
+            show = (row.dataset.dateGroup === 'carried');
+        } else if (filterKey === 'submitter') {
+            if (filterVal && filterVal !== 'ALL') {
+                const subText = (row.dataset.submitter || '').toLowerCase();
+                show = subText.includes(filterVal.toLowerCase());
+            }
+        } else if (filterKey === 'vendor') {
+            if (filterVal && filterVal !== 'ALL') {
+                const vendText = (row.dataset.vendor || '').toLowerCase();
+                show = vendText.includes(filterVal.toLowerCase());
+            }
+        } else if (filterKey === 'invoice_status') {
+            if (filterVal === 'DETECTED') {
+                show = (row.dataset.hasInv === '1');
+            } else if (filterVal === 'PENDING') {
+                show = (row.dataset.hasInv === '0');
+            }
+        } else if (filterKey === 'tally_status') {
+            const chk = row.querySelector('.invoice-checkbox');
+            if (filterVal === 'CHECKED') {
+                show = (chk && chk.checked);
+            } else if (filterVal === 'UNCHECKED') {
+                show = (!chk || !chk.checked);
+            }
+        }
+        
+        row.style.display = show ? '' : 'none';
+    });
+}
+
+function sortDashboardTable(triggerEl, sortKey, order) {
+    const table = triggerEl.closest('table');
+    if (!table) return;
+    const tbody = table.querySelector('tbody');
+    if (!tbody) return;
+    
+    const rows = Array.from(tbody.querySelectorAll('tr'));
+    rows.sort((a, b) => {
+        if (sortKey === 'date') {
+            const tA = parseInt(a.dataset.timestamp || '0', 10);
+            const tB = parseInt(b.dataset.timestamp || '0', 10);
+            return order === 'asc' ? tA - tB : tB - tA;
+        } else if (sortKey === 'invoice') {
+            const invA = (a.dataset.invNum || '').trim();
+            const invB = (b.dataset.invNum || '').trim();
+            return order === 'asc' ? invA.localeCompare(invB, undefined, {numeric: true}) : invB.localeCompare(invA, undefined, {numeric: true});
+        }
+        return 0;
+    });
+    
+    rows.forEach((r, idx) => {
+        tbody.appendChild(r);
+        const counterTd = r.querySelector('td:first-child');
+        if (counterTd) {
+            counterTd.textContent = (idx + 1);
+        }
+    });
+}
+
+function batchSelectVisibleRows(triggerEl, selectState) {
+    const table = triggerEl.closest('table');
+    if (!table) return;
+    const rows = table.querySelectorAll('tbody tr');
+    rows.forEach(r => {
+        if (r.style.display !== 'none') {
+            const cb = r.querySelector('.invoice-checkbox');
+            if (cb) cb.checked = selectState;
+        }
+    });
+    if (typeof window.updateBatchStateGlobal === 'function') {
+        window.updateBatchStateGlobal();
+    }
+}
 
 // CSRF Token for Quick Updates
 const csrfTokenGlobal = '{{ csrf_token }}';

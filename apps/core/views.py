@@ -132,6 +132,17 @@ def naveen_dashboard(request):
     combined = list(dict.fromkeys(db_vendors + dir_vendors))[:50]
     frequent_vendors = combined
 
+    # Unique submitter names for header filter
+    submitter_raw = list(
+        base_qs.values_list('employee__first_name', 'employee__last_name', 'employee__username')
+               .distinct()[:30]
+    )
+    submitter_names = []
+    for fn, ln, un in submitter_raw:
+        full = f"{fn or ''} {ln or ''}".strip() or un
+        if full and full not in submitter_names:
+            submitter_names.append(full)
+
     is_fresh_feed = (carryover_count == 0 and today_pending_count == 0)
 
     return render(request, 'core/naveen_dashboard.html', {
@@ -151,6 +162,7 @@ def naveen_dashboard(request):
         'total_pages': total_pages,
         'is_fresh_feed': is_fresh_feed,
         'frequent_vendors': frequent_vendors,
+        'submitter_names': submitter_names,
     })
 
 

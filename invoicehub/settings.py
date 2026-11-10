@@ -21,9 +21,23 @@ SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'default-insecure-secret-key-change-
 
 DEBUG = os.getenv('DJANGO_DEBUG', 'True').lower() in ('true', '1', 't')
 
-ALLOWED_HOSTS = [host.strip() for host in os.getenv('DJANGO_ALLOWED_HOSTS', '127.0.0.1,localhost,testserver').split(',') if host.strip()]
-if 'testserver' not in ALLOWED_HOSTS:
-    ALLOWED_HOSTS.append('testserver')
+ALLOWED_HOSTS = ['*']
+CSRF_TRUSTED_ORIGINS = [
+    'https://*.serveousercontent.com',
+    'http://*.serveousercontent.com',
+    'https://*.loca.lt',
+    'http://*.loca.lt',
+    'https://balaji-invoicehub.loca.lt',
+    'https://*.trycloudflare.com',
+    'https://*.lhr.life',
+    'http://*.lhr.life',
+    'http://192.168.1.18:8888',
+    'http://192.168.1.18:8000',
+    'http://localhost:8888',
+    'http://localhost:8000',
+    'http://127.0.0.1:8888',
+    'http://127.0.0.1:8000',
+]
 
 # Application definition
 INSTALLED_APPS = [
@@ -170,4 +184,4 @@ BACKUP_RETENTION_DAYS = int(os.getenv('BACKUP_RETENTION_DAYS', 3650))
 
 # Gemini Vision AI for High-Accuracy Autonomous Invoice Extraction (Google AI Studio Free Tier)
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '').strip()
-GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash').strip()
+GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-3.5-flash-lite').strip()
