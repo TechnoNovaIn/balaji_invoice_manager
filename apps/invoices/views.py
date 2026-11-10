@@ -593,6 +593,19 @@ def quick_update_metadata(request, submission_id):
     if party_name:
         submission.party_name = party_name
         update_fields.append('party_name')
+        try:
+            from apps.invoices.vendor_directory import find_vendor_by_name
+            v_match = find_vendor_by_name(party_name)
+            if v_match:
+                submission.party_name = v_match['name']
+                if v_match.get('gstin'):
+                    submission.party_gstin = v_match['gstin']
+                    update_fields.append('party_gstin')
+                if v_match.get('ledger') and not expense_ledger:
+                    submission.expense_ledger = v_match['ledger']
+                    update_fields.append('expense_ledger')
+        except Exception:
+            pass
     if invoice_number:
         submission.invoice_number = invoice_number
         update_fields.append('invoice_number')
@@ -614,6 +627,7 @@ def quick_update_metadata(request, submission_id):
             'status': 'ok',
             'submission_id': submission.submission_id,
             'party_name': submission.party_name,
+            'party_gstin': submission.party_gstin,
             'invoice_number': submission.invoice_number,
             'expense_ledger': submission.expense_ledger
         })

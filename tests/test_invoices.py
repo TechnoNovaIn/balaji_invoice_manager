@@ -335,7 +335,8 @@ class InvoiceSubmissionEngineTests(TestCase):
 
         sub.refresh_from_db()
         self.assertEqual(sub.party_name, "Indian Oil Corp Hosur bunk")
-        self.assertEqual(sub.invoice_number, sub.submission_id)
+        # Ensure tracking IDs are NEVER substituted as invoice numbers
+        self.assertEqual(sub.invoice_number, "")
 
     def test_naveen_dashboard_displays_party_and_invoice_columns(self):
         """Naveen dashboard table includes Party (Vendor) and Invoice No headers and data."""
@@ -349,4 +350,50 @@ class InvoiceSubmissionEngineTests(TestCase):
         self.assertContains(resp, "Party (Vendor)")
         self.assertContains(resp, "Invoice No / ID")
         self.assertContains(resp, "Sri Lakshmi Spares")
+
+    def test_gemini_vision_extractor_mock_success(self):
+        """Test Gemini Vision AI extractor parses JSON response and normalizes statutory fields."""
+        from unittest.mock import patch, MagicMock
+        from apps.invoices.gemini_extractor import extract_with_gemini
+
+        mock_json_response = (
+            '{"party_name": "SRI RAGHAVENDRASWAMY ENTERPRISES", "party_gstin": "29ECEPK8760H1Z4", '
+            '"invoice_number": "191", "invoice_date": "2026-11-06", "taxable_amount": 396890.00, '
+            '"cgst_amount": 0.0, "sgst_amount": 0.0, "igst_amount": 0.0, "total_amount": 396890.00, '
+            '"expense_ledger": "Purchase Spares & Consumables", "raw_summary": "Cash/Credit Bill 191"}'
+        )
+
+        dummy_path = "dummy_invoice.jpg"
+        with open(dummy_path, "wb") as f:
+            f.write(b"\xff\xd8\xff\xe0dummy_jpg_content")
+
+        try:
+            with patch("django.conf.settings.GEMINI_API_KEY", "test_gemini_key_123"):
+                with patch("google.genai.Client") as mock_client_cls:
+                    mock_client = MagicMock()
+                    mock_client_cls.return_value = mock_client
+                    mock_resp = MagicMock()
+                    mock_resp.text = mock_json_response
+                    mock_client.models.generate_content.return_value = mock_resp
+
+                    result = extract_with_gemini(dummy_path)
+                    self.assertIsNotNone(result)
+                    self.assertEqual(result["party_name"], "SRI RAGHAVENDRASWAMY ENTERPRISES")
+                    self.assertEqual(result["party_gstin"], "29ECEPK8760H1Z4")
+                    self.assertEqual(result["invoice_number"], "191")
+                    self.assertEqual(str(result["total_amount"]), "396890.00")
+                    self.assertEqual(result["expense_ledger"], "Purchase Spares & Consumables")
+        finally:
+            if os.path.exists(dummy_path):
+                os.remove(dummy_path)
+
+    def test_gemini_vision_extractor_fallback_on_missing_key(self):
+        """Test that extractor returns None when GEMINI_API_KEY is not configured, triggering RapidOCR fallback."""
+        from unittest.mock import patch
+        from apps.invoices.gemini_extractor import extract_with_gemini
+
+        with patch("django.conf.settings.GEMINI_API_KEY", ""):
+            with patch("os.getenv", return_value=""):
+                result = extract_with_gemini("any_dummy_file.jpg")
+                self.assertIsNone(result)
 

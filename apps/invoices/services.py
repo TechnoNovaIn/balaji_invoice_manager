@@ -54,10 +54,12 @@ def compute_sha256(file_obj) -> str:
 
 def format_and_orient_image(file_obj, content_type: str):
     """
-    Auto-formats uploaded invoice photographs:
+    Auto-formats and enhances uploaded invoice photographs:
     1. EXIF Orientation Normalization: Automatically rotates camera photos right-side up based on smartphone sensor metadata.
-    2. Dynamic Range & Readability Enhancement: Normalizes contrast and sharpness for handwritten ink, carbon receipts, and dot-matrix bills.
-    3. Color standardization to high-quality RGB JPEG.
+    2. Background Illumination Leveling: Removes harsh shadows and uneven lighting gradients (e.g. driver hands, steering wheels).
+    3. Adaptive Contrast Enhancement (CLAHE): Intensifies faint blue/red carbon ink, handwritten digits, rubber stamps, and dot-matrix receipts.
+    4. Text Sharpening: Unsharp masking ensures small digits (voucher numbers, GSTIN, decimals) are crisp for both Naveen and RapidOCR.
+    5. Color standardization to high-quality RGB JPEG.
     """
     if content_type not in ('image/jpeg', 'image/png'):
         return file_obj
@@ -73,7 +75,7 @@ def format_and_orient_image(file_obj, content_type: str):
         # 1. Rotate physically according to EXIF orientation tag
         img = ImageOps.exif_transpose(img)
 
-        # 2. Standardize color channels
+        # 2. Standardize color channels to RGB
         if img.mode in ('RGBA', 'P', 'LA'):
             bg = Image.new('RGB', img.size, (255, 255, 255))
             if img.mode == 'RGBA':
@@ -84,11 +86,45 @@ def format_and_orient_image(file_obj, content_type: str):
         elif img.mode != 'RGB':
             img = img.convert('RGB')
 
-        # 3. Enhance readability for written / low contrast receipts
-        enhancer = ImageEnhance.Contrast(img)
-        img = enhancer.enhance(1.2)
-        sharpener = ImageEnhance.Sharpness(img)
-        img = sharpener.enhance(1.15)
+        # 3. High-Quality Computer Vision Illumination & Contrast Enhancement
+        try:
+            import cv2
+            import numpy as np
+
+            bgr = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+            h, w = bgr.shape[:2]
+            max_dim = max(h, w)
+            if max_dim > 2200:
+                scale = 2200.0 / max_dim
+                bgr = cv2.resize(bgr, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+
+            # Shadow removal & background illumination leveling in LAB space
+            lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)
+            l_ch, a_ch, b_ch = cv2.split(lab)
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
+            dilated = cv2.dilate(l_ch, kernel)
+            bg_illum = cv2.medianBlur(dilated, 21)
+            diff = 255 - cv2.absdiff(l_ch, bg_illum)
+            norm = cv2.normalize(diff, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+
+            # Adaptive Contrast Enhancement (CLAHE) for handwritten & carbon ink
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            enhanced_l = clahe.apply(norm)
+
+            enhanced_lab = cv2.merge([enhanced_l, a_ch, b_ch])
+            result_bgr = cv2.cvtColor(enhanced_lab, cv2.COLOR_LAB2BGR)
+
+            # Mild text sharpening (unsharp mask)
+            gaussian = cv2.GaussianBlur(result_bgr, (0, 0), 2.0)
+            sharpened = cv2.addWeighted(result_bgr, 1.25, gaussian, -0.25, 0)
+
+            img = Image.fromarray(cv2.cvtColor(sharpened, cv2.COLOR_BGR2RGB))
+        except Exception:
+            # Fallback to Pillow enhancement
+            enhancer = ImageEnhance.Contrast(img)
+            img = enhancer.enhance(1.25)
+            sharpener = ImageEnhance.Sharpness(img)
+            img = sharpener.enhance(1.20)
 
         out_buf = io.BytesIO()
         img.save(out_buf, format='JPEG', quality=95, optimize=True)
@@ -296,7 +332,7 @@ def create_invoice_submissions(
                         duplicate_notes=duplicate_notes,
                         party_name=meta.get('party_name', ''),
                         party_gstin=meta.get('party_gstin', ''),
-                        invoice_number=meta.get('invoice_number', '') or sub_id,
+                        invoice_number=meta.get('invoice_number', ''),
                         invoice_date=meta.get('invoice_date'),
                         taxable_amount=meta.get('taxable_amount', Decimal('0.00')),
                         cgst_amount=meta.get('cgst_amount', Decimal('0.00')),
@@ -421,7 +457,7 @@ def create_invoice_submissions(
                     status=InvoiceSubmission.STATUS_SUBMITTED,
                     is_duplicate_suspected=is_suspected,
                     duplicate_notes=duplicate_notes,
-                    invoice_number=sub_id,
+                    invoice_number='',
                 )
                 doc_rec = InvoiceDocument.objects.create(
                     submission=sub,
@@ -491,7 +527,7 @@ def create_invoice_submissions(
                 status=InvoiceSubmission.STATUS_SUBMITTED,
                 is_duplicate_suspected=is_suspected,
                 duplicate_notes=duplicate_notes,
-                invoice_number=sub_id,
+                invoice_number='',
             )
 
             doc_rec = InvoiceDocument.objects.create(

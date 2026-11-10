@@ -9,7 +9,7 @@
 **Balaji InvoiceHub** replaces chaotic WhatsApp and email chains with a clean, centralized enterprise platform for managing invoice receipts collected by employees across transport operations.
 
 Employees simply snap photos or upload PDF receipts from their phones, which immediately stream in chronological order to **Naveen (Accounts)**. Naveen can view clear, high-resolution bills on his screen, enter them directly into his local Tally software, check them off as entered, and export official GST Portal-compliant Excel spreadsheets for monthly return filing.
-
+-
 ---
 
 ## 🚦 Current Project Phase Status

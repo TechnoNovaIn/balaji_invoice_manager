@@ -167,3 +167,7 @@ BACKUP_STORAGE_DIR = Path(os.getenv('BACKUP_STORAGE_PATH', 'E:\\Balaji_Backups\\
 BACKUP_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 # Permanent retention policy: 3650 days (10+ years / Permanent Archive) for statutory GST & tax compliance
 BACKUP_RETENTION_DAYS = int(os.getenv('BACKUP_RETENTION_DAYS', 3650))
+
+# Gemini Vision AI for High-Accuracy Autonomous Invoice Extraction (Google AI Studio Free Tier)
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '').strip()
+GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash').strip()
