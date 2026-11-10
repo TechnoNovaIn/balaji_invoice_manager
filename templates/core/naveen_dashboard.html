@@ -201,7 +201,31 @@
                                 <th class="ps-3" style="width: 45px;">#</th>
                                 <th style="width: 120px;">Date & Time</th>
                                 <th style="width: 130px;">Sent By</th>
-                                <th style="width: 170px;">Party (Vendor)</th>
+                                <th style="width: 185px;">
+                                    <div class="d-flex align-items-center justify-content-between">
+                                        <span>Party (Vendor)</span>
+                                        <div class="dropdown d-inline-block">
+                                            <button class="btn btn-sm btn-link text-decoration-none dropdown-toggle p-0 ms-1 text-danger" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Filter by Vendor" style="font-size: 0.72rem;">
+                                                <i class="bi bi-chevron-down"></i>
+                                            </button>
+                                            <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="max-height: 280px; overflow-y: auto; min-width: 230px; font-size: 0.8rem; z-index: 1060;">
+                                                <li class="dropdown-header py-1 text-uppercase fw-bold text-muted" style="font-size: 0.65rem;">Filter by Vendor</li>
+                                                <li><a class="dropdown-item py-1" href="{% url 'core:naveen_dashboard' %}?tab={{ tab }}">All Vendors (Clear)</a></li>
+                                                <li><hr class="dropdown-divider my-1"></li>
+                                                <li class="px-2 pb-1">
+                                                    <input type="text" class="form-control form-control-sm vendor-filter-input" placeholder="Type to filter..." onclick="event.stopPropagation();" onkeyup="filterHeaderVendorList(this);">
+                                                </li>
+                                                {% for v in frequent_vendors %}
+                                                <li>
+                                                    <a class="dropdown-item py-1 text-truncate header-vendor-item" href="{% url 'core:naveen_dashboard' %}?tab={{ tab }}&q={{ v|urlencode }}">
+                                                        {{ v }}
+                                                    </a>
+                                                </li>
+                                                {% endfor %}
+                                            </ul>
+                                        </div>
+                                    </div>
+                                </th>
                                 <th style="width: 140px;">Invoice No / ID</th>
                                 <th style="width: 110px;">Amount (₹)</th>
                                 <th>Preview</th>
@@ -233,20 +257,41 @@
 
                                 <!-- Party / Vendor Name -->
                                 <td>
-                                    <div class="fw-bold text-dark text-truncate" style="max-width: 180px;" title="{{ sub.party_name }}">
-                                        {% if sub.party_name %}
-                                            {{ sub.party_name }}
-                                        {% else %}
-                                            <span class="text-muted fst-italic">Pending Check</span>
-                                        {% endif %}
+                                    <div class="d-flex align-items-center justify-content-between gap-1">
+                                        <div class="fw-bold text-dark text-truncate" style="max-width: 140px;" id="party-name-{{ sub.submission_id }}" title="{{ sub.party_name }}">
+                                            {% if sub.party_name %}
+                                                {{ sub.party_name }}
+                                            {% else %}
+                                                <span class="text-muted fst-italic">Pending Check</span>
+                                            {% endif %}
+                                        </div>
+                                        <div class="dropdown">
+                                            <button class="btn btn-sm btn-light border py-0 px-1 text-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Quick Select Vendor" style="font-size: 0.68rem; line-height: 1.1;">
+                                                <i class="bi bi-chevron-down"></i>
+                                            </button>
+                                            <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="max-height: 280px; overflow-y: auto; min-width: 240px; font-size: 0.8rem; z-index: 1055;">
+                                                <li class="dropdown-header py-1 text-uppercase fw-bold text-muted" style="font-size: 0.65rem;">Select Master Vendor</li>
+                                                <li class="px-2 pb-1">
+                                                    <input type="text" class="form-control form-control-sm row-vendor-search" placeholder="Search vendor..." onclick="event.stopPropagation();" onkeyup="filterRowVendorList(this);">
+                                                </li>
+                                                <li><hr class="dropdown-divider my-1"></li>
+                                                {% for v in frequent_vendors %}
+                                                <li>
+                                                    <a class="dropdown-item py-1 text-truncate row-vendor-item" href="javascript:void(0);" onclick="quickSelectVendor('{{ sub.submission_id }}', '{{ v|escapejs }}');">
+                                                        {{ v }}
+                                                    </a>
+                                                </li>
+                                                {% endfor %}
+                                            </ul>
+                                        </div>
                                     </div>
                                     <div class="d-flex align-items-center gap-1 flex-wrap mt-1">
-                                        <span class="badge bg-light text-primary border border-primary border-opacity-25" style="font-size: 0.65rem;" title="Tally Expense Ledger">
+                                        <span class="badge bg-light text-primary border border-primary border-opacity-25" id="ledger-badge-{{ sub.submission_id }}" style="font-size: 0.65rem;" title="Tally Expense Ledger">
                                             <i class="bi bi-tag me-1"></i>{{ sub.expense_ledger|default:"Purchase Spares & Consumables" }}
                                         </span>
-                                        {% if sub.party_gstin %}
-                                            <span class="badge bg-light text-secondary border font-monospace" style="font-size: 0.65rem;">{{ sub.party_gstin }}</span>
-                                        {% endif %}
+                                        <span class="badge bg-light text-secondary border font-monospace {% if not sub.party_gstin %}d-none{% endif %}" id="gstin-badge-{{ sub.submission_id }}" style="font-size: 0.65rem;">
+                                            {{ sub.party_gstin|default:"" }}
+                                        </span>
                                     </div>
                                 </td>
 
@@ -384,7 +429,31 @@
                                 <th class="ps-3" style="width: 45px;">#</th>
                                 <th style="width: 120px;">Date & Time</th>
                                 <th style="width: 130px;">Sent By</th>
-                                <th style="width: 170px;">Party (Vendor)</th>
+                                <th style="width: 185px;">
+                                    <div class="d-flex align-items-center justify-content-between">
+                                        <span>Party (Vendor)</span>
+                                        <div class="dropdown d-inline-block">
+                                            <button class="btn btn-sm btn-link text-decoration-none dropdown-toggle p-0 ms-1 text-danger" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Filter by Vendor" style="font-size: 0.72rem;">
+                                                <i class="bi bi-chevron-down"></i>
+                                            </button>
+                                            <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="max-height: 280px; overflow-y: auto; min-width: 230px; font-size: 0.8rem; z-index: 1060;">
+                                                <li class="dropdown-header py-1 text-uppercase fw-bold text-muted" style="font-size: 0.65rem;">Filter by Vendor</li>
+                                                <li><a class="dropdown-item py-1" href="{% url 'core:naveen_dashboard' %}?tab={{ tab }}">All Vendors (Clear)</a></li>
+                                                <li><hr class="dropdown-divider my-1"></li>
+                                                <li class="px-2 pb-1">
+                                                    <input type="text" class="form-control form-control-sm vendor-filter-input" placeholder="Type to filter..." onclick="event.stopPropagation();" onkeyup="filterHeaderVendorList(this);">
+                                                </li>
+                                                {% for v in frequent_vendors %}
+                                                <li>
+                                                    <a class="dropdown-item py-1 text-truncate header-vendor-item" href="{% url 'core:naveen_dashboard' %}?tab={{ tab }}&q={{ v|urlencode }}">
+                                                        {{ v }}
+                                                    </a>
+                                                </li>
+                                                {% endfor %}
+                                            </ul>
+                                        </div>
+                                    </div>
+                                </th>
                                 <th style="width: 140px;">Invoice No / ID</th>
                                 <th style="width: 110px;">Amount (₹)</th>
                                 <th>Preview</th>
@@ -413,20 +482,41 @@
 
                                 <!-- Party / Vendor Name -->
                                 <td>
-                                    <div class="fw-bold text-dark text-truncate" style="max-width: 180px;" title="{{ sub.party_name }}">
-                                        {% if sub.party_name %}
-                                            {{ sub.party_name }}
-                                        {% else %}
-                                            <span class="text-muted fst-italic">Pending Check</span>
-                                        {% endif %}
+                                    <div class="d-flex align-items-center justify-content-between gap-1">
+                                        <div class="fw-bold text-dark text-truncate" style="max-width: 140px;" id="party-name-{{ sub.submission_id }}" title="{{ sub.party_name }}">
+                                            {% if sub.party_name %}
+                                                {{ sub.party_name }}
+                                            {% else %}
+                                                <span class="text-muted fst-italic">Pending Check</span>
+                                            {% endif %}
+                                        </div>
+                                        <div class="dropdown">
+                                            <button class="btn btn-sm btn-light border py-0 px-1 text-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Quick Select Vendor" style="font-size: 0.68rem; line-height: 1.1;">
+                                                <i class="bi bi-chevron-down"></i>
+                                            </button>
+                                            <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="max-height: 280px; overflow-y: auto; min-width: 240px; font-size: 0.8rem; z-index: 1055;">
+                                                <li class="dropdown-header py-1 text-uppercase fw-bold text-muted" style="font-size: 0.65rem;">Select Master Vendor</li>
+                                                <li class="px-2 pb-1">
+                                                    <input type="text" class="form-control form-control-sm row-vendor-search" placeholder="Search vendor..." onclick="event.stopPropagation();" onkeyup="filterRowVendorList(this);">
+                                                </li>
+                                                <li><hr class="dropdown-divider my-1"></li>
+                                                {% for v in frequent_vendors %}
+                                                <li>
+                                                    <a class="dropdown-item py-1 text-truncate row-vendor-item" href="javascript:void(0);" onclick="quickSelectVendor('{{ sub.submission_id }}', '{{ v|escapejs }}');">
+                                                        {{ v }}
+                                                    </a>
+                                                </li>
+                                                {% endfor %}
+                                            </ul>
+                                        </div>
                                     </div>
                                     <div class="d-flex align-items-center gap-1 flex-wrap mt-1">
-                                        <span class="badge bg-light text-primary border border-primary border-opacity-25" style="font-size: 0.65rem;" title="Tally Expense Ledger">
+                                        <span class="badge bg-light text-primary border border-primary border-opacity-25" id="ledger-badge-{{ sub.submission_id }}" style="font-size: 0.65rem;" title="Tally Expense Ledger">
                                             <i class="bi bi-tag me-1"></i>{{ sub.expense_ledger|default:"Purchase Spares & Consumables" }}
                                         </span>
-                                        {% if sub.party_gstin %}
-                                            <span class="badge bg-light text-secondary border font-monospace" style="font-size: 0.65rem;">{{ sub.party_gstin }}</span>
-                                        {% endif %}
+                                        <span class="badge bg-light text-secondary border font-monospace {% if not sub.party_gstin %}d-none{% endif %}" id="gstin-badge-{{ sub.submission_id }}" style="font-size: 0.65rem;">
+                                            {{ sub.party_gstin|default:"" }}
+                                        </span>
                                     </div>
                                 </td>
 
@@ -556,7 +646,31 @@
                             <th class="ps-3" style="width: 45px;">#</th>
                             <th style="width: 120px;">Completed Date</th>
                             <th style="width: 130px;">Sent By</th>
-                            <th style="width: 170px;">Party (Vendor)</th>
+                            <th style="width: 185px;">
+                                <div class="d-flex align-items-center justify-content-between">
+                                    <span>Party (Vendor)</span>
+                                    <div class="dropdown d-inline-block">
+                                        <button class="btn btn-sm btn-link text-decoration-none dropdown-toggle p-0 ms-1 text-dark" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Filter by Vendor" style="font-size: 0.72rem;">
+                                            <i class="bi bi-chevron-down"></i>
+                                        </button>
+                                        <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="max-height: 280px; overflow-y: auto; min-width: 230px; font-size: 0.8rem; z-index: 1060;">
+                                            <li class="dropdown-header py-1 text-uppercase fw-bold text-muted" style="font-size: 0.65rem;">Filter by Vendor</li>
+                                            <li><a class="dropdown-item py-1" href="{% url 'core:naveen_dashboard' %}?tab={{ tab }}">All Vendors (Clear)</a></li>
+                                            <li><hr class="dropdown-divider my-1"></li>
+                                            <li class="px-2 pb-1">
+                                                <input type="text" class="form-control form-control-sm vendor-filter-input" placeholder="Type to filter..." onclick="event.stopPropagation();" onkeyup="filterHeaderVendorList(this);">
+                                            </li>
+                                            {% for v in frequent_vendors %}
+                                            <li>
+                                                <a class="dropdown-item py-1 text-truncate header-vendor-item" href="{% url 'core:naveen_dashboard' %}?tab={{ tab }}&q={{ v|urlencode }}">
+                                                    {{ v }}
+                                                </a>
+                                            </li>
+                                            {% endfor %}
+                                        </ul>
+                                    </div>
+                                </div>
+                            </th>
                             <th style="width: 140px;">Invoice No / ID</th>
                             <th style="width: 110px;">Amount (₹)</th>
                             <th>Preview</th>
@@ -577,20 +691,41 @@
                                 <small class="text-muted">{{ sub.employee.department.name|default:"Fleet" }}</small>
                             </td>
                             <td>
-                                <div class="fw-bold text-dark text-truncate" style="max-width: 170px;" title="{{ sub.party_name }}">
-                                    {% if sub.party_name %}
-                                        {{ sub.party_name }}
-                                    {% else %}
-                                        <span class="text-muted fst-italic">Standard Vendor</span>
-                                    {% endif %}
+                                <div class="d-flex align-items-center justify-content-between gap-1">
+                                    <div class="fw-bold text-dark text-truncate" style="max-width: 140px;" id="party-name-{{ sub.submission_id }}" title="{{ sub.party_name }}">
+                                        {% if sub.party_name %}
+                                            {{ sub.party_name }}
+                                        {% else %}
+                                            <span class="text-muted fst-italic">Standard Vendor</span>
+                                        {% endif %}
+                                    </div>
+                                    <div class="dropdown">
+                                        <button class="btn btn-sm btn-light border py-0 px-1 text-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Quick Select Vendor" style="font-size: 0.68rem; line-height: 1.1;">
+                                            <i class="bi bi-chevron-down"></i>
+                                        </button>
+                                        <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="max-height: 280px; overflow-y: auto; min-width: 240px; font-size: 0.8rem; z-index: 1055;">
+                                            <li class="dropdown-header py-1 text-uppercase fw-bold text-muted" style="font-size: 0.65rem;">Select Master Vendor</li>
+                                            <li class="px-2 pb-1">
+                                                <input type="text" class="form-control form-control-sm row-vendor-search" placeholder="Search vendor..." onclick="event.stopPropagation();" onkeyup="filterRowVendorList(this);">
+                                            </li>
+                                            <li><hr class="dropdown-divider my-1"></li>
+                                            {% for v in frequent_vendors %}
+                                            <li>
+                                                <a class="dropdown-item py-1 text-truncate row-vendor-item" href="javascript:void(0);" onclick="quickSelectVendor('{{ sub.submission_id }}', '{{ v|escapejs }}');">
+                                                    {{ v }}
+                                                </a>
+                                            </li>
+                                            {% endfor %}
+                                        </ul>
+                                    </div>
                                 </div>
                                 <div class="d-flex align-items-center gap-1 flex-wrap mt-1">
-                                    <span class="badge bg-light text-primary border border-primary border-opacity-25" style="font-size: 0.65rem;" title="Tally Expense Ledger">
+                                    <span class="badge bg-light text-primary border border-primary border-opacity-25" id="ledger-badge-{{ sub.submission_id }}" style="font-size: 0.65rem;" title="Tally Expense Ledger">
                                         <i class="bi bi-tag me-1"></i>{{ sub.expense_ledger|default:"Purchase Spares & Consumables" }}
                                     </span>
-                                    {% if sub.party_gstin %}
-                                        <span class="badge bg-light text-secondary border font-monospace" style="font-size: 0.65rem;">{{ sub.party_gstin }}</span>
-                                    {% endif %}
+                                    <span class="badge bg-light text-secondary border font-monospace {% if not sub.party_gstin %}d-none{% endif %}" id="gstin-badge-{{ sub.submission_id }}" style="font-size: 0.65rem;">
+                                        {{ sub.party_gstin|default:"" }}
+                                    </span>
                                 </div>
                             </td>
                             <td>
@@ -699,7 +834,31 @@
                         <th class="ps-3" style="width: 45px;">#</th>
                         <th style="width: 120px;">Date & Time</th>
                         <th style="width: 130px;">Sent By</th>
-                        <th style="width: 170px;">Party (Vendor)</th>
+                        <th style="width: 185px;">
+                            <div class="d-flex align-items-center justify-content-between">
+                                <span>Party (Vendor)</span>
+                                <div class="dropdown d-inline-block">
+                                    <button class="btn btn-sm btn-link text-decoration-none dropdown-toggle p-0 ms-1 text-dark" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Filter by Vendor" style="font-size: 0.72rem;">
+                                        <i class="bi bi-chevron-down"></i>
+                                    </button>
+                                    <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="max-height: 280px; overflow-y: auto; min-width: 230px; font-size: 0.8rem; z-index: 1060;">
+                                        <li class="dropdown-header py-1 text-uppercase fw-bold text-muted" style="font-size: 0.65rem;">Filter by Vendor</li>
+                                        <li><a class="dropdown-item py-1" href="{% url 'core:naveen_dashboard' %}?tab={{ tab }}">All Vendors (Clear)</a></li>
+                                        <li><hr class="dropdown-divider my-1"></li>
+                                        <li class="px-2 pb-1">
+                                            <input type="text" class="form-control form-control-sm vendor-filter-input" placeholder="Type to filter..." onclick="event.stopPropagation();" onkeyup="filterHeaderVendorList(this);">
+                                        </li>
+                                        {% for v in frequent_vendors %}
+                                        <li>
+                                            <a class="dropdown-item py-1 text-truncate header-vendor-item" href="{% url 'core:naveen_dashboard' %}?tab={{ tab }}&q={{ v|urlencode }}">
+                                                {{ v }}
+                                            </a>
+                                        </li>
+                                        {% endfor %}
+                                    </ul>
+                                </div>
+                            </div>
+                        </th>
                         <th style="width: 140px;">Invoice No / ID</th>
                         <th style="width: 110px;">Amount (₹)</th>
                         <th>Preview</th>
@@ -720,20 +879,41 @@
                             <small class="text-muted">{{ sub.employee.department.name|default:"Fleet" }}</small>
                         </td>
                         <td>
-                            <div class="fw-bold text-dark text-truncate" style="max-width: 170px;" title="{{ sub.party_name }}">
-                                {% if sub.party_name %}
-                                    {{ sub.party_name }}
-                                {% else %}
-                                    <span class="text-muted fst-italic">Standard Vendor</span>
-                                {% endif %}
+                            <div class="d-flex align-items-center justify-content-between gap-1">
+                                <div class="fw-bold text-dark text-truncate" style="max-width: 140px;" id="party-name-{{ sub.submission_id }}" title="{{ sub.party_name }}">
+                                    {% if sub.party_name %}
+                                        {{ sub.party_name }}
+                                    {% else %}
+                                        <span class="text-muted fst-italic">Standard Vendor</span>
+                                    {% endif %}
+                                </div>
+                                <div class="dropdown">
+                                    <button class="btn btn-sm btn-light border py-0 px-1 text-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Quick Select Vendor" style="font-size: 0.68rem; line-height: 1.1;">
+                                        <i class="bi bi-chevron-down"></i>
+                                    </button>
+                                    <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="max-height: 280px; overflow-y: auto; min-width: 240px; font-size: 0.8rem; z-index: 1055;">
+                                        <li class="dropdown-header py-1 text-uppercase fw-bold text-muted" style="font-size: 0.65rem;">Select Master Vendor</li>
+                                        <li class="px-2 pb-1">
+                                            <input type="text" class="form-control form-control-sm row-vendor-search" placeholder="Search vendor..." onclick="event.stopPropagation();" onkeyup="filterRowVendorList(this);">
+                                        </li>
+                                        <li><hr class="dropdown-divider my-1"></li>
+                                        {% for v in frequent_vendors %}
+                                        <li>
+                                            <a class="dropdown-item py-1 text-truncate row-vendor-item" href="javascript:void(0);" onclick="quickSelectVendor('{{ sub.submission_id }}', '{{ v|escapejs }}');">
+                                                {{ v }}
+                                            </a>
+                                        </li>
+                                        {% endfor %}
+                                    </ul>
+                                </div>
                             </div>
                             <div class="d-flex align-items-center gap-1 flex-wrap mt-1">
-                                <span class="badge bg-light text-primary border border-primary border-opacity-25" style="font-size: 0.65rem;" title="Tally Expense Ledger">
+                                <span class="badge bg-light text-primary border border-primary border-opacity-25" id="ledger-badge-{{ sub.submission_id }}" style="font-size: 0.65rem;" title="Tally Expense Ledger">
                                     <i class="bi bi-tag me-1"></i>{{ sub.expense_ledger|default:"Purchase Spares & Consumables" }}
                                 </span>
-                                {% if sub.party_gstin %}
-                                    <span class="badge bg-light text-secondary border font-monospace" style="font-size: 0.65rem;">{{ sub.party_gstin }}</span>
-                                {% endif %}
+                                <span class="badge bg-light text-secondary border font-monospace {% if not sub.party_gstin %}d-none{% endif %}" id="gstin-badge-{{ sub.submission_id }}" style="font-size: 0.65rem;">
+                                    {{ sub.party_gstin|default:"" }}
+                                </span>
                             </div>
                         </td>
                         <td>
@@ -918,6 +1098,78 @@ document.addEventListener('DOMContentLoaded', function () {
     // Initial check on load
     updateBatchState();
 });
+
+// CSRF Token for Quick Updates
+const csrfTokenGlobal = '{{ csrf_token }}';
+
+function quickSelectVendor(submissionId, vendorName) {
+    const url = `/invoices/quick-update/${submissionId}/`;
+    const formData = new FormData();
+    formData.append('party_name', vendorName);
+
+    const nameEl = document.getElementById(`party-name-${submissionId}`);
+    if (nameEl) {
+        nameEl.style.opacity = '0.4';
+    }
+
+    fetch(url, {
+        method: 'POST',
+        headers: {
+            'X-Requested-With': 'XMLHttpRequest',
+            'X-CSRFToken': csrfTokenGlobal
+        },
+        body: formData
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            if (nameEl) {
+                nameEl.textContent = data.party_name;
+                nameEl.title = data.party_name;
+                nameEl.style.opacity = '1';
+                nameEl.classList.add('text-success');
+                setTimeout(() => nameEl.classList.remove('text-success'), 2000);
+            }
+            const ledgerEl = document.getElementById(`ledger-badge-${submissionId}`);
+            if (ledgerEl && data.expense_ledger) {
+                ledgerEl.innerHTML = `<i class="bi bi-tag me-1"></i>${data.expense_ledger}`;
+            }
+            const gstinEl = document.getElementById(`gstin-badge-${submissionId}`);
+            if (gstinEl) {
+                if (data.party_gstin) {
+                    gstinEl.textContent = data.party_gstin;
+                    gstinEl.classList.remove('d-none');
+                } else {
+                    gstinEl.classList.add('d-none');
+                }
+            }
+        }
+    })
+    .catch(err => {
+        console.error('Vendor update error:', err);
+        if (nameEl) nameEl.style.opacity = '1';
+    });
+}
+
+function filterHeaderVendorList(input) {
+    const filter = input.value.toLowerCase();
+    const menu = input.closest('.dropdown-menu');
+    const items = menu.querySelectorAll('.header-vendor-item');
+    items.forEach(item => {
+        const text = item.textContent.toLowerCase();
+        item.style.display = text.includes(filter) ? '' : 'none';
+    });
+}
+
+function filterRowVendorList(input) {
+    const filter = input.value.toLowerCase();
+    const menu = input.closest('.dropdown-menu');
+    const items = menu.querySelectorAll('.row-vendor-item');
+    items.forEach(item => {
+        const text = item.textContent.toLowerCase();
+        item.style.display = text.includes(filter) ? '' : 'none';
+    });
+}
 </script>
 
 <style>

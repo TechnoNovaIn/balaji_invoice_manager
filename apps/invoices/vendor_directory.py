@@ -237,6 +237,7 @@ VENDOR_DIRECTORY: Dict[str, Dict[str, str]] = {
     '29AUWPM1878Q1Z7': {'name': 'SRI MANJUNATHA TYRES', 'state': 'Karnataka', 'ledger': 'Tyre & Tube Purchase'},
     '29AERPB8025K1Z3': {'name': 'SRI NARASIMHA STORES', 'state': 'Karnataka', 'ledger': 'Building Repairs, Hardware & Paints'},
     '29AERPN3782M1ZH': {'name': 'SRI SAI ENTERPRISES', 'state': 'Karnataka', 'ledger': 'Purchase Spares & Consumables'},
+    '29ECEPK8760H1Z4': {'name': 'SRI RAGHAVENDRASWAMY ENTERPRISES', 'state': 'Karnataka', 'ledger': 'Purchase Spares & Consumables'},
     '29ACKFS0217R1ZI': {'name': 'SRINIDHI ENGINEERING INDUSTRIES', 'state': 'Karnataka', 'ledger': 'Building Repairs, Hardware & Paints'},
     '29AAQPF8511J1ZX': {'name': 'KWALITY FURNISHINGS', 'state': 'Karnataka', 'ledger': 'Building Repairs, Hardware & Paints'},
     '33AIPPM4834K1ZV': {'name': 'VEL AGENCIES', 'state': 'Tamil Nadu', 'ledger': 'Purchase Spares & Consumables'},
