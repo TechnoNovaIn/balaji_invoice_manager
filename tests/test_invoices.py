@@ -353,6 +353,7 @@ class InvoiceSubmissionEngineTests(TestCase):
 
     def test_gemini_vision_extractor_mock_success(self):
         """Test Gemini Vision AI extractor parses JSON response and normalizes statutory fields."""
+        import os
         from unittest.mock import patch, MagicMock
         from apps.invoices.gemini_extractor import extract_with_gemini
 
@@ -365,7 +366,7 @@ class InvoiceSubmissionEngineTests(TestCase):
 
         dummy_path = "dummy_invoice.jpg"
         with open(dummy_path, "wb") as f:
-            f.write(b"\xff\xd8\xff\xe0dummy_jpg_content")
+            f.write(b"\xff\xd8\xff\xe0" + b"x" * 400)
 
         try:
             with patch("django.conf.settings.GEMINI_API_KEY", "test_gemini_key_123"):

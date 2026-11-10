@@ -10,4 +10,4 @@ backups/*
 !backups/.gitkeep
 staticfiles/
 .pytest_cache/
-
+vendor_directory.py
