@@ -29,6 +29,12 @@ from .purchase_service import (
     record_field_corrections,
     compare_with_gstr2a,
 )
+from .e_invoice_utils import (
+    is_valid_irn,
+    normalize_irn,
+    parse_e_invoice_choice,
+    apply_e_invoice_to_submission,
+)
 from .tally_excel_exporter import generate_tally_structured_excel
 from .analytics_service import (
     get_executive_kpis,
@@ -471,11 +477,13 @@ def naveen_verify_invoice(request, submission_id):
 
     has_blocking_gstin_issue = backend_val['vendor_match_status'] in ('GSTIN_MISMATCH', 'INVALID_GSTIN_FORMAT')
     has_missing_financials = not (submission.party_name or '').strip() or submission.total_amount <= Decimal('0.00')
+    has_missing_einv_irn = submission.is_e_invoice is True and not is_valid_irn(submission.irn_number)
     needs_review_gate = (
         submission.is_ambiguous_vendor
         or backend_val['is_ambiguous_vendor']
         or submission.requires_manual_review
         or not backend_val['is_financial_approval_eligible']
+        or has_missing_einv_irn
     )
 
     if has_blocking_gstin_issue or has_missing_financials or (needs_review_gate and not confirm_manual):
@@ -652,6 +660,28 @@ def tally_workspace(request, submission_id):
             'igst_amount': igst_amount,
             'total_amount': total_amount,
         }
+        if 'is_e_invoice' in request.POST or 'irn_number' in request.POST:
+            einv_val = (
+                parse_e_invoice_choice(request.POST.get('is_e_invoice'))
+                if 'is_e_invoice' in request.POST
+                else submission.is_e_invoice
+            )
+            irn_val = (
+                normalize_irn(request.POST.get('irn_number'))
+                if 'irn_number' in request.POST
+                else submission.irn_number
+            )
+            if irn_val and not is_valid_irn(irn_val):
+                messages.error(request, "Invalid IRN: IRN must be a valid 64-character alphanumeric value.")
+                return redirect('invoices:tally_workspace', submission_id=submission.submission_id)
+            if einv_val is False and irn_val:
+                messages.error(request, "Conflict: Clear the IRN before marking an invoice as Non E-Invoice (NO), or select YES.")
+                return redirect('invoices:tally_workspace', submission_id=submission.submission_id)
+            if einv_val is None and is_valid_irn(irn_val):
+                einv_val = True
+            new_data['is_e_invoice'] = einv_val
+            new_data['irn_number'] = '' if einv_val is False else irn_val
+
         if invoice_date_str:
             try:
                 new_data['invoice_date'] = datetime.strptime(invoice_date_str, '%Y-%m-%d').date()
@@ -662,6 +692,7 @@ def tally_workspace(request, submission_id):
         submission.refresh_from_db()
 
         apply_vendor_validation_to_submission(submission)
+        apply_e_invoice_to_submission(submission)
         submission.tally_voucher_no = tally_voucher_no
         submission.gst_filing_period = gst_filing_period
 
@@ -759,11 +790,32 @@ def quick_update_metadata(request, submission_id):
         except ValueError:
             pass
 
+    if 'is_e_invoice' in request.POST or 'irn_number' in request.POST:
+        einv_val = (
+            parse_e_invoice_choice(request.POST.get('is_e_invoice'))
+            if 'is_e_invoice' in request.POST
+            else submission.is_e_invoice
+        )
+        irn_val = (
+            normalize_irn(request.POST.get('irn_number'))
+            if 'irn_number' in request.POST
+            else submission.irn_number
+        )
+        if irn_val and not is_valid_irn(irn_val):
+            return JsonResponse({'status': 'error', 'message': 'Invalid 64-character IRN.'}, status=400)
+        if einv_val is False and irn_val:
+            return JsonResponse({'status': 'error', 'message': 'Clear IRN before marking Non E-Invoice.'}, status=400)
+        if einv_val is None and is_valid_irn(irn_val):
+            einv_val = True
+        new_data['is_e_invoice'] = einv_val
+        new_data['irn_number'] = '' if einv_val is False else irn_val
+
     if new_data:
         record_field_corrections(submission, new_data, request.user, reason="Quick dashboard inline update")
         submission.refresh_from_db()
         apply_vendor_validation_to_submission(submission)
-        submission.save(update_fields=['is_ambiguous_vendor', 'requires_manual_review', 'ocr_confidence', 'updated_at'])
+        apply_e_invoice_to_submission(submission)
+        submission.save(update_fields=['is_ambiguous_vendor', 'requires_manual_review', 'ocr_confidence', 'is_e_invoice', 'irn_number', 'updated_at'])
 
     # Return JSON if requested via AJAX
     if request.headers.get('x-requested-with') == 'XMLHttpRequest' or request.GET.get('ajax'):
@@ -1109,6 +1161,36 @@ def verification_workspace(request, submission_id):
             'total_amount': to_dec(request.POST.get('total_amount')),
         }
 
+        if 'is_e_invoice' in request.POST or 'irn_number' in request.POST:
+            einv_val = (
+                parse_e_invoice_choice(request.POST.get('is_e_invoice'))
+                if 'is_e_invoice' in request.POST
+                else submission.is_e_invoice
+            )
+            irn_val = (
+                normalize_irn(request.POST.get('irn_number'))
+                if 'irn_number' in request.POST
+                else submission.irn_number
+            )
+            if irn_val and not is_valid_irn(irn_val):
+                messages.error(
+                    request,
+                    "Invalid IRN format: An Indian GST IRN must be a valid 64-character alphanumeric string. "
+                    "Incomplete or fabricated IRNs cannot be saved."
+                )
+                return redirect('invoices:verification_workspace', submission_id=submission.submission_id)
+            if einv_val is False and irn_val:
+                messages.error(
+                    request,
+                    "Conflicting E-Invoice selection: Clear the IRN if marking as Non E-Invoice (NO), "
+                    "or set E-Invoice Status to YES."
+                )
+                return redirect('invoices:verification_workspace', submission_id=submission.submission_id)
+            if einv_val is None and is_valid_irn(irn_val):
+                einv_val = True
+            new_data['is_e_invoice'] = einv_val
+            new_data['irn_number'] = '' if einv_val is False else irn_val
+
         # Handle Date
         inv_date_str = request.POST.get('invoice_date', '').strip()
         if inv_date_str:
@@ -1142,11 +1224,12 @@ def verification_workspace(request, submission_id):
                 messages.error(request, f"Approval blocked: {backend_val['audit_notes']}")
                 return redirect('invoices:verification_workspace', submission_id=submission.submission_id)
 
-            if backend_val['is_ambiguous_vendor'] and not confirm_manual:
+            einv_missing_irn = submission.is_e_invoice is True and not is_valid_irn(submission.irn_number)
+            if (backend_val['is_ambiguous_vendor'] or einv_missing_irn) and not confirm_manual:
                 messages.error(
                     request,
-                    "Manual review confirmation required: This vendor is flagged as ambiguous without a valid GSTIN. "
-                    "Tick the manual-review confirmation box or supply a valid GSTIN before approving."
+                    "Manual review confirmation required: Confirm missing IRN or ambiguous vendor details "
+                    "(tick the manual-review confirmation box) before approving."
                 )
                 return redirect('invoices:verification_workspace', submission_id=submission.submission_id)
 
@@ -1156,9 +1239,14 @@ def verification_workspace(request, submission_id):
             submission.verified_at = timezone.now()
             submission.is_ambiguous_vendor = backend_val['is_ambiguous_vendor']
             submission.requires_manual_review = False
+            apply_e_invoice_to_submission(submission)
+            # If manually confirmed with missing IRN, preserve verified status without silent approval
+            if einv_missing_irn and confirm_manual:
+                submission.requires_manual_review = False
             submission.save(update_fields=[
                 'status', 'verified_by', 'verified_at',
-                'is_ambiguous_vendor', 'requires_manual_review', 'updated_at'
+                'is_ambiguous_vendor', 'requires_manual_review',
+                'is_e_invoice', 'irn_number', 'updated_at'
             ])
 
             PurchaseAuditTrail.objects.create(
@@ -1180,10 +1268,14 @@ def verification_workspace(request, submission_id):
             messages.success(request, f"✓ Invoice {submission.submission_id} verified and ready for Tally entry!")
             return redirect('core:naveen_dashboard')
 
-        # Save-only path: keep backend vendor & manual review flags authoritative
+        # Save-only path: keep backend vendor, e-invoice & manual review flags authoritative
         submission.is_ambiguous_vendor = backend_val['is_ambiguous_vendor']
         submission.requires_manual_review = backend_val['requires_manual_review']
-        submission.save(update_fields=['is_ambiguous_vendor', 'requires_manual_review', 'updated_at'])
+        apply_e_invoice_to_submission(submission)
+        submission.save(update_fields=[
+            'is_ambiguous_vendor', 'requires_manual_review',
+            'is_e_invoice', 'irn_number', 'updated_at'
+        ])
 
         messages.success(request, f"Corrections for invoice {submission.submission_id} saved successfully!")
         return redirect('invoices:verification_workspace', submission_id=submission.submission_id)

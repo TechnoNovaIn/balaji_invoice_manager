@@ -281,6 +281,9 @@ def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
         'sgst_amount': Decimal('0.00'),
         'igst_amount': Decimal('0.00'),
         'total_amount': Decimal('0.00'),
+        'is_e_invoice': None,
+        'irn_number': '',
+        'e_invoice_source': '',
         'raw_text': raw_text.strip() if raw_text else '',
         'confidence': 0.0,
         'requires_manual_review': True,
@@ -623,6 +626,11 @@ def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
             result['sgst_amount'] = sgst_val
             result['igst_amount'] = Decimal('0.00')
             result['total_amount'] = gtotal_val
+            from .e_invoice_utils import evaluate_e_invoice_status
+            einv_val = evaluate_e_invoice_status(raw_text=raw_text)
+            result['is_e_invoice'] = einv_val['is_e_invoice']
+            result['irn_number'] = einv_val['irn_number']
+            result['e_invoice_source'] = einv_val['e_invoice_source']
             result['confidence'] = 0.95
             result['requires_manual_review'] = True
             return result
@@ -922,6 +930,13 @@ def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
         # Financial policy: OCR is advisory only. Naveen's approval is always required before Tally posting.
         result['requires_manual_review'] = True
 
+        # --- F. E-Invoice & IRN Detection ---
+        from .e_invoice_utils import evaluate_e_invoice_status
+        einv_val = evaluate_e_invoice_status(raw_text=raw_text)
+        result['is_e_invoice'] = einv_val['is_e_invoice']
+        result['irn_number'] = einv_val['irn_number']
+        result['e_invoice_source'] = einv_val['e_invoice_source']
+
     return result
 
 
@@ -1014,6 +1029,12 @@ def extract_invoice_metadata(file_path: str, content_type: str = '') -> Dict[str
                 pass
 
     local_meta = extract_metadata_from_text(raw_text)
+    from .e_invoice_utils import extract_qr_e_invoice_data, evaluate_e_invoice_status
+    qr_data = extract_qr_e_invoice_data(file_path)
+    einv_val = evaluate_e_invoice_status(raw_text=raw_text, qr_data=qr_data)
+    local_meta['is_e_invoice'] = einv_val['is_e_invoice']
+    local_meta['irn_number'] = einv_val['irn_number']
+    local_meta['e_invoice_source'] = einv_val['e_invoice_source']
     local_meta['raw_text'] = raw_text
     local_meta['ocr_extracted_text'] = raw_text
     local_meta['gemini_extracted_data'] = None
@@ -1027,10 +1048,14 @@ def extract_invoice_metadata(file_path: str, content_type: str = '') -> Dict[str
         default_expense_ledger=local_meta.get('expense_ledger', 'Purchase Spares & Consumables'),
     )
     local_meta['is_ambiguous_vendor'] = backend_val['is_ambiguous_vendor']
-    local_meta['requires_manual_review'] = backend_val['requires_manual_review']
+    local_meta['requires_manual_review'] = backend_val['requires_manual_review'] or (
+        local_meta['is_e_invoice'] is True and not local_meta['irn_number']
+    )
     local_meta['confidence'] = min(local_meta.get('confidence', 0.8), backend_val['confidence'])
     local_meta['vendor_match_status'] = backend_val['vendor_match_status']
-    local_meta['is_financial_approval_eligible'] = backend_val['is_financial_approval_eligible']
+    local_meta['is_financial_approval_eligible'] = backend_val['is_financial_approval_eligible'] and not (
+        local_meta['is_e_invoice'] is True and not local_meta['irn_number']
+    )
     if backend_val.get('audit_notes'):
         local_meta['audit_notes'] = backend_val['audit_notes']
 

@@ -286,6 +286,7 @@
                                         </div>
                                     </div>
                                 </th>
+                                {% include "invoices/includes/_e_invoice_th.html" with header_tone="danger" %}
                                 <th style="width: 110px;">Amount (₹)</th>
                                 <th>Preview</th>
                                 <th class="text-center" style="width: 90px;">Action</th>
@@ -313,7 +314,7 @@
                         </thead>
                         <tbody class="small">
                             {% for sub in carryover_invoices %}
-                            <tr class="invoice-row carryover-row" id="row-{{ sub.submission_id }}" data-timestamp="{{ sub.created_at|date:'U' }}" data-date-group="carried" data-submitter="{{ sub.employee.get_full_name|default:sub.employee.username|lower }}" data-vendor="{{ sub.party_name|lower }}" data-has-inv="{% if sub.invoice_number %}1{% else %}0{% endif %}" data-inv-num="{{ sub.invoice_number|lower }}">
+                            <tr class="invoice-row carryover-row" id="row-{{ sub.submission_id }}" data-timestamp="{{ sub.created_at|date:'U' }}" data-date-group="carried" data-submitter="{{ sub.employee.get_full_name|default:sub.employee.username|lower }}" data-vendor="{{ sub.party_name|lower }}" data-has-inv="{% if sub.invoice_number %}1{% else %}0{% endif %}" data-inv-num="{{ sub.invoice_number|lower }}" data-e-invoice="{% if sub.is_e_invoice is True %}YES{% elif sub.is_e_invoice is False %}NO{% else %}NEEDS_VERIFICATION{% endif %}">
                                 <td class="ps-3 fw-bold text-danger">{{ forloop.counter }}</td>
                                 
                                 <!-- Date and Time -->
@@ -366,6 +367,8 @@
                                         </span>
                                     {% endif %}
                                 </td>
+
+                                {% include "invoices/includes/_e_invoice_tds.html" %}
 
                                 <!-- Amount (₹) -->
                                 <td>
@@ -563,6 +566,7 @@
                                         </div>
                                     </div>
                                 </th>
+                                {% include "invoices/includes/_e_invoice_th.html" with header_tone="primary" %}
                                 <th style="width: 110px;">Amount (₹)</th>
                                 <th>Preview</th>
                                 <th class="text-center" style="width: 90px;">Action</th>
@@ -590,7 +594,7 @@
                         </thead>
                         <tbody class="small">
                             {% for sub in today_invoices %}
-                            <tr class="invoice-row today-row" id="row-{{ sub.submission_id }}" data-timestamp="{{ sub.created_at|date:'U' }}" data-date-group="today" data-submitter="{{ sub.employee.get_full_name|default:sub.employee.username|lower }}" data-vendor="{{ sub.party_name|lower }}" data-has-inv="{% if sub.invoice_number %}1{% else %}0{% endif %}" data-inv-num="{{ sub.invoice_number|lower }}">
+                            <tr class="invoice-row today-row" id="row-{{ sub.submission_id }}" data-timestamp="{{ sub.created_at|date:'U' }}" data-date-group="today" data-submitter="{{ sub.employee.get_full_name|default:sub.employee.username|lower }}" data-vendor="{{ sub.party_name|lower }}" data-has-inv="{% if sub.invoice_number %}1{% else %}0{% endif %}" data-inv-num="{{ sub.invoice_number|lower }}" data-e-invoice="{% if sub.is_e_invoice is True %}YES{% elif sub.is_e_invoice is False %}NO{% else %}NEEDS_VERIFICATION{% endif %}">
                                 <td class="ps-3 fw-bold text-muted">{{ forloop.counter }}</td>
 
                                 <!-- Date and Time -->
@@ -640,6 +644,8 @@
                                         </span>
                                     {% endif %}
                                 </td>
+
+                                {% include "invoices/includes/_e_invoice_tds.html" %}
 
                                 <!-- Amount (₹) -->
                                 <td>
@@ -820,6 +826,7 @@
                                     </div>
                                 </div>
                             </th>
+                            {% include "invoices/includes/_e_invoice_th.html" with header_tone="secondary" %}
                             <th style="width: 110px;">Amount (₹)</th>
                             <th>Preview</th>
                             <th style="width: 110px;">Tally Status</th>
@@ -828,7 +835,7 @@
                     </thead>
                     <tbody class="small">
                         {% for sub in completed_invoices %}
-                        <tr class="invoice-row completed-row" id="row-{{ sub.submission_id }}" data-timestamp="{{ sub.tally_entered_at|default:sub.created_at|date:'U' }}" data-submitter="{{ sub.employee.get_full_name|default:sub.employee.username|lower }}" data-vendor="{{ sub.party_name|lower }}" data-has-inv="{% if sub.invoice_number %}1{% else %}0{% endif %}" data-inv-num="{{ sub.invoice_number|lower }}">
+                        <tr class="invoice-row completed-row" id="row-{{ sub.submission_id }}" data-timestamp="{{ sub.tally_entered_at|default:sub.created_at|date:'U' }}" data-submitter="{{ sub.employee.get_full_name|default:sub.employee.username|lower }}" data-vendor="{{ sub.party_name|lower }}" data-has-inv="{% if sub.invoice_number %}1{% else %}0{% endif %}" data-inv-num="{{ sub.invoice_number|lower }}" data-e-invoice="{% if sub.is_e_invoice is True %}YES{% elif sub.is_e_invoice is False %}NO{% else %}NEEDS_VERIFICATION{% endif %}">
                             <td class="ps-3 fw-bold text-muted">{{ forloop.counter }}</td>
                             <td>
                                 <div class="fw-bold text-success">{{ sub.tally_entered_at|date:"d M Y"|default:sub.created_at|date:"d M Y" }}</div>
@@ -870,6 +877,7 @@
                                 </span>
                             {% endif %}
                             </td>
+                            {% include "invoices/includes/_e_invoice_tds.html" %}
                             <!-- Amount (₹) -->
                             <td>
                                 {% if sub.total_amount > 0 %}
@@ -1036,6 +1044,7 @@
                                 </div>
                             </div>
                         </th>
+                        {% include "invoices/includes/_e_invoice_th.html" with header_tone="secondary" %}
                         <th style="width: 110px;">Amount (₹)</th>
                         <th>Preview</th>
                         <th style="width: 120px;">Status</th>
@@ -1044,7 +1053,7 @@
                 </thead>
                 <tbody class="small">
                     {% for sub in all_invoices %}
-                    <tr class="invoice-row all-row" id="row-{{ sub.submission_id }}" data-timestamp="{{ sub.created_at|date:'U' }}" data-submitter="{{ sub.employee.get_full_name|default:sub.employee.username|lower }}" data-vendor="{{ sub.party_name|lower }}" data-has-inv="{% if sub.invoice_number %}1{% else %}0{% endif %}" data-inv-num="{{ sub.invoice_number|lower }}">
+                    <tr class="invoice-row all-row" id="row-{{ sub.submission_id }}" data-timestamp="{{ sub.created_at|date:'U' }}" data-submitter="{{ sub.employee.get_full_name|default:sub.employee.username|lower }}" data-vendor="{{ sub.party_name|lower }}" data-has-inv="{% if sub.invoice_number %}1{% else %}0{% endif %}" data-inv-num="{{ sub.invoice_number|lower }}" data-e-invoice="{% if sub.is_e_invoice is True %}YES{% elif sub.is_e_invoice is False %}NO{% else %}NEEDS_VERIFICATION{% endif %}">
                         <td class="ps-3 fw-bold text-muted">{{ forloop.counter }}</td>
                         <td>
                             <div class="fw-bold text-dark">{{ sub.created_at|date:"d M Y" }}</div>
@@ -1086,6 +1095,7 @@
                                 </span>
                             {% endif %}
                         </td>
+                        {% include "invoices/includes/_e_invoice_tds.html" %}
                         <!-- Amount (₹) -->
                         <td>
                             {% if sub.total_amount > 0 %}
@@ -1286,6 +1296,10 @@ function filterDashboardTable(triggerEl, filterKey, filterVal) {
             } else if (filterVal === 'PENDING') {
                 show = (row.dataset.hasInv === '0');
             }
+        } else if (filterKey === 'e_invoice') {
+            if (filterVal && filterVal !== 'ALL') {
+                show = ((row.dataset.eInvoice || '') === filterVal);
+            }
         } else if (filterKey === 'tally_status') {
             const chk = row.querySelector('.invoice-checkbox');
             if (filterVal === 'CHECKED') {
@@ -1395,6 +1409,45 @@ function quickSelectVendor(submissionId, vendorName) {
     });
 }
 
+function copyIrnToClipboard(irnText, btnEl) {
+    const showCopied = () => {
+        if (!btnEl) return;
+        const origHtml = btnEl.innerHTML;
+        btnEl.innerHTML = '<i class="bi bi-check-lg text-success" style="font-size: 0.75rem;"></i>';
+        btnEl.classList.remove('btn-outline-secondary');
+        btnEl.classList.add('btn-outline-success');
+        setTimeout(() => {
+            btnEl.innerHTML = origHtml;
+            btnEl.classList.remove('btn-outline-success');
+            btnEl.classList.add('btn-outline-secondary');
+        }, 1600);
+    };
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(irnText).then(showCopied).catch(() => {
+            fallbackCopyText(irnText, showCopied);
+        });
+    } else {
+        fallbackCopyText(irnText, showCopied);
+    }
+}
+
+function fallbackCopyText(text, onSuccess) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+        if (document.execCommand('copy') && onSuccess) {
+            onSuccess();
+        }
+    } catch (e) {}
+    document.body.removeChild(ta);
+}
+
 function filterHeaderVendorList(input) {
     const filter = input.value.toLowerCase();
     const menu = input.closest('.dropdown-menu');
@@ -1433,7 +1486,7 @@ function filterRowVendorList(input) {
 }
 @media (max-width: 768px) {
     .table-responsive table {
-        min-width: 720px;
+        min-width: 980px;
     }
     .invoice-checkbox {
         width: 22px;

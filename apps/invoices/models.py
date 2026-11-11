@@ -331,6 +331,20 @@ class InvoiceSubmission(models.Model):
         default=True,
         help_text="Financial safety gate: manual verification required"
     )
+    is_e_invoice = models.BooleanField(
+        null=True,
+        blank=True,
+        default=None,
+        db_index=True,
+        help_text="E-Invoice classification: True=YES, False=NO, None=NEEDS VERIFICATION"
+    )
+    irn_number = models.CharField(
+        max_length=64,
+        blank=True,
+        default='',
+        db_index=True,
+        help_text="64-character Invoice Reference Number (IRN) when invoice is an e-invoice"
+    )
 
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -376,6 +390,37 @@ class InvoiceSubmission(models.Model):
     def can_be_edited(self):
         """Only returned submissions can be edited / resubmitted by the employee."""
         return self.status == self.STATUS_RETURNED
+
+    @property
+    def is_irn_valid(self):
+        """True only when irn_number is a valid 64-character alphanumeric IRN."""
+        from .e_invoice_utils import is_valid_irn
+        return is_valid_irn(self.irn_number)
+
+    @property
+    def e_invoice_status_label(self):
+        if self.is_e_invoice is True:
+            return 'YES'
+        if self.is_e_invoice is False:
+            return 'NO'
+        return 'NEEDS VERIFICATION'
+
+    @property
+    def irn_display(self):
+        """
+        Safe presentation value for IRN column:
+        - Non-e-invoice -> 'N/A'
+        - Valid IRN -> complete 64-char IRN
+        - Identified as e-invoice without valid IRN -> 'IRN Not Found'
+        - Insufficient info (NEEDS VERIFICATION) -> '' (pending check)
+        """
+        if self.is_e_invoice is False:
+            return 'N/A'
+        if self.is_irn_valid:
+            return self.irn_number.strip().upper()
+        if self.is_e_invoice is True:
+            return 'IRN Not Found'
+        return ''
 
 
 class InvoiceDocument(models.Model):

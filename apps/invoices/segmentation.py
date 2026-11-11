@@ -394,6 +394,21 @@ def segment_and_extract_pdf(file_path: str, timer=None, ocr_engine=None) -> List
         # Extract metadata
         meta = extract_metadata_from_text(combined_text)
 
+        # Decode e-invoice QR code from scanned/mixed segment pages if IRN wasn't found in text
+        if not meta.get('irn_number'):
+            has_images = any(
+                (p.get('classification') or {}).get('image_count', 0) > 0
+                for p in seg.get('page_data_list', [])
+            )
+            if has_images:
+                from .e_invoice_utils import extract_qr_e_invoice_data, evaluate_e_invoice_status
+                qr_data = extract_qr_e_invoice_data(file_path, page_indices=seg['pages'])
+                if qr_data.get('valid_irn') or qr_data.get('has_qr_einvoice_data'):
+                    einv_val = evaluate_e_invoice_status(raw_text=combined_text, qr_data=qr_data)
+                    meta['is_e_invoice'] = einv_val['is_e_invoice']
+                    meta['irn_number'] = einv_val['irn_number']
+                    meta['e_invoice_source'] = einv_val['e_invoice_source']
+
         # Propagate invoice_number and total_amount from individual page analysis if missing in combined meta
         if not meta.get('invoice_number'):
             for p in seg['page_data_list']:

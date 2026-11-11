@@ -110,6 +110,8 @@ def record_field_corrections(submission, new_data, user, reason="Manual verifica
     Detects changes to candidate financial/supplier fields and records immutable
     entries into PurchaseAuditTrail.
     """
+    from .e_invoice_utils import format_e_invoice_status
+
     fields_to_track = [
         ('party_name', 'Party Name'),
         ('party_gstin', 'Supplier GSTIN'),
@@ -122,6 +124,8 @@ def record_field_corrections(submission, new_data, user, reason="Manual verifica
         ('total_amount', 'Total Amount'),
         ('expense_ledger', 'Expense Ledger'),
         ('hsn_sac_code', 'HSN/SAC Code'),
+        ('is_e_invoice', 'E-Invoice Status'),
+        ('irn_number', 'IRN Number'),
     ]
 
     updated_fields = []
@@ -131,9 +135,13 @@ def record_field_corrections(submission, new_data, user, reason="Manual verifica
             old_val = getattr(submission, field_attr)
             new_val = new_data[field_attr]
 
-            # Format comparison for decimals / dates
-            old_str = str(old_val) if old_val is not None else ''
-            new_str = str(new_val) if new_val is not None else ''
+            # Format comparison for booleans / decimals / dates
+            if field_attr == 'is_e_invoice':
+                old_str = format_e_invoice_status(old_val)
+                new_str = format_e_invoice_status(new_val)
+            else:
+                old_str = str(old_val) if old_val is not None else ''
+                new_str = str(new_val) if new_val is not None else ''
 
             if old_str != new_str:
                 PurchaseAuditTrail.objects.create(

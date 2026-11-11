@@ -13,6 +13,7 @@ from .segmentation import segment_and_extract_pdf
 from .reader import extract_invoice_metadata, extract_metadata_from_text
 from .vendor_directory import find_vendor_by_name
 from .vendor_validator import apply_vendor_validation_to_submission
+from .e_invoice_utils import apply_e_invoice_to_submission
 
 
 # Configuration constants
@@ -358,6 +359,7 @@ def create_invoice_submissions(
                                 sub.expense_ledger = matched['ledger']
 
                     apply_vendor_validation_to_submission(sub, raw_confidence=meta.get('confidence', 0.0))
+                    apply_e_invoice_to_submission(sub, meta)
                     sub.save()
 
                     # Attach document records
@@ -500,6 +502,7 @@ def create_invoice_submissions(
                 if meta.get('confidence'):
                     sub.ocr_confidence = meta['confidence']
                 apply_vendor_validation_to_submission(sub, raw_confidence=meta.get('confidence', 0.0))
+                apply_e_invoice_to_submission(sub, meta)
                 sub.save()
 
                 InvoiceStatusHistory.objects.create(
@@ -584,6 +587,7 @@ def create_invoice_submissions(
                         sub.expense_ledger = matched['ledger']
 
             apply_vendor_validation_to_submission(sub, raw_confidence=meta.get('confidence', 0.0))
+            apply_e_invoice_to_submission(sub, meta)
             sub.save()
 
             InvoiceStatusHistory.objects.create(
@@ -645,9 +649,11 @@ def create_invoice_submission(
         )
 
     first_doc = submission.documents.filter(is_active_version=True).order_by('page_number').first()
+    extracted_meta = None
     if first_doc and first_doc.original_file:
         try:
             meta = extract_invoice_metadata(first_doc.original_file.path, first_doc.content_type)
+            extracted_meta = meta
             if meta.get('invoice_number'):
                 submission.invoice_number = meta['invoice_number']
             if meta.get('party_name'):
@@ -690,6 +696,7 @@ def create_invoice_submission(
         submission.invoice_number = submission.submission_id
 
     apply_vendor_validation_to_submission(submission, raw_confidence=submission.ocr_confidence)
+    apply_e_invoice_to_submission(submission, extracted_meta)
     submission.save()
 
     InvoiceStatusHistory.objects.create(

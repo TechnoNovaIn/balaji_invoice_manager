@@ -14,6 +14,7 @@ from django.core.files.base import ContentFile
 from .models import UploadedDocument, InvoiceSubmission, InvoiceDocument, InvoiceSequence
 from .vendor_directory import find_vendor_by_name
 from .vendor_validator import validate_vendor_and_financials, apply_vendor_validation_to_submission
+from .e_invoice_utils import apply_e_invoice_to_submission
 from .segmentation import segment_and_extract_pdf
 from .performance_timer import PerformanceTimer
 from .page_classifier import classify_document_pages, PageClassificationType
@@ -230,6 +231,7 @@ def process_uploaded_document_task(
                 resolved_party_name = backend_val.get('party_name') or meta.get('party_name', '')
                 resolved_party_gstin = backend_val.get('party_gstin') or meta.get('party_gstin', '')
 
+                einv_manual_gate = meta.get('is_e_invoice') is True and not meta.get('irn_number')
                 sub = InvoiceSubmission.objects.create(
                     submission_id=sub_id,
                     employee=user,
@@ -253,8 +255,10 @@ def process_uploaded_document_task(
                     expense_ledger=backend_val.get('expense_ledger') or meta.get('expense_ledger', 'Purchase Spares & Consumables'),
                     ocr_confidence=min(meta.get('confidence', 0.8), backend_val.get('confidence', 0.8)),
                     is_ambiguous_vendor=backend_val['is_ambiguous_vendor'],
-                    requires_manual_review=backend_val['requires_manual_review'],
+                    requires_manual_review=backend_val['requires_manual_review'] or einv_manual_gate,
                 )
+                apply_e_invoice_to_submission(sub, meta)
+                sub.save(update_fields=['is_e_invoice', 'irn_number', 'requires_manual_review', 'updated_at'])
 
                 # Fallback party name matching from remarks if not detected, then re-validate
                 if not sub.party_name and remarks.strip():
@@ -267,6 +271,7 @@ def process_uploaded_document_task(
                         if matched.get('ledger'):
                             sub.expense_ledger = matched['ledger']
                     apply_vendor_validation_to_submission(sub, raw_confidence=meta.get('confidence', 0.8))
+                    apply_e_invoice_to_submission(sub, meta)
                     sub.save()
 
                 created_submissions.append(sub)
