@@ -1,4 +1,7 @@
+import logging
 from django.shortcuts import render, redirect
+
+logger = logging.getLogger(__name__)
 from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse
 from django.db import connection
@@ -206,30 +209,25 @@ def management_dashboard(request):
 @require_GET
 def health_check(request):
     """
-    Verifies operational status and PostgreSQL 18 database connectivity.
+    Verifies operational status and PostgreSQL database connectivity without exposing internal details.
     """
-    db_ok = False
-    db_version = "Unknown"
     try:
         with connection.cursor() as cursor:
-            cursor.execute("SELECT version();")
+            cursor.execute("SELECT 1;")
             row = cursor.fetchone()
-            if row:
-                db_version = row[0]
-                db_ok = True
-    except Exception as e:
+            if not row or row[0] != 1:
+                raise RuntimeError("Unexpected database health query result.")
+    except Exception:
+        logger.exception("Database health check failed")
         return JsonResponse({
             'status': 'DOWN',
             'database': 'ERROR',
-            'detail': str(e)
         }, status=503)
 
     return JsonResponse({
         'status': 'UP',
         'application': 'Balaji InvoiceHub',
         'database': 'CONNECTED',
-        'engine': 'PostgreSQL 18',
-        'db_version': db_version,
     }, status=200)
 
 

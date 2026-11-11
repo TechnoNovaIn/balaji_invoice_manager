@@ -17,24 +17,6 @@
 
             <!-- Body -->
             <div class="card-body p-4">
-                <!-- 1-Tap Quick Fill for Mobile & Desktop -->
-                <div class="mb-3 p-2 bg-light rounded border text-center">
-                    <div class="text-muted small fw-bold mb-1" style="font-size: 0.75rem;">
-                        <i class="bi bi-lightning-charge-fill text-warning me-1"></i>Quick 1-Tap Login:
-                    </div>
-                    <div class="d-flex justify-content-center gap-1 flex-wrap">
-                        <button type="button" class="btn btn-xs btn-outline-primary py-1 px-2 fw-semibold" style="font-size: 0.75rem;" onclick="fillLogin('employee', 'BalajiEmp@2026')">
-                            🚚 Employee
-                        </button>
-                        <button type="button" class="btn btn-xs btn-outline-success py-1 px-2 fw-semibold" style="font-size: 0.75rem;" onclick="fillLogin('naveen', 'BalajiNaveen@2026')">
-                            💼 Naveen
-                        </button>
-                        <button type="button" class="btn btn-xs btn-outline-dark py-1 px-2 fw-semibold" style="font-size: 0.75rem;" onclick="fillLogin('admin', 'BalajiAdmin@2026')">
-                            ⚙️ Admin
-                        </button>
-                    </div>
-                </div>
-
                 <form method="post" action="{% url 'accounts:login' %}" autocomplete="on" id="loginForm">
                     {% csrf_token %}
                     
@@ -113,18 +95,6 @@
 </div>
 
 <script>
-function fillLogin(username, password) {
-    const userField = document.getElementById('{{ form.username.id_for_label }}') || document.querySelector('input[name="username"]');
-    const passField = document.getElementById('{{ form.password.id_for_label }}') || document.querySelector('input[name="password"]');
-    if (userField && passField) {
-        userField.value = username;
-        passField.value = password;
-        // Visual confirmation
-        userField.classList.add('is-valid');
-        passField.classList.add('is-valid');
-    }
-}
-
 document.addEventListener('DOMContentLoaded', function () {
     const toggleBtn = document.getElementById('togglePasswordBtn');
     const passwordInput = document.getElementById('{{ form.password.id_for_label }}') || document.querySelector('input[type="password"]');

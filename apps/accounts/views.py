@@ -1,8 +1,11 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth import login, logout
+from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.views import LoginView
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
+from django.core.exceptions import ValidationError
+from django.views.decorators.csrf import csrf_protect
 from django.views.generic import View, ListView, CreateView, UpdateView
 from django.urls import reverse_lazy
 from django.utils.decorators import method_decorator
@@ -76,14 +79,12 @@ class UserLoginView(LoginView):
         return super().form_invalid(form)
 
 
+@method_decorator(csrf_protect, name='dispatch')
 class UserLogoutView(View):
     """
-    Secure Logout flushing session and recording audit trail.
+    Secure POST-only Logout flushing session and recording audit trail.
     """
     def post(self, request):
-        return self._do_logout(request)
-
-    def get(self, request):
         return self._do_logout(request)
 
     def _do_logout(self, request):
@@ -124,16 +125,19 @@ def change_password_view(request):
         new_password = request.POST.get('new_password', '').strip()
         confirm_password = request.POST.get('confirm_password', '').strip()
 
-        if len(new_password) < 6:
-            messages.error(request, "Password must be at least 6 characters long.")
-            return render(request, 'accounts/change_password.html', {'is_first_time': is_first_time})
-
         if new_password != confirm_password:
             messages.error(request, "Passwords do not match. Please re-enter carefully.")
             return render(request, 'accounts/change_password.html', {'is_first_time': is_first_time})
 
         if new_password == 'BalajiEmp@2026':
             messages.error(request, "Please choose a personal password different from the initial demo password.")
+            return render(request, 'accounts/change_password.html', {'is_first_time': is_first_time})
+
+        try:
+            validate_password(new_password, user=user)
+        except ValidationError as exc:
+            for err_msg in exc.messages:
+                messages.error(request, err_msg)
             return render(request, 'accounts/change_password.html', {'is_first_time': is_first_time})
 
         user.set_password(new_password)

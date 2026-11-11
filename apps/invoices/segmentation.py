@@ -1,29 +1,81 @@
 import re
 import os
 import io
+import time
 from typing import List, Dict, Any, Optional
 from decimal import Decimal
-import fitz  # PyMuPDF
-from .reader import extract_text_from_pdf_page, extract_metadata_from_text, normalize_handwritten_number
-from .vendor_directory import VENDOR_DIRECTORY, find_vendor_by_name, find_vendor_by_gstin
+import pymupdf as fitz  # PyMuPDF
+from .reader import (
+    extract_text_from_pdf_page,
+    extract_metadata_from_text,
+    normalize_handwritten_number,
+    clean_karnataka_invoice_no,
+    get_shared_ocr_engine,
+)
+from .vendor_directory import find_vendor_by_name, find_vendor_by_gstin
+from .page_classifier import classify_pdf_page, PageClassificationType
 
 
-def analyze_pdf_page(page, page_num: int, ocr_engine=None) -> Dict[str, Any]:
+def analyze_pdf_page(page, page_num: int, ocr_engine=None, timer=None) -> Dict[str, Any]:
     """
-    Analyzes a single PDF page and extracts text along with key boundary detection signals.
+    Analyzes a single PDF page with intelligent page-level classification and conditional extraction:
+    - First classifies page as digital text, scanned image, mixed, blank, or low quality.
+    - If digital text: extracts selectable text with PyMuPDF directly without running OCR.
+    - If scanned image: runs RapidOCR once with the shared engine instance.
+    - If mixed: combines selectable text and OCR tokens without duplicating text.
+    - If blank: skips OCR entirely.
     page_num is 1-indexed.
     """
-    text = extract_text_from_pdf_page(page, ocr_engine=ocr_engine)
+    if ocr_engine is None:
+        ocr_engine = get_shared_ocr_engine()
+
+    # 1. Page classification
+    if timer:
+        timer.start_timing('page_classification_ms')
+    classification = classify_pdf_page(page)
+    if timer:
+        timer.stop_timing('page_classification_ms')
+        page_type = classification['page_type']
+        if page_type == PageClassificationType.DIGITAL_TEXT:
+            timer.increment('digital_pages_count')
+        elif page_type == PageClassificationType.SCANNED_IMAGE:
+            timer.increment('ocr_pages_count')
+        elif page_type == PageClassificationType.MIXED:
+            timer.increment('mixed_pages_count')
+            timer.increment('ocr_pages_count')
+        elif page_type == PageClassificationType.BLANK:
+            timer.increment('blank_pages_count')
+
+    # 2. Text extraction & conditional OCR
+    if timer:
+        if classification['requires_ocr']:
+            timer.start_timing('ocr_ms')
+        else:
+            timer.start_timing('text_extraction_ms')
+
+    details = extract_text_from_pdf_page(page, ocr_engine=ocr_engine, return_details=True)
+
+    if timer:
+        if classification['requires_ocr']:
+            timer.stop_timing('ocr_ms')
+        else:
+            timer.stop_timing('text_extraction_ms')
+
+    text = details.get('text', '')
     lines = [l.strip() for l in text.splitlines() if l.strip()]
 
-    # Run structured metadata extraction
+    # 3. Structured metadata extraction
     meta = extract_metadata_from_text(text)
 
     data = {
         'page_num': page_num,
         'page_idx': page_num - 1,
+        'classification': classification,
+        'page_type': classification['page_type'],
         'raw_text': text,
         'lines': lines,
+        'ocr_boxes': details.get('boxes', []),
+        'is_upside_down': details.get('is_upside_down', False),
         'invoice_number': meta.get('invoice_number', ''),
         'party_name': meta.get('party_name', ''),
         'party_gstin': meta.get('party_gstin', ''),
@@ -64,42 +116,24 @@ def analyze_pdf_page(page, page_num: int, ocr_engine=None) -> Dict[str, Any]:
     if re.search(r'\b(?:grand\s*total|grandtotal|g\.?total|net\s*amount|total\s*payable|total\s*amount|amount\s*chargeable|rupees\s*in\s*words|inr\s+[a-z\s]+only|authorised\s*signatory|authorized\s*signatory|for\s+[a-z\s]+(?:ltd|pvt|transports|enterprises|industries|agency|centre))\b', text, re.I):
         data['has_total_or_footer'] = True
 
-    # 4. If invoice number still missing on pre-printed bill, do targeted header crop
+    # 4. If invoice number still missing on Karnataka Tyre bill, search existing OCR boxes without re-running OCR
     if not data['invoice_number'] and data['has_vendor_header']:
-        try:
-            from PIL import Image
-            import numpy as np
-            if ocr_engine is None:
-                from rapidocr_onnxruntime import RapidOCR
-                ocr_engine = RapidOCR()
-            pix_200 = page.get_pixmap(dpi=200)
-            img_200 = Image.frombytes("RGB", [pix_200.width, pix_200.height], pix_200.samples)
-            res_quick, _ = ocr_engine(np.array(img_200))
-            is_upside_down = False
-            if res_quick:
-                footer_y = [(b[0][1] + b[2][1]) / 2.0 for b, t_str, _ in res_quick if any(k in t_str.lower() for k in ['authorised', 'signatory', 'rupees'])]
-                header_y = [(b[0][1] + b[2][1]) / 2.0 for b, t_str, _ in res_quick if any(k in t_str.lower() for k in ['karnataka', 'tyre care', 'tax invoice'])]
-                if footer_y and header_y and min(footer_y) < min(header_y):
-                    is_upside_down = True
-            if is_upside_down:
-                img_200 = img_200.rotate(180)
-            w, h = img_200.size
-            crop_inv = img_200.crop((int(0.50 * w), int(0.12 * h), int(0.95 * w), int(0.25 * h)))
-            res_crop, _ = ocr_engine(np.array(crop_inv))
-            if res_crop:
-                for b, t, _ in res_crop:
-                    m = re.search(r'(23\d{2})', t)
-                    if m:
-                        data['invoice_number'] = m.group(1)
+        boxes = data['ocr_boxes']
+        if boxes:
+            # Check upper header area boxes for 4-digit number starting with 23
+            for b in boxes:
+                t = b.get('text', '')
+                m = re.search(r'(23\d{2})', t)
+                if m:
+                    data['invoice_number'] = m.group(1)
+                    break
+            if not data['invoice_number']:
+                for b in boxes:
+                    t = b.get('text', '')
+                    cand = clean_karnataka_invoice_no(t)
+                    if len(cand) == 4 and cand.startswith('23'):
+                        data['invoice_number'] = cand
                         break
-                if not data['invoice_number']:
-                    for b, t, _ in res_crop:
-                        cand = clean_karnataka_invoice_no(t)
-                        if len(cand) == 4 and cand.startswith('23'):
-                            data['invoice_number'] = cand
-                            break
-        except Exception:
-            pass
 
     return data
 
@@ -202,10 +236,11 @@ def detect_invoice_boundaries(pages_data: List[Dict[str, Any]]) -> List[Dict[str
     return segments
 
 
-def enhance_preview_image(img_bytes: bytes, is_upside_down: bool = False) -> bytes:
+def enhance_preview_image(img_bytes: bytes, is_upside_down: bool = False, fast_mode: bool = True) -> bytes:
     """
-    Enhances rendered PDF page images for crisp display in Naveen's document viewer:
-    - Normalizes lighting, evens out photocopy backgrounds, and sharpens text characters.
+    Optimized preview image enhancement:
+    - Normalizes orientation and applies clean contrast stretching for crisp portal display.
+    - Uses fast OpenCV CLAHE/normalization without slow nested kernel dilation when fast_mode is True.
     """
     try:
         from PIL import Image, ImageOps
@@ -220,6 +255,21 @@ def enhance_preview_image(img_bytes: bytes, is_upside_down: bool = False) -> byt
         if pil_img.mode != 'RGB':
             pil_img = pil_img.convert('RGB')
 
+        if fast_mode:
+            # Fast, high-contrast visual enhancement: convert to LAB and apply CLAHE directly
+            bgr = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+            lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)
+            l_ch, a_ch, b_ch = cv2.split(lab)
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            enhanced_l = clahe.apply(l_ch)
+            enhanced_lab = cv2.merge([enhanced_l, a_ch, b_ch])
+            result_bgr = cv2.cvtColor(enhanced_lab, cv2.COLOR_LAB2BGR)
+            out_img = Image.fromarray(cv2.cvtColor(result_bgr, cv2.COLOR_BGR2RGB))
+            out_buf = io.BytesIO()
+            out_img.save(out_buf, format='JPEG', quality=88, optimize=True)
+            return out_buf.getvalue()
+
+        # Full morphology mode
         bgr = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
         lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)
         l_ch, a_ch, b_ch = cv2.split(lab)
@@ -231,7 +281,6 @@ def enhance_preview_image(img_bytes: bytes, is_upside_down: bool = False) -> byt
 
         clahe = cv2.createCLAHE(clipLimit=1.8, tileGridSize=(8, 8))
         enhanced_l = clahe.apply(norm)
-
         enhanced_lab = cv2.merge([enhanced_l, a_ch, b_ch])
         result_bgr = cv2.cvtColor(enhanced_lab, cv2.COLOR_LAB2BGR)
 
@@ -240,13 +289,13 @@ def enhance_preview_image(img_bytes: bytes, is_upside_down: bool = False) -> byt
 
         out_img = Image.fromarray(cv2.cvtColor(sharpened, cv2.COLOR_BGR2RGB))
         out_buf = io.BytesIO()
-        out_img.save(out_buf, format='JPEG', quality=92, optimize=True)
+        out_img.save(out_buf, format='JPEG', quality=90, optimize=True)
         return out_buf.getvalue()
     except Exception:
         return img_bytes
 
 
-def extract_sub_pdf_and_images(doc, page_indices: List[int]) -> Dict[str, Any]:
+def extract_sub_pdf_and_images(doc, page_indices: List[int], timer=None, pages_data: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     """
     Extracts specified pages from PyMuPDF document:
     - Generates a standalone sub-PDF file (bytes) containing just these pages.
@@ -262,11 +311,24 @@ def extract_sub_pdf_and_images(doc, page_indices: List[int]) -> Dict[str, Any]:
     # 2. Rendered Page Images (JPEG)
     page_images = []
     for idx in page_indices:
+        if timer:
+            timer.start_timing('image_rendering_ms')
         page = doc[idx]
         pix = page.get_pixmap(dpi=150)
         img_bytes = pix.tobytes("jpeg")
-        # Auto-enhance preview image for high contrast and clean viewing
-        enhanced_bytes = enhance_preview_image(img_bytes)
+        if timer:
+            timer.stop_timing('image_rendering_ms')
+
+        is_upside_down = False
+        if pages_data and idx < len(pages_data):
+            is_upside_down = pages_data[idx].get('is_upside_down', False)
+
+        if timer:
+            timer.start_timing('image_enhancement_ms')
+        enhanced_bytes = enhance_preview_image(img_bytes, is_upside_down=is_upside_down, fast_mode=True)
+        if timer:
+            timer.stop_timing('image_enhancement_ms')
+
         page_images.append({
             'page_number_in_src': idx + 1,
             'page_index': idx,
@@ -279,11 +341,11 @@ def extract_sub_pdf_and_images(doc, page_indices: List[int]) -> Dict[str, Any]:
     }
 
 
-def segment_and_extract_pdf(file_path: str) -> List[Dict[str, Any]]:
+def segment_and_extract_pdf(file_path: str, timer=None, ocr_engine=None) -> List[Dict[str, Any]]:
     """
     High-level entry point for multi-invoice PDF processing:
     1. Opens PDF and counts pages.
-    2. Analyzes each page independently.
+    2. Analyzes each page independently with intelligent classification and conditional OCR.
     3. Runs boundary detection.
     4. For each detected invoice:
        - Combines text across pages.
@@ -294,22 +356,34 @@ def segment_and_extract_pdf(file_path: str) -> List[Dict[str, Any]]:
     if not os.path.exists(file_path):
         return []
 
+    if timer:
+        timer.start_timing('pdf_opening_ms')
     doc = fitz.open(file_path)
     total_pages = len(doc)
+    if timer:
+        timer.stop_timing('pdf_opening_ms')
 
     if total_pages == 0:
         doc.close()
         return []
 
+    if ocr_engine is None:
+        ocr_engine = get_shared_ocr_engine()
+
     # 1. Analyze every page independently
     pages_data = []
     for idx in range(total_pages):
         page = doc[idx]
-        p_data = analyze_pdf_page(page, page_num=idx + 1)
+        p_data = analyze_pdf_page(page, page_num=idx + 1, ocr_engine=ocr_engine, timer=timer)
         pages_data.append(p_data)
 
     # 2. Detect invoice boundaries
+    if timer:
+        timer.start_timing('segmentation_ms')
     segments = detect_invoice_boundaries(pages_data)
+    if timer:
+        timer.stop_timing('segmentation_ms')
+        timer.increment('invoices_detected_count', len(segments))
 
     # 3. For each segment, extract combined metadata and sub-files
     detected_invoices = []
@@ -332,48 +406,58 @@ def segment_and_extract_pdf(file_path: str) -> List[Dict[str, Any]]:
                     meta['total_amount'] = p['total_amount']
                     break
 
-        # Fallback for Karnataka Tyre: if invoice_number is still missing, do targeted header crop on segment pages
+        # Fallback for Karnataka Tyre: search existing OCR boxes first, then targeted crop only if missing
         if not meta.get('invoice_number') and meta.get('party_name') == 'KARNATAKA TYRE CARE CENTRE':
-            for p_idx in seg['pages']:
-                try:
-                    page = doc[p_idx]
-                    pix_200 = page.get_pixmap(dpi=200)
-                    from PIL import Image
-                    import numpy as np
-                    from rapidocr_onnxruntime import RapidOCR
-                    eng = RapidOCR()
-                    img_200 = Image.frombytes("RGB", [pix_200.width, pix_200.height], pix_200.samples)
-                    res_quick, _ = eng(np.array(img_200))
-                    is_upside_down = False
-                    if res_quick:
-                        footer_y = [(b[0][1] + b[2][1]) / 2.0 for b, t_str, _ in res_quick if any(k in t_str.lower() for k in ['authorised', 'signatory', 'rupees'])]
-                        header_y = [(b[0][1] + b[2][1]) / 2.0 for b, t_str, _ in res_quick if any(k in t_str.lower() for k in ['karnataka', 'tyre care', 'tax invoice'])]
-                        if footer_y and header_y and min(footer_y) < min(header_y):
-                            is_upside_down = True
-                    if is_upside_down:
-                        img_200 = img_200.rotate(180)
-                    w, h = img_200.size
-                    crop_inv = img_200.crop((int(0.50 * w), int(0.12 * h), int(0.95 * w), int(0.25 * h)))
-                    res_crop, _ = eng(np.array(crop_inv))
-                    if res_crop:
-                        for b, t, _ in res_crop:
-                            m = re.search(r'(23\d{2})', t)
-                            if m:
-                                meta['invoice_number'] = m.group(1)
-                                break
-                        if not meta.get('invoice_number'):
-                            for b, t, _ in res_crop:
-                                cand = clean_karnataka_invoice_no(t)
-                                if len(cand) == 4 and cand.startswith('23'):
-                                    meta['invoice_number'] = cand
-                                    break
-                    if meta.get('invoice_number'):
+            for p in seg['page_data_list']:
+                for b in p.get('ocr_boxes', []):
+                    t = b.get('text', '')
+                    m = re.search(r'(23\d{2})', t)
+                    if m:
+                        meta['invoice_number'] = m.group(1)
                         break
-                except Exception:
-                    pass
+                    cand = clean_karnataka_invoice_no(t)
+                    if len(cand) == 4 and cand.startswith('23'):
+                        meta['invoice_number'] = cand
+                        break
+                if meta.get('invoice_number'):
+                    break
+
+            # Targeted high-resolution header crop ONLY if invoice number is still unresolved
+            if not meta.get('invoice_number'):
+                for p_idx in seg['pages']:
+                    try:
+                        p_obj = doc[p_idx]
+                        pix_200 = p_obj.get_pixmap(dpi=200)
+                        from PIL import Image
+                        import numpy as np
+                        img_200 = Image.frombytes("RGB", [pix_200.width, pix_200.height], pix_200.samples)
+                        is_ud = False
+                        if pages_data and p_idx < len(pages_data):
+                            is_ud = pages_data[p_idx].get('is_upside_down', False)
+                        if is_ud:
+                            img_200 = img_200.rotate(180)
+                        w, h = img_200.size
+                        crop_inv = img_200.crop((int(0.50 * w), int(0.12 * h), int(0.95 * w), int(0.25 * h)))
+                        res_crop, _ = ocr_engine(np.array(crop_inv))
+                        if res_crop:
+                            for b, t, _ in res_crop:
+                                m = re.search(r'(23\d{2})', t)
+                                if m:
+                                    meta['invoice_number'] = m.group(1)
+                                    break
+                            if not meta.get('invoice_number'):
+                                for b, t, _ in res_crop:
+                                    cand = clean_karnataka_invoice_no(t)
+                                    if len(cand) == 4 and cand.startswith('23'):
+                                        meta['invoice_number'] = cand
+                                        break
+                        if meta.get('invoice_number'):
+                            break
+                    except Exception:
+                        pass
 
         # Extract sub-PDF and page images
-        sub_files = extract_sub_pdf_and_images(doc, seg['pages'])
+        sub_files = extract_sub_pdf_and_images(doc, seg['pages'], timer=timer, pages_data=pages_data)
 
         detected_invoices.append({
             'invoice_index': seg_idx,
@@ -388,4 +472,3 @@ def segment_and_extract_pdf(file_path: str) -> List[Dict[str, Any]]:
 
     doc.close()
     return detected_invoices
-

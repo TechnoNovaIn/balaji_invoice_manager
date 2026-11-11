@@ -122,6 +122,21 @@ class UploadedDocument(models.Model):
         default=STATUS_UPLOADED,
         db_index=True
     )
+    current_stage = models.CharField(
+        max_length=200,
+        blank=True,
+        default='Document Received',
+        help_text="Current processing stage description"
+    )
+    progress_percent = models.PositiveIntegerField(
+        default=0,
+        help_text="Processing progress percentage (0 - 100)"
+    )
+    processing_metrics = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Detailed performance metrics and stage execution timings"
+    )
     error_message = models.TextField(
         blank=True,
         default='',
@@ -574,5 +589,60 @@ class ExportAuditLog(models.Model):
 
     def __str__(self):
         return f"{self.get_export_type_display()} ({self.record_count} records) by {self.exported_by} at {self.created_at}"
+
+
+class VendorMaster(models.Model):
+    """
+    Authoritative Vendor Master Database for Balaji Transports.
+    Stores verified vendor profiles with GSTIN, PAN, trade aliases, and default Tally expense ledgers.
+    Supports Excel/CSV batch imports and audit tracking.
+    """
+    name = models.CharField(max_length=255, db_index=True, help_text="Legal or primary trade name")
+    normalized_name = models.CharField(max_length=255, db_index=True, help_text="Alphanumeric lowercase for deterministic fuzzy matching")
+    gstin = models.CharField(max_length=15, blank=True, default='', db_index=True, help_text="15-character statutory GSTIN")
+    pan = models.CharField(max_length=10, blank=True, default='', db_index=True, help_text="10-character Income Tax PAN")
+    state = models.CharField(max_length=100, blank=True, default='', help_text="Indian State / UT")
+    state_code = models.CharField(max_length=2, blank=True, default='', help_text="2-digit GST state code")
+    address = models.TextField(blank=True, default='', help_text="Vendor operating address")
+    default_expense_ledger = models.CharField(
+        max_length=100,
+        default='Purchase Spares & Consumables',
+        help_text="Standard Tally Expense Ledger"
+    )
+    trade_aliases = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="List of alternate trade names / bill headers"
+    )
+    is_active = models.BooleanField(default=True, db_index=True)
+    is_verified = models.BooleanField(default=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['name']
+        verbose_name = 'Vendor Master'
+        verbose_name_plural = 'Vendor Masters'
+        indexes = [
+            models.Index(fields=['gstin', 'is_active']),
+            models.Index(fields=['normalized_name', 'is_active']),
+            models.Index(fields=['pan', 'is_active']),
+        ]
+
+    def __str__(self):
+        return f"{self.name} ({self.gstin or 'No GSTIN'})"
+
+    def save(self, *args, **kwargs):
+        import re
+        if self.gstin:
+            self.gstin = self.gstin.strip().upper()
+            if not self.pan and len(self.gstin) >= 12 and re.match(r'^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}', self.gstin):
+                self.pan = self.gstin[2:12]
+            if not self.state_code and len(self.gstin) >= 2 and self.gstin[:2].isdigit():
+                self.state_code = self.gstin[:2]
+        if self.name:
+            self.normalized_name = re.sub(r'[^a-z0-9]', '', self.name.lower())
+        super().save(*args, **kwargs)
+
 
 

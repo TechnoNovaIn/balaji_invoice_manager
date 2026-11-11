@@ -301,12 +301,27 @@ class InvoiceSubmissionEngineTests(TestCase):
         self.assertEqual(resp_doc.status_code, 200)
         self.assertEqual(resp_doc['Content-Type'], 'image/jpeg')
 
-        # Verify action
+        # Unreviewed ambiguous zero-amount dummy receipt must NOT bypass manual review via 1-click verify
+        blocked_resp = self.client.post(reverse('invoices:naveen_verify', kwargs={'submission_id': sub.submission_id}))
+        self.assertEqual(blocked_resp.status_code, 302)
+        sub.refresh_from_db()
+        self.assertEqual(sub.status, InvoiceSubmission.STATUS_SUBMITTED)
+
+        # Once verified vendor details & total amount are valid, Naveen can approve
+        sub.party_name = "JK TYRE & INDUSTRIES LIMITED"
+        sub.party_gstin = "29AAACJ6716F1ZK"
+        sub.total_amount = 11800
+        sub.requires_manual_review = False
+        sub.is_ambiguous_vendor = False
+        sub.save()
+
         verify_resp = self.client.post(reverse('invoices:naveen_verify', kwargs={'submission_id': sub.submission_id}))
         self.assertEqual(verify_resp.status_code, 302)
 
         sub.refresh_from_db()
         self.assertEqual(sub.status, InvoiceSubmission.STATUS_VERIFIED)
+        self.assertEqual(sub.verified_by, self.naveen)
+        self.assertIsNotNone(sub.verified_at)
 
     def test_naveen_return_invoice_action(self):
         """Naveen can return an invoice with a required reason."""

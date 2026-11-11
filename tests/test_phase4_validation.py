@@ -3,7 +3,9 @@ import io
 import hashlib
 from decimal import Decimal
 from datetime import date
+from unittest.mock import patch, MagicMock
 from PIL import Image, ImageEnhance
+import pymupdf as fitz  # PyMuPDF modernized
 from django.test import TestCase
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.urls import reverse
@@ -13,6 +15,7 @@ from apps.accounts.models import User, UserRole, Department
 from apps.invoices.models import InvoiceSubmission, InvoiceDocument
 from apps.invoices.services import create_invoice_submission
 from apps.invoices.reader import extract_invoice_metadata
+from apps.invoices.gemini_extractor import extract_with_gemini
 from apps.invoices.vendor_directory import (
     VENDOR_DIRECTORY,
     find_vendor_by_gstin,
@@ -26,7 +29,8 @@ from apps.invoices.vendor_directory import (
 class Phase4ValidationSuite(TestCase):
     """
     Comprehensive Phase 4 Validation Suite for Balaji InvoiceHub.
-    Covers all 10 verification dimensions required before Phase 5 sign-off.
+    Covers all verification dimensions required before Phase 5 sign-off.
+    Automated tests mock external AI APIs to guarantee fast, deterministic offline execution.
     """
 
     def setUp(self):
@@ -48,12 +52,18 @@ class Phase4ValidationSuite(TestCase):
             department=self.dept
         )
 
+        # By default, mock external live Gemini API so test suite runs offline and deterministically
+        self.gemini_patcher = patch('apps.invoices.gemini_extractor.extract_with_gemini', return_value=None)
+        self.mock_gemini = self.gemini_patcher.start()
+
+    def tearDown(self):
+        self.gemini_patcher.stop()
+
     # -------------------------------------------------------------------------
     # 1. Test PDF Text Extraction & Image-based Preprocessing Separately
     # -------------------------------------------------------------------------
     def test_01_pdf_text_extraction_separate(self):
         """Test PDF text stream extraction using PyMuPDF / pdfplumber."""
-        import fitz  # PyMuPDF
         doc = fitz.open()
         page = doc.new_page()
         test_text = (
@@ -82,13 +92,10 @@ class Phase4ValidationSuite(TestCase):
 
     def test_02_image_preprocessing_and_contrast_enhancement(self):
         """Test image contrast enhancement (1.8x) and grayscale preprocessing."""
-        # Create a faint image simulating faded ballpoint ink
         img = Image.new("RGB", (300, 150), color=(240, 240, 235))
-        # Convert to grayscale
         gray = img.convert('L')
         self.assertEqual(gray.mode, 'L')
 
-        # Apply 1.8x contrast enhancement
         enhancer = ImageEnhance.Contrast(gray)
         enhanced = enhancer.enhance(1.8)
         self.assertIsNotNone(enhanced)
@@ -107,7 +114,6 @@ class Phase4ValidationSuite(TestCase):
             ("Challan No: SH/5682\nSteel House", "SH/5682"),
         ]
         for raw_text, expected_id in test_patterns:
-            import fitz
             doc = fitz.open()
             page = doc.new_page()
             page.insert_text((50, 50), raw_text, fontsize=12)
@@ -128,7 +134,6 @@ class Phase4ValidationSuite(TestCase):
             ("HINDUSTAN AUTOMOTIVE SPARES\nBill No: 2213\nTotal: 69910", "HINDUSTAN AUTOMOTIVE SPARES"),
         ]
         for raw_text, expected_vendor in test_vendors:
-            import fitz
             doc = fitz.open()
             page = doc.new_page()
             page.insert_text((50, 50), raw_text, fontsize=12)
@@ -210,7 +215,6 @@ class Phase4ValidationSuite(TestCase):
     # -------------------------------------------------------------------------
     def test_08_ambiguous_vendor_flagging_and_manual_review(self):
         """Identify ambiguous or unknown vendor matches and verify manual review flag."""
-        import fitz
         doc = fitz.open()
         page = doc.new_page()
         page.insert_text((50, 50), "Roadside Repair Chit\nBill: 104\nTotal: 450.00", fontsize=12)
@@ -229,7 +233,6 @@ class Phase4ValidationSuite(TestCase):
 
     def test_09_financial_approval_safety_gate(self):
         """CRITICAL POLICY: Verify that OCR/reader NEVER automatically approves financial entries."""
-        import fitz
         doc = fitz.open()
         page = doc.new_page()
         page.insert_text(
@@ -264,7 +267,6 @@ class Phase4ValidationSuite(TestCase):
         # A. Malformed PDF (truncated binary)
         corrupt_bytes = b"%PDF-1.4\n%corrupt truncated body without xref EOF"
         f_corrupt = SimpleUploadedFile("corrupt.pdf", corrupt_bytes, content_type="application/pdf")
-        # System must not crash, should create submission and fallback safely
         sub_corrupt = create_invoice_submission(user=self.emp, files=[f_corrupt])
         self.assertEqual(sub_corrupt.documents.count(), 1)
         meta_corrupt = extract_invoice_metadata(sub_corrupt.documents.first().original_file.path, "application/pdf")
@@ -281,7 +283,6 @@ class Phase4ValidationSuite(TestCase):
         self.assertEqual(sub_blurry.documents.count(), 1)
 
         # C. Multi-page PDF
-        import fitz
         multi_doc = fitz.open()
         p1 = multi_doc.new_page()
         p1.insert_text((50, 50), "Page 1: Invoice No: MULTI-9988\nVendor: BOMBAY AUTO CORPORATION", fontsize=12)
@@ -300,7 +301,6 @@ class Phase4ValidationSuite(TestCase):
 
     def test_11_document_immutability_sha256(self):
         """Verify original invoice files are strictly immutable (byte-for-byte SHA-256 match)."""
-        import fitz
         doc = fitz.open()
         page = doc.new_page()
         page.insert_text((50, 50), "Invoice No: IMMUTABLE-01\nParty: STEEL HOUSE", fontsize=12)
@@ -312,11 +312,9 @@ class Phase4ValidationSuite(TestCase):
         sub = create_invoice_submission(user=self.emp, files=[f])
         doc_obj = sub.documents.first()
 
-        # Run extraction multiple times
         extract_invoice_metadata(doc_obj.original_file.path, "application/pdf")
         extract_invoice_metadata(doc_obj.original_file.path, "application/pdf")
 
-        # Read file from disk and compute SHA-256
         with open(doc_obj.original_file.path, 'rb') as disk_file:
             disk_bytes = disk_file.read()
             disk_hash = hashlib.sha256(disk_bytes).hexdigest()
@@ -329,20 +327,17 @@ class Phase4ValidationSuite(TestCase):
     # -------------------------------------------------------------------------
     def test_12_phase_1_2_3_regression_integrity(self):
         """Regression test verifying Phase 1 (RBAC), Phase 2 (Backups), and Phase 3 (Feed)."""
-        # Phase 1: RBAC verification
         self.assertTrue(self.emp.is_employee)
         self.assertTrue(self.naveen.is_naveen)
         self.assertTrue(self.emp.can_submit_invoices())
         self.assertFalse(self.emp.can_verify_invoices())
         self.assertTrue(self.naveen.can_verify_invoices())
 
-        # Phase 2: Permanent retention policy (3650 days) & Backup Service
         from django.conf import settings
         from apps.backup.services import BackupService
         self.assertGreaterEqual(getattr(settings, 'BACKUP_RETENTION_DAYS', 3650), 365)
         self.assertTrue(hasattr(BackupService, 'perform_full_backup'))
 
-        # Phase 3: Dashboard Feed & Tally Batch Check
         self.client.login(username="naveen_val", password="TestPassword@123")
         resp = self.client.get(reverse('core:naveen_dashboard') + '?tab=pending')
         self.assertEqual(resp.status_code, 200)
@@ -358,7 +353,6 @@ class Phase4ValidationSuite(TestCase):
         from django.core.exceptions import PermissionDenied, ValidationError
         from apps.invoices.vendor_directory import register_or_update_vendor
 
-        # A. Employee cannot register vendors -> PermissionDenied
         with self.assertRaises(PermissionDenied):
             register_or_update_vendor(
                 gstin="29TESTV1234F1Z5",
@@ -366,7 +360,6 @@ class Phase4ValidationSuite(TestCase):
                 user=self.emp
             )
 
-        # B. Invalid GSTIN format -> ValidationError
         with self.assertRaises(ValidationError):
             register_or_update_vendor(
                 gstin="INVALID-GSTIN-123",
@@ -374,7 +367,6 @@ class Phase4ValidationSuite(TestCase):
                 user=self.naveen
             )
 
-        # C. Authorized Naveen registration -> Success (CREATED)
         res = register_or_update_vendor(
             gstin="29ABCDE1234F1Z5",
             name="New Verified Spares Ltd",
@@ -384,7 +376,6 @@ class Phase4ValidationSuite(TestCase):
         self.assertEqual(res['status'], 'CREATED')
         self.assertEqual(res['vendor']['state'], 'Karnataka')
 
-        # D. Existing vendor cannot be accidentally overwritten without force_update
         res_existing = register_or_update_vendor(
             gstin="29AAACJ6716F1ZK",  # JK Tyre
             name="Different Accidental Name",
@@ -392,13 +383,11 @@ class Phase4ValidationSuite(TestCase):
             force_update=False
         )
         self.assertEqual(res_existing['status'], 'EXISTING_UNCHANGED')
-        # Original verified name preserved!
         self.assertEqual(res_existing['vendor']['name'], "JK TYRE & INDUSTRIES LIMITED")
 
     def test_14_employee_deletion_protected(self):
         """Verify historical invoice preservation: deleting an employee raises ProtectedError."""
         from django.db.models.deletion import ProtectedError
-        # Create an invoice by self.emp
         img = Image.new("RGB", (200, 200), color=(255, 255, 255))
         img_io = io.BytesIO()
         img.save(img_io, format='JPEG')
@@ -406,10 +395,195 @@ class Phase4ValidationSuite(TestCase):
         sub = create_invoice_submission(user=self.emp, files=[f])
         self.assertEqual(sub.employee, self.emp)
 
-        # Attempting to delete self.emp must be blocked by models.PROTECT
         with self.assertRaises(ProtectedError):
             self.emp.delete()
 
-        # Invoice record still exists intact
         self.assertTrue(InvoiceSubmission.objects.filter(pk=sub.pk).exists())
 
+    # -------------------------------------------------------------------------
+    # 8. Phase 6 Dedicated Gemini API Mocking & Reliability Tests
+    # -------------------------------------------------------------------------
+    def test_15_gemini_mock_valid_response(self):
+        """Simulate valid Gemini Vision AI response and verify backend validation."""
+        self.gemini_patcher.stop()
+
+        mock_gemini_data = {
+            'party_name': 'JK TYRE & INDUSTRIES LIMITED',
+            'party_gstin': '29AAACJ6716F1ZK',
+            'pan': 'AAACJ6716F',
+            'invoice_number': 'JK-2026-9901',
+            'invoice_date': '2026-09-02',
+            'due_date': '2026-10-02',
+            'taxable_amount': 20000.0,
+            'cgst_amount': 1800.0,
+            'sgst_amount': 1800.0,
+            'igst_amount': 0.0,
+            'cess_amount': 0.0,
+            'round_off_amount': 0.0,
+            'total_amount': 23600.0,
+            'expense_ledger': 'Tyre & Tube Purchase',
+            'raw_summary': 'JK Tyre invoice for commercial tyres',
+        }
+
+        with patch('google.genai.Client') as mock_client_cls:
+            mock_client = MagicMock()
+            mock_resp = MagicMock()
+            mock_resp.text = json_str = import_json = __import__('json').dumps(mock_gemini_data)
+            mock_client.models.generate_content.return_value = mock_resp
+            mock_client_cls.return_value = mock_client
+
+            # Create dummy file
+            sample_file = os.path.join(os.path.dirname(__file__), 'fixtures', 'sample_invoice.jpg')
+            if not os.path.exists(sample_file):
+                sample_file = "test_invoice.jpg"
+                with open(sample_file, "wb") as f:
+                    f.write(b"0" * 300)
+
+            result = extract_with_gemini(sample_file)
+            self.assertIsNotNone(result)
+            self.assertEqual(result['party_name'], 'JK TYRE & INDUSTRIES LIMITED')
+            self.assertEqual(result['party_gstin'], '29AAACJ6716F1ZK')
+            self.assertEqual(result['invoice_number'], 'JK-2026-9901')
+            self.assertEqual(result['total_amount'], Decimal('23600.00'))
+            self.assertEqual(result['vendor_match_status'], 'MATCHED_VERIFIED')
+            self.assertFalse(result['requires_manual_review'])
+            self.assertTrue(result['is_financial_approval_eligible'])
+
+            if sample_file == "test_invoice.jpg" and os.path.exists(sample_file):
+                os.remove(sample_file)
+
+        self.gemini_patcher.start()
+
+    def test_16_gemini_mock_invalid_json(self):
+        """Simulate invalid JSON from Gemini, verifying graceful failover to local OCR."""
+        self.gemini_patcher.stop()
+
+        with patch('google.genai.Client') as mock_client_cls:
+            mock_client = MagicMock()
+            mock_resp = MagicMock()
+            mock_resp.text = "NOT_A_VALID_JSON_STRING"
+            mock_client.models.generate_content.return_value = mock_resp
+            mock_client_cls.return_value = mock_client
+
+            sample_file = "test_inv_corrupt.jpg"
+            with open(sample_file, "wb") as f:
+                f.write(b"0" * 300)
+
+            result = extract_with_gemini(sample_file)
+            self.assertIsNone(result)
+
+            if os.path.exists(sample_file):
+                os.remove(sample_file)
+
+        self.gemini_patcher.start()
+
+    def test_17_gemini_mock_missing_gstin(self):
+        """Simulate Gemini returning known vendor without GSTIN; backend requires manual review."""
+        self.gemini_patcher.stop()
+
+        mock_data = {
+            'party_name': 'JK TYRE & INDUSTRIES LIMITED',
+            'party_gstin': None,
+            'invoice_number': 'JK-NO-GST',
+            'total_amount': 5000.0,
+            'expense_ledger': 'Tyre & Tube Purchase',
+        }
+
+        with patch('google.genai.Client') as mock_client_cls:
+            mock_client = MagicMock()
+            mock_resp = MagicMock()
+            mock_resp.text = __import__('json').dumps(mock_data)
+            mock_client.models.generate_content.return_value = mock_resp
+            mock_client_cls.return_value = mock_client
+
+            sample_file = "test_no_gst.jpg"
+            with open(sample_file, "wb") as f:
+                f.write(b"0" * 300)
+
+            result = extract_with_gemini(sample_file)
+            self.assertIsNotNone(result)
+            self.assertEqual(result['vendor_match_status'], 'KNOWN_VENDOR_NO_GSTIN')
+            self.assertTrue(result['requires_manual_review'])
+            self.assertFalse(result['is_financial_approval_eligible'])
+
+            if os.path.exists(sample_file):
+                os.remove(sample_file)
+
+        self.gemini_patcher.start()
+
+    def test_18_gemini_mock_unknown_vendor(self):
+        """Simulate Gemini returning unknown roadside vendor; backend flags as ambiguous."""
+        self.gemini_patcher.stop()
+
+        mock_data = {
+            'party_name': 'Local Highway Dhaba & Garage',
+            'party_gstin': None,
+            'invoice_number': 'SLIP-99',
+            'total_amount': 750.0,
+            'expense_ledger': 'Labour Charges / Vehicle Service',
+        }
+
+        with patch('google.genai.Client') as mock_client_cls:
+            mock_client = MagicMock()
+            mock_resp = MagicMock()
+            mock_resp.text = __import__('json').dumps(mock_data)
+            mock_client.models.generate_content.return_value = mock_resp
+            mock_client_cls.return_value = mock_client
+
+            sample_file = "test_unknown.jpg"
+            with open(sample_file, "wb") as f:
+                f.write(b"0" * 300)
+
+            result = extract_with_gemini(sample_file)
+            self.assertIsNotNone(result)
+            self.assertEqual(result['vendor_match_status'], 'UNKNOWN_VENDOR_NO_GSTIN')
+            self.assertTrue(result['is_ambiguous_vendor'])
+            self.assertTrue(result['requires_manual_review'])
+            self.assertLessEqual(result['confidence'], 0.85)
+
+            if os.path.exists(sample_file):
+                os.remove(sample_file)
+
+        self.gemini_patcher.start()
+
+    def test_19_gemini_mock_api_timeout(self):
+        """Simulate API network timeout, verifying graceful fallback without exception."""
+        self.gemini_patcher.stop()
+
+        with patch('google.genai.Client') as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.models.generate_content.side_effect = TimeoutError("Connection timed out")
+            mock_client_cls.return_value = mock_client
+
+            sample_file = "test_timeout.jpg"
+            with open(sample_file, "wb") as f:
+                f.write(b"0" * 300)
+
+            result = extract_with_gemini(sample_file)
+            self.assertIsNone(result)
+
+            if os.path.exists(sample_file):
+                os.remove(sample_file)
+
+        self.gemini_patcher.start()
+
+    def test_20_gemini_mock_http_429_rate_limit(self):
+        """Simulate HTTP 429 quota exhausted response, verifying controlled backoff and fallback."""
+        self.gemini_patcher.stop()
+
+        with patch('google.genai.Client') as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.models.generate_content.side_effect = Exception("429 ResourceExhausted: Quota exceeded")
+            mock_client_cls.return_value = mock_client
+
+            sample_file = "test_429.jpg"
+            with open(sample_file, "wb") as f:
+                f.write(b"0" * 300)
+
+            result = extract_with_gemini(sample_file)
+            self.assertIsNone(result)
+
+            if os.path.exists(sample_file):
+                os.remove(sample_file)
+
+        self.gemini_patcher.start()

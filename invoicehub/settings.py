@@ -6,6 +6,8 @@ Internal Operations & Invoice Management System for Balaji Transports.
 from pathlib import Path
 import os
 import sys
+import secrets
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -17,27 +19,46 @@ sys.path.insert(0, str(BASE_DIR / 'apps'))
 # Load environment variables from .env
 load_dotenv(BASE_DIR / '.env')
 
-SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'default-insecure-secret-key-change-in-env')
+DEBUG = os.getenv('DJANGO_DEBUG', 'False').lower() in ('true', '1', 't')
 
-DEBUG = os.getenv('DJANGO_DEBUG', 'True').lower() in ('true', '1', 't')
+SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', '').strip()
+if not SECRET_KEY or SECRET_KEY.startswith('django-insecure-') or SECRET_KEY == 'default-insecure-secret-key-change-in-env' or len(SECRET_KEY) < 50:
+    if not DEBUG:
+        raise ImproperlyConfigured(
+            "DJANGO_SECRET_KEY must be set to a secure random string (>= 50 chars, without 'django-insecure-' prefix) when DEBUG=False."
+        )
+    SECRET_KEY = secrets.token_urlsafe(50)
 
-ALLOWED_HOSTS = ['*']
-CSRF_TRUSTED_ORIGINS = [
-    'https://*.serveousercontent.com',
-    'http://*.serveousercontent.com',
-    'https://*.loca.lt',
-    'http://*.loca.lt',
-    'https://balaji-invoicehub.loca.lt',
-    'https://*.trycloudflare.com',
-    'https://*.lhr.life',
-    'http://*.lhr.life',
-    'http://192.168.1.18:8888',
-    'http://192.168.1.18:8000',
-    'http://localhost:8888',
-    'http://localhost:8000',
-    'http://127.0.0.1:8888',
-    'http://127.0.0.1:8000',
-]
+# Configurable Allowed Hosts via environment (never allow wildcard '*' in production)
+allowed_hosts_env = os.getenv('DJANGO_ALLOWED_HOSTS', '')
+if allowed_hosts_env:
+    ALLOWED_HOSTS = [h.strip() for h in allowed_hosts_env.split(',') if h.strip()]
+elif not DEBUG:
+    ALLOWED_HOSTS = ['invoicehub.balajitransports.com', 'localhost', '127.0.0.1']
+else:
+    ALLOWED_HOSTS = ['localhost', '127.0.0.1']
+
+if not DEBUG:
+    ALLOWED_HOSTS = [h for h in ALLOWED_HOSTS if h != '*']
+    if not ALLOWED_HOSTS:
+        ALLOWED_HOSTS = ['invoicehub.balajitransports.com', 'localhost', '127.0.0.1']
+
+csrf_origins_env = os.getenv('DJANGO_CSRF_TRUSTED_ORIGINS', '')
+if csrf_origins_env:
+    CSRF_TRUSTED_ORIGINS = [o.strip() for o in csrf_origins_env.split(',') if o.strip()]
+elif not DEBUG:
+    CSRF_TRUSTED_ORIGINS = [
+        'https://invoicehub.balajitransports.com',
+        'https://localhost',
+        'https://127.0.0.1',
+    ]
+else:
+    CSRF_TRUSTED_ORIGINS = [
+        'http://localhost:8888',
+        'http://localhost:8000',
+        'http://127.0.0.1:8888',
+        'http://127.0.0.1:8000',
+    ]
 
 # Application definition
 INSTALLED_APPS = [
@@ -164,9 +185,24 @@ SESSION_SAVE_EVERY_REQUEST = True
 DATA_UPLOAD_MAX_MEMORY_SIZE = 104857600   # 100 MB
 FILE_UPLOAD_MAX_MEMORY_SIZE = 104857600   # 100 MB
 
-# Security Headers
+# Security Headers & Environment-based SSL Protection
 X_FRAME_OPTIONS = 'DENY'
 SECURE_CONTENT_TYPE_NOSNIFF = True
+
+# Environment-based Production SSL Controls (Enabled by default when DEBUG=False)
+ENABLE_SSL = os.getenv('DJANGO_ENABLE_SSL', 'False' if DEBUG else 'True').lower() in ('true', '1', 't')
+if ENABLE_SSL:
+    SECURE_SSL_REDIRECT = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = int(os.getenv('SECURE_HSTS_SECONDS', 31536000))
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+else:
+    SECURE_SSL_REDIRECT = False
+    SESSION_COOKIE_SECURE = False
+    CSRF_COOKIE_SECURE = False
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
@@ -176,8 +212,15 @@ WHATSAPP_SANDBOX_MODE = os.getenv('WHATSAPP_SANDBOX_MODE', 'True').lower() in ('
 MAX_FILE_SIZE_BYTES = int(os.getenv('MAX_FILE_SIZE_BYTES', 104857600))  # 100MB
 MAX_SUBMISSION_SIZE_BYTES = int(os.getenv('MAX_SUBMISSION_SIZE_BYTES', 104857600))  # 100MB
 
-# External Backup Destination (Strictly outside application directory)
-BACKUP_STORAGE_DIR = Path(os.getenv('BACKUP_STORAGE_PATH', 'E:\\Balaji_Backups\\InvoiceHub'))
+# External Backup Destination (Cross-platform path outside application directory)
+_default_backup_dir = (
+    Path('E:\\Balaji_Backups\\InvoiceHub')
+    if os.name == 'nt' and Path('E:\\').exists()
+    else BASE_DIR.parent / 'backups'
+)
+BACKUP_STORAGE_DIR = Path(
+    os.getenv('BACKUP_STORAGE_PATH') or os.getenv('BACKUP_DIR') or str(_default_backup_dir)
+)
 BACKUP_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 # Permanent retention policy: 3650 days (10+ years / Permanent Archive) for statutory GST & tax compliance
 BACKUP_RETENTION_DAYS = int(os.getenv('BACKUP_RETENTION_DAYS', 3650))

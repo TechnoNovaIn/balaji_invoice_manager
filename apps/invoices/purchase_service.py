@@ -2,11 +2,12 @@
 Balaji InvoiceHub - Purchase Register & Audit Service (Phase 5)
 Handles purchase register filtering, audit trail recording, and GSTR-2A reconciliation.
 """
+from datetime import datetime
 from decimal import Decimal
 from django.db.models import Q, Sum, Count
 from django.utils import timezone
 from .models import InvoiceSubmission, PurchaseAuditTrail, ExportAuditLog
-from .vendor_directory import VENDOR_DIRECTORY, GSTIN_VALIDATION_REGEX
+from .vendor_directory import find_vendor_by_gstin, GSTIN_VALIDATION_REGEX
 import re
 
 
@@ -66,12 +67,20 @@ def filter_purchase_register(params, base_qs=None):
     if employee_id:
         qs = qs.filter(employee_id=employee_id)
 
-    # Date Range Filter
+    # Date Range Filter (validated to avoid ORM ValidationError on malformed query params)
     date_field = 'invoice_date' if date_type == 'invoice_date' else 'created_at__date'
     if from_date:
-        qs = qs.filter(**{f"{date_field}__gte": from_date})
+        try:
+            parsed_from = datetime.strptime(from_date, '%Y-%m-%d').date()
+            qs = qs.filter(**{f"{date_field}__gte": parsed_from})
+        except ValueError:
+            pass
     if to_date:
-        qs = qs.filter(**{f"{date_field}__lte": to_date})
+        try:
+            parsed_to = datetime.strptime(to_date, '%Y-%m-%d').date()
+            qs = qs.filter(**{f"{date_field}__lte": parsed_to})
+        except ValueError:
+            pass
 
     # GST Compliance Filter
     if gst_compliance == 'missing_gstin':
@@ -172,7 +181,7 @@ def compare_with_gstr2a():
             })
             continue
 
-        supplier_record = VENDOR_DIRECTORY.get(gstin)
+        supplier_record = find_vendor_by_gstin(gstin)
 
         # Tax logic consistency check
         is_interstate = not gstin.startswith(balaji_state_code)

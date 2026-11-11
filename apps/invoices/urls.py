@@ -5,6 +5,8 @@ app_name = 'invoices'
 
 urlpatterns = [
     path('upload/', views.upload_invoice, name='upload'),
+    path('progress/<int:document_id>/', views.upload_progress, name='upload_progress'),
+    path('document-status/<int:document_id>/', views.document_status_api, name='document_status_api'),
     path('success/<str:submission_id>/', views.submission_success, name='submission_success'),
     path('my-submissions/', views.my_submissions, name='my_submissions'),
     path('detail/<str:submission_id>/', views.submission_detail, name='submission_detail'),
