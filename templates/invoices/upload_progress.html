@@ -1,0 +1,175 @@
+{% extends 'base.html' %}
+
+{% block title %}Processing Document - Balaji InvoiceHub{% endblock %}
+{% block page_heading %}Processing Multi-Page Document{% endblock %}
+
+{% block content %}
+<div class="mx-auto" style="max-width: 650px;">
+    <!-- Progress Card -->
+    <div class="card card-enterprise shadow-sm border-top border-4 border-teal mb-4">
+        <div class="card-header bg-white p-4 text-center border-bottom">
+            <div class="mb-3">
+                <div class="spinner-border text-teal" style="width: 3.5rem; height: 3.5rem;" role="status" id="mainSpinner">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <div class="rounded-circle mx-auto d-none align-items-center justify-content-center bg-teal text-white shadow-sm" id="successIcon" style="width: 64px; height: 64px; font-size: 2.2rem;">
+                    <i class="bi bi-check-lg"></i>
+                </div>
+            </div>
+            <h4 class="fw-bold mb-1" style="color: var(--primary-navy);" id="headerTitle">Processing Your Document</h4>
+            <p class="text-secondary small mb-0" id="fileSubtext">
+                <i class="bi bi-file-earmark-pdf-fill text-danger me-1"></i>
+                <strong>{{ document.file_name }}</strong> ({{ document.file_size_display }})
+            </p>
+        </div>
+
+        <div class="card-body p-4">
+            <!-- Progress Bar -->
+            <div class="mb-4">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <span class="small fw-bold text-uppercase tracking-wider" style="color: var(--primary-navy);">
+                        Pipeline Progress
+                    </span>
+                    <span class="fw-bold fs-6 text-teal" id="progressPercentText">{{ document.progress_percent }}%</span>
+                </div>
+                <div class="progress" style="height: 12px; border-radius: 6px;">
+                    <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-teal" 
+                         role="progressbar" style="width: {{ document.progress_percent }}%;" 
+                         aria-valuenow="{{ document.progress_percent }}" aria-valuemin="0" aria-valuemax="100"></div>
+                </div>
+            </div>
+
+            <!-- Current Stage Callout -->
+            <div class="p-3 rounded-3 mb-4 border" style="background-color: var(--accent-teal-subtle);">
+                <div class="d-flex align-items-center">
+                    <i class="bi bi-gear-wide-connected fs-4 text-teal me-3" id="stageIcon"></i>
+                    <div>
+                        <div class="text-muted small fw-semibold text-uppercase tracking-wider" style="font-size: 0.72rem;">Current Stage</div>
+                        <div class="fw-bold text-dark mt-1" id="stageText">{{ document.current_stage|default:"Initializing pipeline..." }}</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Live Stats Grid -->
+            <div class="row g-2 text-center mb-4">
+                <div class="col-4">
+                    <div class="border rounded p-2 bg-light">
+                        <small class="text-secondary d-block" style="font-size: 0.72rem;">Total Pages</small>
+                        <strong class="fs-5 text-dark" id="statTotalPages">{{ document.total_pages }}</strong>
+                    </div>
+                </div>
+                <div class="col-4">
+                    <div class="border rounded p-2 bg-light">
+                        <small class="text-secondary d-block" style="font-size: 0.72rem;">Pages Processed</small>
+                        <strong class="fs-5 text-dark" id="statPagesProcessed">{{ document.pages_processed }}</strong>
+                    </div>
+                </div>
+                <div class="col-4">
+                    <div class="border rounded p-2 bg-light">
+                        <small class="text-secondary d-block" style="font-size: 0.72rem;">Invoices Identified</small>
+                        <strong class="fs-5 text-teal" id="statInvoicesDetected">{{ document.invoices_detected }}</strong>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Operational Notice -->
+            <div class="alert alert-info border-0 shadow-sm py-2 px-3 small d-flex align-items-center" role="alert">
+                <i class="bi bi-shield-check fs-5 me-2 text-info"></i>
+                <div>
+                    <strong>Background Processing Active:</strong> High-performance PyMuPDF classification and conditional OCR are running. You may safely navigate away or keep this window open.
+                </div>
+            </div>
+        </div>
+
+        <div class="card-footer bg-light text-center py-3 border-top">
+            <a href="{% url 'invoices:my_submissions' %}" class="btn btn-outline-secondary btn-sm px-3 me-2">
+                <i class="bi bi-folder2-open me-1"></i>View My Submissions
+            </a>
+            <a href="{% url 'invoices:upload' %}" class="btn btn-outline-dark btn-sm px-3">
+                <i class="bi bi-plus-circle me-1"></i>Upload Another File
+            </a>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const documentId = {{ document.id }};
+    const statusUrl = "{% url 'invoices:document_status_api' document.id %}";
+    
+    const progressBar = document.getElementById('progressBar');
+    const progressPercentText = document.getElementById('progressPercentText');
+    const stageText = document.getElementById('stageText');
+    const statTotalPages = document.getElementById('statTotalPages');
+    const statPagesProcessed = document.getElementById('statPagesProcessed');
+    const statInvoicesDetected = document.getElementById('statInvoicesDetected');
+    const headerTitle = document.getElementById('headerTitle');
+    const mainSpinner = document.getElementById('mainSpinner');
+    const successIcon = document.getElementById('successIcon');
+
+    let pollInterval = setInterval(pollStatus, 1500);
+
+    function pollStatus() {
+        fetch(statusUrl)
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    clearInterval(pollInterval);
+                    return;
+                }
+
+                // Update progress bar & percentage
+                const percent = data.progress_percent || 0;
+                progressBar.style.width = percent + '%';
+                progressBar.setAttribute('aria-valuenow', percent);
+                progressPercentText.textContent = percent + '%';
+
+                // Update stage & stats
+                if (data.stage) {
+                    stageText.textContent = data.stage;
+                }
+                if (data.total_pages) {
+                    statTotalPages.textContent = data.total_pages;
+                }
+                if (data.pages_processed) {
+                    statPagesProcessed.textContent = data.pages_processed;
+                }
+                if (data.invoices_detected !== undefined) {
+                    statInvoicesDetected.textContent = data.invoices_detected;
+                }
+
+                // Check completion
+                if (data.status === 'DETECTION_COMPLETED' || data.status === 'COMPLETED') {
+                    clearInterval(pollInterval);
+                    progressBar.classList.remove('progress-bar-animated', 'progress-bar-striped');
+                    progressBar.style.width = '100%';
+                    progressPercentText.textContent = '100%';
+                    headerTitle.textContent = 'Processing Completed!';
+                    headerTitle.classList.add('text-success');
+                    mainSpinner.classList.add('d-none');
+                    successIcon.classList.remove('d-none');
+                    successIcon.classList.add('d-flex');
+
+                    // Automatically transition to success receipt
+                    if (data.redirect_url) {
+                        setTimeout(() => {
+                            window.location.href = data.redirect_url;
+                        }, 1200);
+                    }
+                } else if (data.status === 'FAILED') {
+                    clearInterval(pollInterval);
+                    progressBar.classList.remove('bg-teal');
+                    progressBar.classList.add('bg-danger');
+                    headerTitle.textContent = 'Processing Failed';
+                    headerTitle.classList.add('text-danger');
+                    stageText.textContent = data.error_message || 'An error occurred during processing.';
+                }
+            })
+            .catch(err => {
+                console.error("Polling error:", err);
+            });
+    }
+});
+</script>
+{% endblock %}
+

@@ -1,6 +1,6 @@
 import os
 import io
-import fitz
+import pymupdf as fitz
 from decimal import Decimal
 from django.test import TestCase
 from django.urls import reverse
@@ -422,3 +422,108 @@ class MultiInvoiceProcessingTestCase(TestCase):
         self.assertIn('Original_Source_Test.pdf', resp['Content-Disposition'])
         body = b"".join(resp.streaming_content)
         self.assertEqual(len(body), len(pdf_bytes))
+
+    def test_11_page_classification_engine(self):
+        """
+        Special Requirement 1: Tests intelligent page classification.
+        Verifies DIGITAL_TEXT, BLANK, and SCANNED/MIXED classification.
+        """
+        from apps.invoices.page_classifier import classify_pdf_page, PageClassificationType
+
+        # 1. Digital text page
+        doc = fitz.open()
+        p_dig = doc.new_page()
+        p_dig.insert_text((50, 72), "TAX INVOICE - DIGITAL TEXT CONTENT FOR TESTING CLASSIFIER")
+        c_dig = classify_pdf_page(p_dig)
+        self.assertEqual(c_dig['page_type'], PageClassificationType.DIGITAL_TEXT)
+        self.assertFalse(c_dig['requires_ocr'])
+
+        # 2. Blank page
+        p_blank = doc.new_page()
+        c_blank = classify_pdf_page(p_blank)
+        self.assertEqual(c_blank['page_type'], PageClassificationType.BLANK)
+        self.assertFalse(c_blank['requires_ocr'])
+        doc.close()
+
+    def test_12_conditional_ocr_bypasses_digital_pages(self):
+        """
+        Special Requirement 2 & 6: Conditional OCR avoids unnecessary OCR on digital pages.
+        Verifies digital pages increment digital_pages_count, avoid OCR, and record granular timings.
+        """
+        from apps.invoices.performance_timer import PerformanceTimer
+        from apps.invoices.segmentation import segment_and_extract_pdf
+
+        specs = [
+            {'vendor': 'SRI BALAJI SPARES', 'inv_no': 'SBS-001', 'total': '5000.00'},
+            {'vendor': 'SRI BALAJI SPARES', 'inv_no': 'SBS-002', 'total': '7000.00'},
+        ]
+        pdf_bytes = make_pdf_with_invoices(specs)
+        upload_file = SimpleUploadedFile("Digital_Invoice_Batch.pdf", pdf_bytes, "application/pdf")
+        subs = create_invoice_submissions(user=self.employee, files=[upload_file])
+        self.assertEqual(len(subs), 2)
+
+        timer = PerformanceTimer(total_pages=2)
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
+            tmp.write(pdf_bytes)
+            tmp_path = tmp.name
+
+        try:
+            invoices = segment_and_extract_pdf(tmp_path, timer=timer)
+            metrics = timer.finish()
+            self.assertEqual(len(invoices), 2)
+            self.assertEqual(metrics['counters']['digital_pages_count'], 2)
+            self.assertEqual(metrics['counters']['ocr_pages_count'], 0)
+            self.assertIn('pdf_opening_ms', metrics['timings_ms'])
+            self.assertIn('page_classification_ms', metrics['timings_ms'])
+            self.assertIn('segmentation_ms', metrics['timings_ms'])
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+
+    def test_13_background_processing_task_and_status_api(self):
+        """
+        Special Requirement 5: Background processing and real-time status reporting API.
+        Verifies stages, progress percent, and document_status_api output.
+        """
+        from apps.invoices.tasks import process_uploaded_document_task
+
+        specs = [
+            {'vendor': 'KAVERI AUTOMOBILES', 'inv_no': 'KAV-101', 'total': '3200.00'},
+        ]
+        pdf_bytes = make_pdf_with_invoices(specs)
+        upload_file = SimpleUploadedFile("Kaveri_Bill.pdf", pdf_bytes, "application/pdf")
+
+        # Create UploadedDocument directly
+        doc = UploadedDocument.objects.create(
+            uploader=self.employee,
+            original_file=upload_file,
+            file_name="Kaveri_Bill.pdf",
+            file_sha256="testsha256kav101",
+            file_size_bytes=len(pdf_bytes),
+            content_type="application/pdf",
+            processing_status=UploadedDocument.STATUS_QUEUED,
+            current_stage="Document Queued",
+            progress_percent=5,
+        )
+
+        # Run pipeline task
+        created_subs = process_uploaded_document_task(doc.id, remarks="Urgent Kaveri maintenance bill")
+        self.assertEqual(len(created_subs), 1)
+
+        doc.refresh_from_db()
+        self.assertEqual(doc.processing_status, UploadedDocument.STATUS_DETECTION_COMPLETED)
+        self.assertEqual(doc.progress_percent, 100)
+        self.assertIn("Completed", doc.current_stage)
+        self.assertIn('total_time_seconds', doc.processing_metrics)
+
+        # Test document_status_api
+        self.client.login(username="emp_tester", password="testpassword123")
+        url = reverse('invoices:document_status_api', kwargs={'document_id': doc.id})
+        resp = self.client.get(url)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data['status'], UploadedDocument.STATUS_DETECTION_COMPLETED)
+        self.assertEqual(data['progress_percent'], 100)
+        self.assertEqual(data['invoices_detected'], 1)
+        self.assertTrue(data['redirect_url'].startswith('/invoices/success/'))

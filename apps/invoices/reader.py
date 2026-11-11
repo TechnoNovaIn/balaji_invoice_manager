@@ -1,9 +1,22 @@
 import re
 import os
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple, List
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
+
+# Shared singleton OCR engine instance to prevent reloading ONNX models on every page
+_SHARED_OCR_ENGINE = None
+
+def get_shared_ocr_engine():
+    global _SHARED_OCR_ENGINE
+    if _SHARED_OCR_ENGINE is None:
+        try:
+            from rapidocr_onnxruntime import RapidOCR
+            _SHARED_OCR_ENGINE = RapidOCR()
+        except Exception:
+            _SHARED_OCR_ENGINE = False
+    return _SHARED_OCR_ENGINE if _SHARED_OCR_ENGINE is not False else None
 
 
 def normalize_handwritten_number(cand: str) -> str:
@@ -96,79 +109,149 @@ def clean_karnataka_invoice_no(raw_no: str) -> str:
     return s
 
 
-def extract_text_from_pdf_page(page, ocr_engine=None) -> str:
+def extract_text_from_pdf_page(page, ocr_engine=None, return_details: bool = False):
     """
     Extracts text from a PyMuPDF (fitz) page.
     Attempts digital text extraction first.
     If digital text has fewer than 25 characters (scanned page or image PDF),
     renders a 150 DPI pixmap, detects orientation (rotates upside-down 180 degrees),
     and reconstructs text line-by-line using 2D spatial coordinates.
+    Reuses shared OCR engine instance across all pages.
     """
     text = page.get_text()
-    if text and len(text.strip()) >= 25:
-        return text.strip()
+    digital_text = text.strip() if text else ""
+    images = page.get_images()
+    has_images = len(images) > 0
 
-    # Scanned page: render pixmap and run OCR
+    # 1. Pure digital text page: if text is >= 25 chars and not a mixed scan
+    if len(digital_text) >= 25 and not has_images:
+        if return_details:
+            return {
+                'text': digital_text,
+                'method': 'DIGITAL',
+                'boxes': [],
+                'is_upside_down': False,
+                'ocr_used': False,
+            }
+        return digital_text
+
+    # 2. Blank page check: no text and no images
+    if len(digital_text) == 0 and not has_images:
+        if return_details:
+            return {
+                'text': '',
+                'method': 'BLANK',
+                'boxes': [],
+                'is_upside_down': False,
+                'ocr_used': False,
+            }
+        return ""
+
+    # Scanned or Mixed page: render pixmap and run OCR
+    ocr_lines = []
+    ocr_boxes = []
+    is_upside_down = False
+    ocr_used = False
+
     try:
         from PIL import Image
         import numpy as np
         if ocr_engine is None:
-            from rapidocr_onnxruntime import RapidOCR
-            ocr_engine = RapidOCR()
-        pix = page.get_pixmap(dpi=150)
-        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-        ocr_res, _ = ocr_engine(np.array(img))
+            ocr_engine = get_shared_ocr_engine()
 
-        # 1. Orientation check: Check if text is upside down
-        is_upside_down = False
-        if ocr_res:
-            footer_y = []
-            header_y = []
-            for b, t_str, _ in ocr_res:
-                tl = t_str.lower()
-                ym = (b[0][1] + b[2][1]) / 2.0
-                if any(k in tl for k in ['authorised', 'signatory', 'rupees in words']):
-                    footer_y.append(ym)
-                if any(k in tl for k in ['karnataka', 'tyre care', 'tax invoice', 'agnibanniraya', 'gstin']):
-                    header_y.append(ym)
-            if footer_y and header_y and min(footer_y) < min(header_y):
-                is_upside_down = True
-
-        if is_upside_down:
-            img = img.rotate(180)
+        if ocr_engine is not None:
+            ocr_used = True
+            pix = page.get_pixmap(dpi=150)
+            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
             ocr_res, _ = ocr_engine(np.array(img))
 
-        if ocr_res:
-            # Sort tokens in natural reading order: row by row (grouping y by ~18px) then by x
-            boxes = []
-            for b, t_str, score in ocr_res:
-                if t_str and t_str.strip():
+            # Orientation check: Check if text is upside down
+            if ocr_res:
+                footer_y = []
+                header_y = []
+                for b, t_str, _ in ocr_res:
+                    tl = t_str.lower()
                     ym = (b[0][1] + b[2][1]) / 2.0
-                    xm = (b[0][0] + b[2][0]) / 2.0
-                    boxes.append({'y': ym, 'x': xm, 'text': t_str.strip()})
-            boxes.sort(key=lambda item: (round(item['y'] / 18.0) * 18, item['x']))
+                    if any(k in tl for k in ['authorised', 'signatory', 'rupees in words']):
+                        footer_y.append(ym)
+                    if any(k in tl for k in ['karnataka', 'tyre care', 'tax invoice', 'agnibanniraya', 'gstin']):
+                        header_y.append(ym)
+                if footer_y and header_y and min(footer_y) < min(header_y):
+                    is_upside_down = True
 
-            # Combine tokens on the same horizontal row into a coherent line
-            lines = []
-            curr_row = []
-            curr_y = None
-            for item in boxes:
-                if curr_y is None or abs(item['y'] - curr_y) < 18:
-                    curr_row.append(item)
-                    curr_y = item['y'] if curr_y is None else (curr_y + item['y']) / 2.0
-                else:
+            if is_upside_down:
+                img = img.rotate(180)
+                ocr_res, _ = ocr_engine(np.array(img))
+
+            if ocr_res:
+                # Store normalized boxes
+                w_img, h_img = img.size
+                for b, t_str, score in ocr_res:
+                    if t_str and t_str.strip():
+                        ym = (b[0][1] + b[2][1]) / 2.0
+                        xm = (b[0][0] + b[2][0]) / 2.0
+                        ocr_boxes.append({
+                            'y': ym,
+                            'x': xm,
+                            'text': t_str.strip(),
+                            'norm_x': xm / float(w_img),
+                            'norm_y': ym / float(h_img),
+                            'box': b,
+                            'score': score
+                        })
+                ocr_boxes.sort(key=lambda item: (round(item['y'] / 18.0) * 18, item['x']))
+
+                # Combine tokens on the same horizontal row into a coherent line
+                curr_row = []
+                curr_y = None
+                for item in ocr_boxes:
+                    if curr_y is None or abs(item['y'] - curr_y) < 18:
+                        curr_row.append(item)
+                        curr_y = item['y'] if curr_y is None else (curr_y + item['y']) / 2.0
+                    else:
+                        curr_row.sort(key=lambda it: it['x'])
+                        ocr_lines.append(" ".join(it['text'] for it in curr_row))
+                        curr_row = [item]
+                        curr_y = item['y']
+                if curr_row:
                     curr_row.sort(key=lambda it: it['x'])
-                    lines.append(" ".join(it['text'] for it in curr_row))
-                    curr_row = [item]
-                    curr_y = item['y']
-            if curr_row:
-                curr_row.sort(key=lambda it: it['x'])
-                lines.append(" ".join(it['text'] for it in curr_row))
-
-            return "\n".join(lines).strip()
+                    ocr_lines.append(" ".join(it['text'] for it in curr_row))
     except Exception:
         pass
-    return text.strip() if text else ""
+
+    ocr_text = "\n".join(ocr_lines).strip()
+
+    # Reconcile digital text and OCR text without duplicating
+    final_text = ocr_text
+    method = 'OCR' if ocr_used else 'DIGITAL'
+    if digital_text and ocr_text:
+        # Mixed page: preserve digital text and append non-duplicate OCR tokens
+        method = 'MIXED'
+        digital_lines = [l.strip() for l in digital_text.splitlines() if l.strip()]
+        digital_norm = {re.sub(r'\s+', ' ', l.lower()) for l in digital_lines}
+        unique_ocr_lines = []
+        for ol in ocr_lines:
+            norm_ol = re.sub(r'\s+', ' ', ol.lower())
+            if norm_ol not in digital_norm:
+                unique_ocr_lines.append(ol)
+        if unique_ocr_lines:
+            final_text = digital_text + "\n" + "\n".join(unique_ocr_lines)
+        else:
+            final_text = digital_text
+    elif digital_text and not ocr_text:
+        final_text = digital_text
+        method = 'DIGITAL'
+
+    if return_details:
+        return {
+            'text': final_text.strip(),
+            'method': method,
+            'boxes': ocr_boxes,
+            'is_upside_down': is_upside_down,
+            'ocr_used': ocr_used,
+        }
+
+    return final_text.strip()
 
 
 def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
@@ -330,12 +413,12 @@ def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
         # --- B. Party / Vendor Name Extraction ---
         if not result['party_name']:
             try:
-                from .vendor_directory import VENDOR_DIRECTORY
+                from .vendor_directory import get_active_vendor_directory
                 # Strip bank account and payment details before vendor matching to avoid false bank name matches
                 raw_for_vendor = re.sub(r'(?:Bank|Branch|IFSC|A\/c|Account|Co-op).*', '', raw_text, flags=re.I)
                 raw_lower = raw_for_vendor.lower()
                 raw_no_space = re.sub(r'[^a-z0-9]', '', raw_lower)
-                sorted_vendors = sorted(VENDOR_DIRECTORY.items(), key=lambda x: len(x[1]['name']), reverse=True)
+                sorted_vendors = sorted(get_active_vendor_directory().items(), key=lambda x: len(x[1]['name']), reverse=True)
                 
                 # Exact substring match
                 for gstin, info in sorted_vendors:
@@ -845,55 +928,68 @@ def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
 def extract_invoice_metadata(file_path: str, content_type: str = '') -> Dict[str, Any]:
     """
     Intelligent document reader for photographed receipts and digital/scanned invoice documents.
-    Extracts text and applies extract_metadata_from_text().
+    Extracts selectable text via PyMuPDF or deep-learning OCR, runs Gemini Vision AI if configured,
+    preserves original raw text without modification, and enforces backend financial validation rules.
     """
     if not os.path.exists(file_path):
         return extract_metadata_from_text("")
 
-    # 0. Primary High-Accuracy Vision AI: Google Gemini Vision (if GEMINI_API_KEY is configured)
-    try:
-        from .gemini_extractor import extract_with_gemini
-        gemini_result = extract_with_gemini(file_path)
-        if gemini_result and (gemini_result.get('party_name') or gemini_result.get('invoice_number') or (gemini_result.get('total_amount') and gemini_result['total_amount'] > Decimal('0.00'))):
-            return gemini_result
-    except Exception as gemini_err:
-        import logging
-        logging.getLogger(__name__).warning("Gemini Vision AI fallback to RapidOCR: %s", gemini_err)
-
-    raw_text = ""
-
-    # 1. Digital or scanned PDF Document
-    if content_type == 'application/pdf' or file_path.lower().endswith('.pdf'):
+    # 1. Digital PDF Document extraction (PyMuPDF)
+    original_pdf_text = ""
+    is_pdf = (content_type == 'application/pdf') or file_path.lower().endswith('.pdf')
+    if is_pdf:
         try:
-            import fitz
-            doc = fitz.open(file_path)
+            import pymupdf
+            doc = pymupdf.open(file_path)
             for page in doc:
                 text = extract_text_from_pdf_page(page)
                 if text:
-                    raw_text += text + "\n"
+                    original_pdf_text += text + "\n"
             doc.close()
         except Exception:
             pass
 
-        if not raw_text.strip():
+        if not original_pdf_text.strip():
             try:
                 import pdfplumber
                 with pdfplumber.open(file_path) as pdf:
                     for page in pdf.pages[:10]:
                         text = page.extract_text()
                         if text:
-                            raw_text += text + "\n"
+                            original_pdf_text += text + "\n"
             except Exception:
                 pass
 
-    # 2. Photographed Receipt & Image Reader (Deep Learning OCR)
-    else:
+    # 2. Primary High-Accuracy Vision AI: Google Gemini Vision (if GEMINI_API_KEY is configured)
+    try:
+        from .gemini_extractor import extract_with_gemini
+        gemini_result = extract_with_gemini(file_path, original_pdf_text=original_pdf_text)
+        if gemini_result and (
+            gemini_result.get('party_name')
+            or gemini_result.get('invoice_number')
+            or (gemini_result.get('total_amount') and gemini_result['total_amount'] > Decimal('0.00'))
+        ):
+            if original_pdf_text.strip():
+                gemini_result['raw_text'] = original_pdf_text.strip()
+                gemini_result['ocr_extracted_text'] = original_pdf_text.strip()
+                gemini_result['extraction_method'] = 'HYBRID_GEMINI_PYMUPDF'
+            return gemini_result
+    except Exception as gemini_err:
+        import logging
+        logging.getLogger(__name__).warning("Gemini Vision AI fallback to RapidOCR: %s", gemini_err)
+
+    raw_text = original_pdf_text
+    extraction_method = 'PYMUPDF_DIGITAL' if original_pdf_text.strip() else 'RAPIDOCR_LOCAL'
+
+    # 3. Photographed Receipt & Image Reader (Deep Learning OCR)
+    if not raw_text.strip():
         try:
             from rapidocr_onnxruntime import RapidOCR
             engine = RapidOCR()
             ocr_res, _ = engine(file_path)
             if ocr_res:
                 raw_text = "\n".join([line[1] for line in ocr_res if line and len(line) > 1])
+                extraction_method = 'RAPIDOCR_LOCAL'
         except Exception:
             pass
 
@@ -911,9 +1007,31 @@ def extract_invoice_metadata(file_path: str, content_type: str = '') -> Dict[str
                 try:
                     import pytesseract
                     raw_text = pytesseract.image_to_string(enhanced_img, timeout=10)
+                    extraction_method = 'PYTESSERACT_LOCAL'
                 except Exception:
                     pass
             except Exception:
                 pass
 
-    return extract_metadata_from_text(raw_text)
+    local_meta = extract_metadata_from_text(raw_text)
+    local_meta['raw_text'] = raw_text
+    local_meta['ocr_extracted_text'] = raw_text
+    local_meta['gemini_extracted_data'] = None
+    local_meta['extraction_method'] = extraction_method
+
+    # Enforce backend vendor validation on local extraction (Rules A - E)
+    from .vendor_validator import validate_vendor_and_financials
+    backend_val = validate_vendor_and_financials(
+        party_name=local_meta.get('party_name'),
+        party_gstin=local_meta.get('party_gstin'),
+        default_expense_ledger=local_meta.get('expense_ledger', 'Purchase Spares & Consumables'),
+    )
+    local_meta['is_ambiguous_vendor'] = backend_val['is_ambiguous_vendor']
+    local_meta['requires_manual_review'] = backend_val['requires_manual_review']
+    local_meta['confidence'] = min(local_meta.get('confidence', 0.8), backend_val['confidence'])
+    local_meta['vendor_match_status'] = backend_val['vendor_match_status']
+    local_meta['is_financial_approval_eligible'] = backend_val['is_financial_approval_eligible']
+    if backend_val.get('audit_notes'):
+        local_meta['audit_notes'] = backend_val['audit_notes']
+
+    return local_meta

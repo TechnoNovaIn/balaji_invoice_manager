@@ -1,7 +1,7 @@
 import os
 import shutil
 from pathlib import Path
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 from django.conf import settings
 from apps.invoices.models import (
     InvoiceSubmission,
@@ -25,6 +25,10 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        if not options.get('yes'):
+            raise CommandError(
+                "Destructive operation aborted. Pass --yes explicitly to confirm wiping all invoice records and uploaded invoice files."
+            )
         self.stdout.write(self.style.WARNING("=== Resetting All Invoice Data & Tracking IDs ==="))
 
         # Count existing records

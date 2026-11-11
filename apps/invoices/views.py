@@ -38,11 +38,15 @@ from .analytics_service import (
     get_employee_upload_stats,
     generate_executive_excel_report,
 )
-from .vendor_directory import VENDOR_DIRECTORY
+from .vendor_validator import validate_vendor_and_financials, apply_vendor_validation_to_submission
 from django.core.paginator import Paginator
+import uuid
+from .tasks import dispatch_background_processing, get_active_processing_ids
 from .services import (
     create_invoice_submission,
     create_invoice_submissions,
+    validate_uploaded_files,
+    check_duplicates,
     resubmit_returned_invoice,
     split_invoice_submission,
     merge_invoice_submissions,
@@ -68,6 +72,52 @@ def upload_invoice(request):
         files = request.FILES.getlist('files')
         remarks = request.POST.get('remarks', '')
 
+        # Check for background vs synchronous processing
+        # Multi-page PDFs (e.g. 33-page PDF) are processed asynchronously in the background
+        # Single images or requests explicitly setting sync=true process synchronously
+        is_pdf = any(f.name.lower().endswith('.pdf') for f in files)
+        sync_requested = request.POST.get('sync', '').lower() == 'true' or not is_pdf
+
+        if not sync_requested and is_pdf and len(files) == 1:
+            try:
+                validated_files = validate_uploaded_files(files)
+                is_suspected, duplicate_notes = check_duplicates(request.user, validated_files)
+                item = validated_files[0]
+                uploaded_doc = UploadedDocument.objects.create(
+                    uploader=request.user,
+                    original_file=item['file'],
+                    file_name=item['filename'],
+                    file_sha256=item['sha256'],
+                    file_size_bytes=item['size'],
+                    content_type=item['content_type'],
+                    processing_status=UploadedDocument.STATUS_QUEUED,
+                    current_stage="Document Queued for Background Processing",
+                    progress_percent=5,
+                )
+                batch_id = f"BATCH-{timezone.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}"
+                dispatch_background_processing(
+                    uploaded_document_id=uploaded_doc.id,
+                    remarks=remarks,
+                    is_suspected=is_suspected,
+                    duplicate_notes=duplicate_notes,
+                    batch_id=batch_id
+                )
+                return redirect('invoices:upload_progress', document_id=uploaded_doc.id)
+            except ValidationError as e:
+                messages.error(request, e.message if hasattr(e, 'message') else str(e))
+                return render(request, 'invoices/upload.html', {
+                    'remarks': remarks,
+                    'max_files': MAX_FILES_PER_SUBMISSION,
+                    'page_title': 'Upload Invoice Receipt',
+                })
+            except Exception as e:
+                messages.error(request, f"An unexpected error occurred while processing your upload: {str(e)}")
+                return render(request, 'invoices/upload.html', {
+                    'remarks': remarks,
+                    'max_files': MAX_FILES_PER_SUBMISSION,
+                    'page_title': 'Upload Invoice Receipt',
+                })
+
         try:
             submissions = create_invoice_submissions(
                 user=request.user,
@@ -89,7 +139,6 @@ def upload_invoice(request):
                     f"✓ Successfully submitted {count} separate invoices to Naveen! Tracking IDs: {', '.join(ids)}"
                 )
                 return redirect('invoices:submission_success', submission_id=submissions[0].submission_id)
-            return redirect('invoices:submission_success', submission_id=submission.submission_id)
         except ValidationError as e:
             messages.error(request, e.message if hasattr(e, 'message') else str(e))
             return render(request, 'invoices/upload.html', {
@@ -108,6 +157,59 @@ def upload_invoice(request):
     return render(request, 'invoices/upload.html', {
         'max_files': MAX_FILES_PER_SUBMISSION,
         'page_title': 'Upload Invoice Receipt',
+    })
+
+
+@login_required
+def upload_progress(request, document_id):
+    """
+    Real-time progress dashboard for multi-page PDF processing.
+    """
+    doc = get_object_or_404(UploadedDocument, id=document_id)
+    if request.user.is_employee and doc.uploader != request.user:
+        raise PermissionDenied("Access Denied: You cannot view this upload progress.")
+    return render(request, 'invoices/upload_progress.html', {
+        'document': doc,
+        'page_title': f"Processing Document - {doc.file_name}",
+    })
+
+
+@login_required
+def document_status_api(request, document_id):
+    """
+    JSON endpoint returning live progress percentage, stage, and detected invoices.
+    """
+    doc = get_object_or_404(UploadedDocument, id=document_id)
+    if request.user.is_employee and doc.uploader != request.user:
+        return JsonResponse({'error': 'Unauthorized'}, status=403)
+
+    subs = InvoiceSubmission.objects.filter(source_document=doc).order_by('id')
+    redirect_url = ""
+    if doc.processing_status in (UploadedDocument.STATUS_DETECTION_COMPLETED, UploadedDocument.STATUS_COMPLETED):
+        if subs.exists():
+            redirect_url = reverse('invoices:submission_success', kwargs={'submission_id': subs.first().submission_id})
+        else:
+            redirect_url = reverse('invoices:my_submissions')
+
+    active_ids = get_active_processing_ids()
+    is_stale = (
+        doc.processing_status in (UploadedDocument.STATUS_QUEUED, UploadedDocument.STATUS_PROCESSING)
+        and doc.id not in active_ids
+        and (timezone.now() - doc.updated_at).total_seconds() > 120
+    )
+
+    return JsonResponse({
+        'id': doc.id,
+        'status': doc.processing_status,
+        'stage': doc.current_stage,
+        'progress_percent': doc.progress_percent,
+        'total_pages': doc.total_pages,
+        'pages_processed': doc.pages_processed,
+        'invoices_detected': doc.invoices_detected,
+        'error_message': doc.error_message,
+        'redirect_url': redirect_url,
+        'metrics': doc.processing_metrics,
+        'is_stale': is_stale,
     })
 
 
@@ -349,7 +451,8 @@ def naveen_return_invoice(request, submission_id):
 def naveen_verify_invoice(request, submission_id):
     """
     Endpoint for Naveen (or Admin) to mark an invoice as verified.
-    Prepares the invoice for full accounts processing in subsequent phases.
+    Runs authoritative vendor & financial validation first so manual-review
+    and ambiguity restrictions cannot be bypassed.
     """
     if not (request.user.is_naveen or request.user.is_admin_role):
         raise PermissionDenied("Access Denied: Only Naveen or Administrator can verify invoices.")
@@ -359,9 +462,44 @@ def naveen_verify_invoice(request, submission_id):
 
     submission = get_object_or_404(InvoiceSubmission, submission_id=submission_id)
 
+    backend_val = validate_vendor_and_financials(
+        party_name=submission.party_name,
+        party_gstin=submission.party_gstin,
+        default_expense_ledger=submission.expense_ledger or 'Purchase Spares & Consumables',
+    )
+    confirm_manual = request.POST.get('confirm_manual_review', '').lower() in ('on', 'true', '1', 'yes')
+
+    has_blocking_gstin_issue = backend_val['vendor_match_status'] in ('GSTIN_MISMATCH', 'INVALID_GSTIN_FORMAT')
+    has_missing_financials = not (submission.party_name or '').strip() or submission.total_amount <= Decimal('0.00')
+    needs_review_gate = (
+        submission.is_ambiguous_vendor
+        or backend_val['is_ambiguous_vendor']
+        or submission.requires_manual_review
+        or not backend_val['is_financial_approval_eligible']
+    )
+
+    if has_blocking_gstin_issue or has_missing_financials or (needs_review_gate and not confirm_manual):
+        messages.warning(
+            request,
+            "Manual review required: Complete vendor, GSTIN, and amount verification on the Verification Desk before approving this invoice."
+        )
+        return redirect('invoices:verification_workspace', submission_id=submission.submission_id)
+
     old_status = submission.status
     submission.status = InvoiceSubmission.STATUS_VERIFIED
-    submission.save(update_fields=['status', 'updated_at'])
+    submission.verified_by = request.user
+    submission.verified_at = timezone.now()
+    submission.requires_manual_review = False
+    submission.save(update_fields=['status', 'verified_by', 'verified_at', 'requires_manual_review', 'updated_at'])
+
+    PurchaseAuditTrail.objects.create(
+        submission=submission,
+        field_name='Verification Approval',
+        old_value=old_status,
+        new_value=InvoiceSubmission.STATUS_VERIFIED,
+        changed_by=request.user,
+        reason=request.POST.get('audit_reason', 'Verified and approved after vendor & financial validation.').strip()
+    )
 
     InvoiceStatusHistory.objects.create(
         submission=submission,
@@ -503,26 +641,34 @@ def tally_workspace(request, submission_id):
         is_in_tally = 'is_entered_in_tally' in request.POST
         is_in_gst = 'is_filed_in_gst' in request.POST
 
-        submission.party_name = party_name
-        submission.party_gstin = party_gstin
-        submission.invoice_number = invoice_number
+        new_data = {
+            'party_name': party_name,
+            'party_gstin': party_gstin,
+            'invoice_number': invoice_number,
+            'expense_ledger': expense_ledger,
+            'taxable_amount': taxable_amount,
+            'cgst_amount': cgst_amount,
+            'sgst_amount': sgst_amount,
+            'igst_amount': igst_amount,
+            'total_amount': total_amount,
+        }
         if invoice_date_str:
             try:
-                submission.invoice_date = invoice_date_str
-            except Exception:
-                pass
-        submission.expense_ledger = expense_ledger
-        submission.taxable_amount = taxable_amount
-        submission.cgst_amount = cgst_amount
-        submission.sgst_amount = sgst_amount
-        submission.igst_amount = igst_amount
-        submission.total_amount = total_amount
+                new_data['invoice_date'] = datetime.strptime(invoice_date_str, '%Y-%m-%d').date()
+            except ValueError:
+                messages.warning(request, f"Invalid invoice date format '{invoice_date_str}'; expected YYYY-MM-DD.")
+
+        record_field_corrections(submission, new_data, request.user, reason="Tally Workspace update")
+        submission.refresh_from_db()
+
+        apply_vendor_validation_to_submission(submission)
         submission.tally_voucher_no = tally_voucher_no
         submission.gst_filing_period = gst_filing_period
 
         now = timezone.now()
         if is_in_tally and not submission.is_entered_in_tally:
             submission.tally_entered_at = now
+            submission.tally_entered_by = request.user
         submission.is_entered_in_tally = is_in_tally
 
         if is_in_gst and not submission.is_filed_in_gst:
@@ -589,37 +735,35 @@ def quick_update_metadata(request, submission_id):
 
     expense_ledger = request.POST.get('expense_ledger', '').strip()
 
-    update_fields = ['updated_at']
+    new_data = {}
     if party_name:
-        submission.party_name = party_name
-        update_fields.append('party_name')
+        new_data['party_name'] = party_name
         try:
             from apps.invoices.vendor_directory import find_vendor_by_name
             v_match = find_vendor_by_name(party_name)
             if v_match:
-                submission.party_name = v_match['name']
+                new_data['party_name'] = v_match['name']
                 if v_match.get('gstin'):
-                    submission.party_gstin = v_match['gstin']
-                    update_fields.append('party_gstin')
+                    new_data['party_gstin'] = v_match['gstin']
                 if v_match.get('ledger') and not expense_ledger:
-                    submission.expense_ledger = v_match['ledger']
-                    update_fields.append('expense_ledger')
+                    new_data['expense_ledger'] = v_match['ledger']
         except Exception:
             pass
     if invoice_number:
-        submission.invoice_number = invoice_number
-        update_fields.append('invoice_number')
+        new_data['invoice_number'] = invoice_number
     if expense_ledger:
-        submission.expense_ledger = expense_ledger
-        update_fields.append('expense_ledger')
+        new_data['expense_ledger'] = expense_ledger
     if invoice_date_str:
         try:
-            submission.invoice_date = datetime.strptime(invoice_date_str, '%Y-%m-%d').date()
-            update_fields.append('invoice_date')
+            new_data['invoice_date'] = datetime.strptime(invoice_date_str, '%Y-%m-%d').date()
         except ValueError:
             pass
 
-    submission.save(update_fields=update_fields)
+    if new_data:
+        record_field_corrections(submission, new_data, request.user, reason="Quick dashboard inline update")
+        submission.refresh_from_db()
+        apply_vendor_validation_to_submission(submission)
+        submission.save(update_fields=['is_ambiguous_vendor', 'requires_manual_review', 'ocr_confidence', 'updated_at'])
 
     # Return JSON if requested via AJAX
     if request.headers.get('x-requested-with') == 'XMLHttpRequest' or request.GET.get('ajax'):
@@ -971,18 +1115,60 @@ def verification_workspace(request, submission_id):
             try:
                 new_data['invoice_date'] = datetime.strptime(inv_date_str, '%Y-%m-%d').date()
             except ValueError:
-                pass
+                messages.warning(request, f"Invalid date format '{inv_date_str}'; expected YYYY-MM-DD.")
 
-        # Record changes in PurchaseAuditTrail
+        # Validate vendor identity & GSTIN before persisting/approving
+        backend_val = validate_vendor_and_financials(
+            party_name=new_data['party_name'],
+            party_gstin=new_data['party_gstin'],
+            default_expense_ledger=new_data['expense_ledger'],
+        )
+        confirm_manual = request.POST.get('confirm_manual_review', '').lower() in ('on', 'true', '1', 'yes')
+
+        # Record field corrections in PurchaseAuditTrail
         record_field_corrections(submission, new_data, request.user, reason=reason)
+        submission.refresh_from_db()
 
         if action == 'verify':
+            if not new_data['party_name']:
+                messages.error(request, "Supplier / Party Name is required before approval.")
+                return redirect('invoices:verification_workspace', submission_id=submission.submission_id)
+
+            if new_data['total_amount'] <= Decimal('0.00'):
+                messages.error(request, "Total Invoice Amount must be greater than ₹0.00 before approval.")
+                return redirect('invoices:verification_workspace', submission_id=submission.submission_id)
+
+            if backend_val['vendor_match_status'] in ('GSTIN_MISMATCH', 'INVALID_GSTIN_FORMAT'):
+                messages.error(request, f"Approval blocked: {backend_val['audit_notes']}")
+                return redirect('invoices:verification_workspace', submission_id=submission.submission_id)
+
+            if backend_val['is_ambiguous_vendor'] and not confirm_manual:
+                messages.error(
+                    request,
+                    "Manual review confirmation required: This vendor is flagged as ambiguous without a valid GSTIN. "
+                    "Tick the manual-review confirmation box or supply a valid GSTIN before approving."
+                )
+                return redirect('invoices:verification_workspace', submission_id=submission.submission_id)
+
             old_status = submission.status
             submission.status = InvoiceSubmission.STATUS_VERIFIED
             submission.verified_by = request.user
             submission.verified_at = timezone.now()
+            submission.is_ambiguous_vendor = backend_val['is_ambiguous_vendor']
             submission.requires_manual_review = False
-            submission.save(update_fields=['status', 'verified_by', 'verified_at', 'requires_manual_review', 'updated_at'])
+            submission.save(update_fields=[
+                'status', 'verified_by', 'verified_at',
+                'is_ambiguous_vendor', 'requires_manual_review', 'updated_at'
+            ])
+
+            PurchaseAuditTrail.objects.create(
+                submission=submission,
+                field_name='Verification Approval',
+                old_value=old_status,
+                new_value=InvoiceSubmission.STATUS_VERIFIED,
+                changed_by=request.user,
+                reason=reason
+            )
 
             InvoiceStatusHistory.objects.create(
                 submission=submission,
@@ -993,6 +1179,11 @@ def verification_workspace(request, submission_id):
             )
             messages.success(request, f"✓ Invoice {submission.submission_id} verified and ready for Tally entry!")
             return redirect('core:naveen_dashboard')
+
+        # Save-only path: keep backend vendor & manual review flags authoritative
+        submission.is_ambiguous_vendor = backend_val['is_ambiguous_vendor']
+        submission.requires_manual_review = backend_val['requires_manual_review']
+        submission.save(update_fields=['is_ambiguous_vendor', 'requires_manual_review', 'updated_at'])
 
         messages.success(request, f"Corrections for invoice {submission.submission_id} saved successfully!")
         return redirect('invoices:verification_workspace', submission_id=submission.submission_id)

@@ -7,6 +7,13 @@ import sys
 def main():
     """Run administrative tasks."""
     os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'invoicehub.settings')
+    if len(sys.argv) > 1 and sys.argv[1] == 'runserver':
+        # Django's built-in runserver speaks HTTP only (no TLS/HTTPS), so disable
+        # HTTPS redirect/secure cookies during local runserver without altering
+        # production .env, WSGI, or `check --deploy` settings.
+        os.environ.setdefault('DJANGO_ENABLE_SSL', 'False')
+        if '--insecure' not in sys.argv and '--nostatic' not in sys.argv and '-h' not in sys.argv and '--help' not in sys.argv:
+            sys.argv.append('--insecure')
     try:
         from django.core.management import execute_from_command_line
     except ImportError as exc:

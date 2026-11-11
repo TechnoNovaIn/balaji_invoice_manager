@@ -12,6 +12,7 @@ from .models import InvoiceSubmission, InvoiceDocument, InvoiceStatusHistory, In
 from .segmentation import segment_and_extract_pdf
 from .reader import extract_invoice_metadata, extract_metadata_from_text
 from .vendor_directory import find_vendor_by_name
+from .vendor_validator import apply_vendor_validation_to_submission
 
 
 # Configuration constants
@@ -355,7 +356,9 @@ def create_invoice_submissions(
                                 sub.party_gstin = matched['gstin']
                             if matched.get('ledger'):
                                 sub.expense_ledger = matched['ledger']
-                        sub.save()
+
+                    apply_vendor_validation_to_submission(sub, raw_confidence=meta.get('confidence', 0.0))
+                    sub.save()
 
                     # Attach document records
                     sub_files = seg.get('sub_files', {})
@@ -496,6 +499,7 @@ def create_invoice_submissions(
                     sub.expense_ledger = meta['expense_ledger']
                 if meta.get('confidence'):
                     sub.ocr_confidence = meta['confidence']
+                apply_vendor_validation_to_submission(sub, raw_confidence=meta.get('confidence', 0.0))
                 sub.save()
 
                 InvoiceStatusHistory.objects.create(
@@ -579,6 +583,7 @@ def create_invoice_submissions(
                     if matched.get('ledger'):
                         sub.expense_ledger = matched['ledger']
 
+            apply_vendor_validation_to_submission(sub, raw_confidence=meta.get('confidence', 0.0))
             sub.save()
 
             InvoiceStatusHistory.objects.create(
@@ -684,6 +689,7 @@ def create_invoice_submission(
     if not submission.invoice_number:
         submission.invoice_number = submission.submission_id
 
+    apply_vendor_validation_to_submission(submission, raw_confidence=submission.ocr_confidence)
     submission.save()
 
     InvoiceStatusHistory.objects.create(

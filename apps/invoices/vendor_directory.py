@@ -68,7 +68,8 @@ VENDOR_DIRECTORY: Dict[str, Dict[str, str]] = {
     '29AAYFB6638F1ZT': {'name': 'BETTER INDUSTRIES', 'state': 'Karnataka', 'ledger': 'Purchase Spares & Consumables'},
     '29AQMPA4634J1ZN': {'name': 'BHARATH AUTO ELCTRICAL WORKS', 'state': 'Karnataka', 'ledger': 'Labour Charges / Vehicle Service'},
     '29AAACB2894G1ZJ': {'name': 'BHARTI AIRTEL LIMITED', 'state': 'Karnataka', 'ledger': 'Telephone & Mobile Expenses'},
-    '29AVZPJ3961B1Z4': {'name': 'BHEESHMA METALS', 'state': 'Karnataka', 'ledger': 'Building Repairs, Hardware & Paints'},
+    # Note: BHEESHMA METALS previously collided on GSTIN 29AVZPJ3961B1Z4 (PAN belongs to BASANNA JANARDHAN);
+    # kept in VendorMaster without a conflicting GSTIN until verified.
     '29AAPFB1846A1ZK': {'name': 'BLITZ NETWORK', 'state': 'Karnataka', 'ledger': 'General Office Expenses'},
     '29AAHFB1639F1ZJ': {'name': 'BOMBAY AUTO CORPORATION', 'state': 'Karnataka', 'ledger': 'Purchase Spares & Consumables'},
     '29AAACC1206D2ZB': {'name': 'CENTRAL WAREHOUSING CORPORATION', 'state': 'Karnataka', 'ledger': 'Rent & Terminal Charges'},
@@ -283,20 +284,70 @@ VENDOR_DIRECTORY: Dict[str, Dict[str, str]] = {
 
 
 def find_vendor_by_gstin(gstin: str) -> Optional[Dict[str, str]]:
-    """Look up a vendor by 15-digit GSTIN."""
+    """Look up a vendor by 15-digit GSTIN (Database first, in-memory fallback)."""
     if not gstin:
         return None
     cleaned = gstin.strip().upper()
+
+    try:
+        from apps.invoices.models import VendorMaster
+        vm = VendorMaster.objects.filter(gstin=cleaned, is_active=True).first()
+        if vm:
+            return {
+                'name': vm.name,
+                'state': vm.state or STATE_CODE_MAP.get(cleaned[:2], 'Karnataka'),
+                'ledger': vm.default_expense_ledger,
+                'gstin': vm.gstin,
+                'pan': vm.pan,
+            }
+    except Exception:
+        pass
+
     return VENDOR_DIRECTORY.get(cleaned)
 
 
 def find_vendor_by_name(query: str) -> Optional[Dict[str, Any]]:
-    """Fuzzy / substring match for vendor name to retrieve official GSTIN and default expense ledger."""
+    """
+    Deterministic normalized match for vendor name to retrieve official GSTIN and default expense ledger.
+    Checks VendorMaster database first, then in-memory VENDOR_DIRECTORY.
+    """
     if not query or len(query.strip()) < 3:
         return None
     import re
     q = query.strip().lower()
     q_norm = re.sub(r'[^a-z0-9]', '', q)
+
+    try:
+        from apps.invoices.models import VendorMaster
+        from django.db.models import Q
+        # 1. Exact or normalized match
+        vm = VendorMaster.objects.filter(
+            Q(normalized_name=q_norm) | Q(name__iexact=query.strip()),
+            is_active=True
+        ).first()
+        if not vm and len(query.strip()) >= 4:
+            vm = VendorMaster.objects.filter(name__icontains=query.strip(), is_active=True).first()
+        if not vm:
+            for candidate in VendorMaster.objects.filter(is_active=True).exclude(trade_aliases=[]):
+                aliases = candidate.trade_aliases or []
+                for alias in aliases:
+                    a_norm = re.sub(r'[^a-z0-9]', '', str(alias).lower())
+                    if a_norm and (a_norm == q_norm or (len(q_norm) >= 4 and (q_norm in a_norm or a_norm in q_norm))):
+                        vm = candidate
+                        break
+                if vm:
+                    break
+        if vm:
+            return {
+                'gstin': vm.gstin,
+                'name': vm.name,
+                'state': vm.state or STATE_CODE_MAP.get(vm.gstin[:2] if vm.gstin else '29', 'Karnataka'),
+                'ledger': vm.default_expense_ledger,
+                'pan': vm.pan,
+            }
+    except Exception:
+        pass
+
     for gstin, info in VENDOR_DIRECTORY.items():
         v_name = info['name'].lower()
         v_norm = re.sub(r'[^a-z0-9]', '', v_name)
@@ -305,8 +356,196 @@ def find_vendor_by_name(query: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+def find_vendor_by_pan(pan: str) -> Optional[Dict[str, Any]]:
+    """Look up vendor by 10-character PAN."""
+    if not pan or len(pan.strip()) != 10:
+        return None
+    cleaned_pan = pan.strip().upper()
+    try:
+        from apps.invoices.models import VendorMaster
+        vm = VendorMaster.objects.filter(pan=cleaned_pan, is_active=True).first()
+        if vm:
+            return {
+                'gstin': vm.gstin,
+                'name': vm.name,
+                'state': vm.state,
+                'ledger': vm.default_expense_ledger,
+                'pan': vm.pan,
+            }
+    except Exception:
+        pass
+
+    for gstin, info in VENDOR_DIRECTORY.items():
+        if len(gstin) >= 12 and gstin[2:12] == cleaned_pan:
+            return {'gstin': gstin, **info}
+    return None
+
+
+def import_vendors_from_excel_or_csv(
+    file_path_or_buffer,
+    filename: str = '',
+    update_existing: bool = False,
+    user=None
+) -> Dict[str, Any]:
+    """
+    Imports vendor master records from Excel (.xlsx) or CSV files.
+    Validates GSTIN structure, checks PAN, detects duplicates, preserves existing records,
+    and returns an authoritative validation report.
+    """
+    import csv
+    import io
+    import re
+    from apps.invoices.models import VendorMaster
+    from .vendor_validator import is_valid_gstin, extract_pan_from_gstin, normalize_vendor_name
+
+    report = {
+        'total_rows': 0,
+        'created_count': 0,
+        'updated_count': 0,
+        'skipped_count': 0,
+        'error_count': 0,
+        'details': [],
+    }
+
+    rows = []
+    is_excel = filename.lower().endswith(('.xlsx', '.xlsm')) or (isinstance(file_path_or_buffer, str) and file_path_or_buffer.lower().endswith(('.xlsx', '.xlsm')))
+
+    if is_excel:
+        import openpyxl
+        wb = openpyxl.load_workbook(file_path_or_buffer, data_only=True)
+        sheet = wb.active
+        headers = [str(cell.value or '').strip().lower() for cell in next(sheet.iter_rows(max_row=1))]
+        for r in sheet.iter_rows(min_row=2, values_only=True):
+            if not any(r):
+                continue
+            row_dict = {headers[i]: r[i] for i in range(min(len(headers), len(r)))}
+            rows.append(row_dict)
+    else:
+        # CSV parsing
+        if hasattr(file_path_or_buffer, 'read'):
+            content = file_path_or_buffer.read()
+            if isinstance(content, bytes):
+                content = content.decode('utf-8-sig', errors='replace')
+            reader = csv.DictReader(io.StringIO(content))
+        else:
+            with open(file_path_or_buffer, mode='r', encoding='utf-8-sig', errors='replace') as f:
+                reader = csv.DictReader(f)
+                rows = list(reader)
+        if not rows and reader:
+            rows = list(reader)
+
+    report['total_rows'] = len(rows)
+
+    for idx, r in enumerate(rows, start=2):
+        # Resolve common column aliases
+        raw_name = r.get('name') or r.get('vendor_name') or r.get('party_name') or r.get('legal_name') or r.get('trade_name') or ''
+        raw_gstin = r.get('gstin') or r.get('party_gstin') or r.get('gst_number') or ''
+        raw_pan = r.get('pan') or r.get('pan_number') or ''
+        raw_state = r.get('state') or r.get('vendor_state') or ''
+        raw_ledger = r.get('ledger') or r.get('expense_ledger') or r.get('default_ledger') or 'Purchase Spares & Consumables'
+        raw_address = r.get('address') or r.get('vendor_address') or ''
+
+        name = str(raw_name).strip()
+        gstin = str(raw_gstin).strip().upper()
+        pan = str(raw_pan).strip().upper()
+
+        if not name:
+            report['error_count'] += 1
+            report['details'].append(f"Row {idx}: Skipped - missing vendor name.")
+            continue
+
+        if gstin and not is_valid_gstin(gstin):
+            report['error_count'] += 1
+            report['details'].append(f"Row {idx}: Invalid GSTIN format '{gstin}' for vendor '{name}'.")
+            continue
+
+        if not pan and gstin:
+            pan = extract_pan_from_gstin(gstin)
+
+        state_code = gstin[:2] if (gstin and len(gstin) >= 2 and gstin[:2].isdigit()) else ''
+        state_name = str(raw_state).strip() or STATE_CODE_MAP.get(state_code, '')
+
+        # Check existing vendor record by GSTIN or normalized name
+        existing_vm = None
+        if gstin:
+            existing_vm = VendorMaster.objects.filter(gstin=gstin).first()
+        if not existing_vm and name:
+            existing_vm = VendorMaster.objects.filter(normalized_name=normalize_vendor_name(name)).first()
+
+        if existing_vm:
+            if update_existing:
+                existing_vm.name = name
+                if gstin:
+                    existing_vm.gstin = gstin
+                if pan:
+                    existing_vm.pan = pan
+                if state_name:
+                    existing_vm.state = state_name
+                if raw_ledger in TALLY_EXPENSE_LEDGERS:
+                    existing_vm.default_expense_ledger = raw_ledger
+                if raw_address:
+                    existing_vm.address = str(raw_address).strip()
+                existing_vm.save()
+                report['updated_count'] += 1
+                report['details'].append(f"Row {idx}: Updated existing vendor '{name}' ({gstin or 'No GSTIN'}).")
+            else:
+                report['skipped_count'] += 1
+                report['details'].append(f"Row {idx}: Skipped existing vendor '{name}' ({gstin or 'No GSTIN'}) - confirmation required to overwrite.")
+        else:
+            VendorMaster.objects.create(
+                name=name,
+                gstin=gstin,
+                pan=pan,
+                state=state_name,
+                state_code=state_code,
+                address=str(raw_address).strip(),
+                default_expense_ledger=raw_ledger if raw_ledger in TALLY_EXPENSE_LEDGERS else 'Purchase Spares & Consumables',
+                is_active=True,
+                is_verified=True,
+            )
+            report['created_count'] += 1
+            report['details'].append(f"Row {idx}: Created new vendor '{name}' ({gstin or 'No GSTIN'}).")
+
+    return report
+
+
+def get_active_vendor_directory() -> Dict[str, Dict[str, Any]]:
+    """
+    Returns active vendors keyed by GSTIN directly from PostgreSQL VendorMaster,
+    falling back to static VENDOR_DIRECTORY only if database access is unavailable.
+    """
+    try:
+        from apps.invoices.models import VendorMaster
+        db_vendors = {}
+        for vm in VendorMaster.objects.filter(is_active=True).exclude(gstin=''):
+            db_vendors[vm.gstin] = {
+                'name': vm.name,
+                'state': vm.state or STATE_CODE_MAP.get(vm.gstin[:2], 'Karnataka'),
+                'ledger': vm.default_expense_ledger,
+                'pan': vm.pan,
+                'trade_aliases': vm.trade_aliases or [],
+            }
+        if db_vendors:
+            return db_vendors
+    except Exception:
+        pass
+    return dict(VENDOR_DIRECTORY)
+
+
 def get_all_vendor_names() -> List[str]:
-    """Return all unique vendor names sorted alphabetically for dropdowns / autocomplete."""
+    """Return all unique vendor names sorted alphabetically from VendorMaster DB (with fallback)."""
+    try:
+        from apps.invoices.models import VendorMaster
+        names = list(
+            VendorMaster.objects.filter(is_active=True)
+            .exclude(name='')
+            .values_list('name', flat=True)
+            .distinct()
+        )
+        if names:
+            return sorted(set(names))
+    except Exception:
+        pass
     names = set(info['name'] for info in VENDOR_DIRECTORY.values())
     return sorted(list(names))
 
@@ -339,13 +578,19 @@ def get_tax_split(gstin: str, taxable_value: float, tax_rate_percent: float) -> 
         }
 
 
-# State code mapping for statutory Indian GSTINs
+# Complete statutory Indian GST state/UT code mapping
 STATE_CODE_MAP = {
     '01': 'Jammu & Kashmir', '02': 'Himachal Pradesh', '03': 'Punjab', '04': 'Chandigarh',
-    '06': 'Haryana', '07': 'Delhi', '08': 'Rajasthan', '09': 'Uttar Pradesh',
-    '10': 'Bihar', '19': 'West Bengal', '23': 'Madhya Pradesh', '24': 'Gujarat',
-    '27': 'Maharashtra', '29': 'Karnataka', '32': 'Kerala', '33': 'Tamil Nadu',
-    '34': 'Puducherry', '36': 'Telangana', '37': 'Andhra Pradesh'
+    '05': 'Uttarakhand', '06': 'Haryana', '07': 'Delhi', '08': 'Rajasthan',
+    '09': 'Uttar Pradesh', '10': 'Bihar', '11': 'Sikkim', '12': 'Arunachal Pradesh',
+    '13': 'Nagaland', '14': 'Manipur', '15': 'Mizoram', '16': 'Tripura',
+    '17': 'Meghalaya', '18': 'Assam', '19': 'West Bengal', '20': 'Jharkhand',
+    '21': 'Odisha', '22': 'Chhattisgarh', '23': 'Madhya Pradesh', '24': 'Gujarat',
+    '25': 'Daman & Diu', '26': 'Dadra & Nagar Haveli and Daman & Diu',
+    '27': 'Maharashtra', '28': 'Andhra Pradesh (Pre-division)', '29': 'Karnataka',
+    '30': 'Goa', '31': 'Lakshadweep', '32': 'Kerala', '33': 'Tamil Nadu',
+    '34': 'Puducherry', '35': 'Andaman & Nicobar Islands', '36': 'Telangana',
+    '37': 'Andhra Pradesh', '38': 'Ladakh', '97': 'Other Territory',
 }
 
 GSTIN_VALIDATION_REGEX = r'^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$'
@@ -360,15 +605,12 @@ def register_or_update_vendor(
 ) -> Dict[str, Any]:
     """
     Authorized process for safely adding or updating a verified recurring vendor.
-    Guarantees:
-    - GSTIN is the primary identifier, validated against official 15-character format.
-    - Requires authorized user role (Naveen or Admin).
-    - Prevents accidental overwriting of verified mappings.
-    - Normalizes vendor names and links multi-state branches.
-    - Does NOT allow unverified OCR text to blindly overwrite verified records.
+    Persists changes in PostgreSQL VendorMaster while preserving existing verified records.
     """
     import re
     from django.core.exceptions import PermissionDenied, ValidationError
+    from django.db import transaction
+    from apps.invoices.models import VendorMaster
 
     if user is not None and not (getattr(user, 'is_naveen', False) or getattr(user, 'is_admin_role', False) or getattr(user, 'is_staff', False)):
         raise PermissionDenied("Only Naveen or Administrator can register or modify verified vendor records.")
@@ -383,29 +625,58 @@ def register_or_update_vendor(
 
     state_code = cleaned_gstin[:2]
     state_name = STATE_CODE_MAP.get(state_code, f"State {state_code}")
-
     valid_ledger = ledger if ledger in TALLY_EXPENSE_LEDGERS else 'Purchase Spares & Consumables'
 
-    is_existing = cleaned_gstin in VENDOR_DIRECTORY
-    if is_existing and not force_update:
-        return {
-            'status': 'EXISTING_UNCHANGED',
-            'gstin': cleaned_gstin,
-            'vendor': VENDOR_DIRECTORY[cleaned_gstin],
-            'message': f"Vendor with GSTIN {cleaned_gstin} is already verified as '{VENDOR_DIRECTORY[cleaned_gstin]['name']}'."
-        }
+    with transaction.atomic():
+        existing_vm = VendorMaster.objects.filter(gstin=cleaned_gstin).first()
+        if existing_vm and not force_update:
+            existing_dict = {
+                'name': existing_vm.name,
+                'state': existing_vm.state or state_name,
+                'ledger': existing_vm.default_expense_ledger,
+            }
+            return {
+                'status': 'EXISTING_UNCHANGED',
+                'gstin': cleaned_gstin,
+                'vendor': existing_dict,
+                'message': f"Vendor with GSTIN {cleaned_gstin} is already verified as '{existing_vm.name}'."
+            }
 
-    VENDOR_DIRECTORY[cleaned_gstin] = {
+        if existing_vm:
+            existing_vm.name = cleaned_name
+            existing_vm.state = state_name
+            existing_vm.state_code = state_code
+            existing_vm.pan = cleaned_gstin[2:12]
+            existing_vm.default_expense_ledger = valid_ledger
+            existing_vm.is_active = True
+            existing_vm.is_verified = True
+            existing_vm.save()
+            action = 'UPDATED'
+        else:
+            VendorMaster.objects.create(
+                name=cleaned_name,
+                gstin=cleaned_gstin,
+                pan=cleaned_gstin[2:12],
+                state=state_name,
+                state_code=state_code,
+                default_expense_ledger=valid_ledger,
+                is_active=True,
+                is_verified=True,
+            )
+            action = 'CREATED'
+
+    vendor_payload = {
         'name': cleaned_name,
         'state': state_name,
-        'ledger': valid_ledger
+        'ledger': valid_ledger,
+        'gstin': cleaned_gstin,
+        'pan': cleaned_gstin[2:12],
     }
 
-    action = 'UPDATED' if is_existing else 'CREATED'
     return {
         'status': action,
         'gstin': cleaned_gstin,
-        'vendor': VENDOR_DIRECTORY[cleaned_gstin],
+        'vendor': vendor_payload,
         'message': f"Successfully {action.lower()} vendor '{cleaned_name}' ({cleaned_gstin}) in {state_name}."
     }
 

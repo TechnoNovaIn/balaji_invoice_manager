@@ -1,5 +1,13 @@
 from django.contrib import admin
-from .models import InvoiceSubmission, InvoiceDocument, InvoiceStatusHistory, InvoiceSequence
+from .models import (
+    InvoiceSubmission,
+    InvoiceDocument,
+    InvoiceStatusHistory,
+    InvoiceSequence,
+    VendorMaster,
+    TallyLedgerMapping,
+    ExportAuditLog,
+)
 
 
 class InvoiceDocumentInline(admin.TabularInline):
@@ -36,4 +44,13 @@ class InvoiceDocumentAdmin(admin.ModelAdmin):
 @admin.register(InvoiceSequence)
 class InvoiceSequenceAdmin(admin.ModelAdmin):
     list_display = ('year_month', 'last_number', 'updated_at')
+
+
+@admin.register(VendorMaster)
+class VendorMasterAdmin(admin.ModelAdmin):
+    list_display = ('name', 'gstin', 'pan', 'state', 'default_expense_ledger', 'is_verified', 'is_active')
+    list_filter = ('state', 'is_verified', 'is_active', 'default_expense_ledger')
+    search_fields = ('name', 'gstin', 'pan', 'normalized_name')
+    readonly_fields = ('created_at', 'updated_at')
+
 

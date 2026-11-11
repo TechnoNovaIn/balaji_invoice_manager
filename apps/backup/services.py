@@ -1,4 +1,5 @@
 import os
+import shutil
 import time
 import zipfile
 import hashlib
@@ -15,11 +16,40 @@ import psycopg
 from apps.backup.models import BackupHistory, BackupType, TriggerType, BackupStatus, RestoreHistory, RestoreStatus
 
 
+def _resolve_pg_binary(tool_name: str) -> str:
+    """
+    Resolves PostgreSQL CLI binaries (pg_dump, pg_restore, psql) cross-platform:
+    1. Explicit PG_BIN_DIR environment variable (with .exe suffix on Windows if needed)
+    2. System PATH via shutil.which()
+    3. Windows default PostgreSQL 18 install location fallback
+    """
+    ext = ".exe" if os.name == "nt" else ""
+    pg_bin_env = os.getenv("PG_BIN_DIR", "").strip()
+    if pg_bin_env:
+        candidate = Path(pg_bin_env) / f"{tool_name}{ext}"
+        if candidate.exists():
+            return str(candidate)
+        plain = Path(pg_bin_env) / tool_name
+        if plain.exists():
+            return str(plain)
+
+    in_path = shutil.which(tool_name)
+    if in_path:
+        return in_path
+
+    if os.name == "nt":
+        win_default = Path(r"C:\Program Files\PostgreSQL\18\bin") / f"{tool_name}.exe"
+        if win_default.exists():
+            return str(win_default)
+
+    return tool_name
+
+
 class BackupService:
-    PG_BIN_DIR = Path(os.getenv('PG_BIN_DIR', r"C:\Program Files\PostgreSQL\18\bin"))
-    PG_DUMP_PATH = PG_BIN_DIR / "pg_dump.exe"
-    PG_RESTORE_PATH = PG_BIN_DIR / "pg_restore.exe"
-    PSQL_PATH = PG_BIN_DIR / "psql.exe"
+    PG_BIN_DIR = Path(os.getenv('PG_BIN_DIR') or (r"C:\Program Files\PostgreSQL\18\bin" if os.name == "nt" else "/usr/bin"))
+    PG_DUMP_PATH = _resolve_pg_binary("pg_dump")
+    PG_RESTORE_PATH = _resolve_pg_binary("pg_restore")
+    PSQL_PATH = _resolve_pg_binary("psql")
 
     @classmethod
     def calculate_sha256(cls, file_path: Path) -> str:
