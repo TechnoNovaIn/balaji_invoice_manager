@@ -1,0 +1,47 @@
+<!-- E-Invoice? Badge -->
+<td class="text-nowrap">
+    {% if sub.is_e_invoice is True %}
+        <span class="badge bg-success text-white px-2 py-1" style="font-size: 0.72rem;">YES</span>
+    {% elif sub.is_e_invoice is False %}
+        <span class="badge bg-secondary text-white px-2 py-1" style="font-size: 0.72rem;">NO</span>
+    {% else %}
+        <span class="badge bg-warning text-dark px-2 py-1" style="font-size: 0.7rem;" title="Insufficient evidence or unverified existing invoice">
+            NEEDS VERIFICATION
+        </span>
+    {% endif %}
+    {% if sub.is_e_invoice is True and not sub.is_irn_valid %}
+        <span class="badge bg-warning bg-opacity-25 text-dark border border-warning d-block mt-1" style="font-size: 0.63rem;" title="E-invoice detected without verified 64-character IRN">
+            <i class="bi bi-exclamation-triangle-fill text-warning me-1"></i>Manual Review
+        </span>
+    {% endif %}
+</td>
+
+<!-- IRN Number & Copy Action -->
+<td style="min-width: 195px; max-width: 230px;">
+    {% if sub.is_e_invoice is False %}
+        <span class="badge bg-light text-secondary border font-monospace" style="font-size: 0.72rem;">N/A</span>
+    {% elif sub.is_irn_valid %}
+        <div class="d-flex align-items-start gap-1">
+            <code class="text-dark bg-light border rounded px-1 py-1 font-monospace" style="font-size: 0.68rem; line-height: 1.25; word-break: break-all; display: inline-block; max-width: 175px;" title="{{ sub.irn_number }}">{{ sub.irn_number }}</code>
+            <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1 flex-shrink-0" onclick="copyIrnToClipboard('{{ sub.irn_number|escapejs }}', this)" title="Copy complete 64-character IRN" aria-label="Copy IRN">
+                <i class="bi bi-clipboard" style="font-size: 0.75rem;"></i>
+            </button>
+        </div>
+    {% elif sub.is_e_invoice is True %}
+        <div class="d-flex flex-column align-items-start gap-1">
+            <span class="badge bg-danger bg-opacity-10 text-danger border border-danger border-opacity-25 fw-bold" style="font-size: 0.72rem;">
+                IRN Not Found
+            </span>
+            <a href="{% url 'invoices:verification_workspace' sub.submission_id %}" class="text-decoration-none small text-primary fw-semibold" style="font-size: 0.68rem;">
+                <i class="bi bi-pencil-square me-1"></i>Enter IRN
+            </a>
+        </div>
+    {% else %}
+        <div class="d-flex align-items-center gap-1">
+            <span class="text-muted fst-italic" style="font-size: 0.72rem;">Pending Check</span>
+            <a href="{% url 'invoices:verification_workspace' sub.submission_id %}" class="text-decoration-none text-primary" style="font-size: 0.72rem;" title="Verify E-Invoice & IRN">
+                <i class="bi bi-pencil-square"></i>
+            </a>
+        </div>
+    {% endif %}
+</td>

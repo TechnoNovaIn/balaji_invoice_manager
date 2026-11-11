@@ -340,6 +340,34 @@
                         </div>
                     </div>
 
+                    <!-- E-Invoice Status & IRN Number -->
+                    <div class="row g-2 mb-2 p-2 bg-light border rounded-3">
+                        <div class="col-12 col-md-4">
+                            <label class="form-label small fw-bold text-dark mb-1">E-Invoice?</label>
+                            <select name="is_e_invoice" id="fieldIsEInvoice" class="form-select form-select-sm fw-semibold">
+                                <option value="" {% if submission.is_e_invoice is None %}selected{% endif %}>NEEDS VERIFICATION</option>
+                                <option value="true" {% if submission.is_e_invoice is True %}selected{% endif %}>YES (E-Invoice)</option>
+                                <option value="false" {% if submission.is_e_invoice is False %}selected{% endif %}>NO (Non E-Invoice)</option>
+                            </select>
+                        </div>
+                        <div class="col-12 col-md-8">
+                            <label class="form-label small fw-bold text-dark mb-1">
+                                IRN Number (64-Char Alphanumeric)
+                                {% if submission.is_e_invoice is True and not submission.is_irn_valid %}
+                                    <span class="badge bg-danger ms-1">IRN Not Found</span>
+                                {% endif %}
+                            </label>
+                            <div class="input-group input-group-sm">
+                                <input type="text" name="irn_number" id="fieldIrnNumber" value="{{ submission.irn_number }}" maxlength="64" class="form-control form-control-sm font-monospace text-uppercase" placeholder="{% if submission.is_e_invoice is False %}N/A (Non E-Invoice){% else %}64-character alphanumeric IRN{% endif %}">
+                                {% if submission.is_irn_valid %}
+                                <button type="button" class="btn btn-outline-secondary" onclick="navigator.clipboard && navigator.clipboard.writeText(document.getElementById('fieldIrnNumber').value)" title="Copy IRN">
+                                    <i class="bi bi-clipboard"></i>
+                                </button>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Tally Expense Ledger Selector -->
                     <div class="mb-3">
                         <label class="form-label small fw-bold text-dark mb-1">
@@ -403,12 +431,12 @@
                         <input type="text" name="audit_reason" class="form-control form-control-sm" placeholder="e.g. Corrected handwritten bill total from original scan">
                     </div>
 
-                    {% if submission.is_ambiguous_vendor or submission.requires_manual_review %}
+                    {% if submission.is_ambiguous_vendor or submission.requires_manual_review or submission.is_e_invoice is True and not submission.is_irn_valid %}
                     <div class="alert alert-warning py-2 px-3 mb-3 small border-warning">
                         <div class="form-check mb-0">
                             <input class="form-check-input" type="checkbox" name="confirm_manual_review" value="true" id="confirmManualReviewCheck">
                             <label class="form-check-label fw-semibold text-dark" for="confirmManualReviewCheck">
-                                Confirm manual review of ambiguous / unverified vendor before approving
+                                Confirm manual review of ambiguous vendor / e-invoice IRN verification before approving
                             </label>
                         </div>
                     </div>

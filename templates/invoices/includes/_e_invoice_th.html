@@ -1,0 +1,18 @@
+<th style="width: 135px;">
+    <div class="d-flex align-items-center justify-content-between">
+        <span>E-Invoice?</span>
+        <div class="dropdown d-inline-block">
+            <button class="btn btn-sm btn-link text-decoration-none p-0 ms-1 {% if header_tone == 'danger' %}text-danger{% elif header_tone == 'secondary' %}text-secondary{% else %}text-primary{% endif %}" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Filter E-Invoice Status" style="font-size: 0.72rem;">
+                <i class="bi bi-chevron-down"></i>
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="min-width: 195px; font-size: 0.8rem; z-index: 1060;">
+                <li class="dropdown-header py-1 text-uppercase fw-bold text-muted" style="font-size: 0.65rem;">Filter E-Invoice</li>
+                <li><a class="dropdown-item py-1 fw-bold" href="javascript:void(0);" onclick="filterDashboardTable(this, 'e_invoice', 'ALL');">All Invoices</a></li>
+                <li><a class="dropdown-item py-1" href="javascript:void(0);" onclick="filterDashboardTable(this, 'e_invoice', 'YES');"><span class="badge bg-success me-2">YES</span>E-Invoice Only</a></li>
+                <li><a class="dropdown-item py-1" href="javascript:void(0);" onclick="filterDashboardTable(this, 'e_invoice', 'NO');"><span class="badge bg-secondary me-2">NO</span>Non E-Invoice Only</a></li>
+                <li><a class="dropdown-item py-1" href="javascript:void(0);" onclick="filterDashboardTable(this, 'e_invoice', 'NEEDS_VERIFICATION');"><span class="badge bg-warning text-dark me-2">NEEDS VERIFICATION</span>Needs Verification</a></li>
+            </ul>
+        </div>
+    </div>
+</th>
+<th style="width: 215px;">IRN Number</th>

@@ -94,6 +94,7 @@ def naveen_dashboard(request):
             Q(party_name__icontains=query) |
             Q(party_gstin__icontains=query) |
             Q(invoice_number__icontains=query) |
+            Q(irn_number__icontains=query) |
             Q(employee__first_name__icontains=query) |
             Q(employee__last_name__icontains=query) |
             Q(employee__username__icontains=query)

@@ -18,6 +18,7 @@ from django.conf import settings
 from pydantic import BaseModel, Field
 
 from .vendor_validator import validate_vendor_and_financials, is_valid_gstin, clean_gstin
+from .e_invoice_utils import evaluate_e_invoice_status, extract_qr_e_invoice_data
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +104,14 @@ class InvoiceSchema(BaseModel):
         default_factory=list,
         description="List of itemized goods or services."
     )
+    is_e_invoice: Optional[bool] = Field(
+        default=None,
+        description="True if GST e-invoice (IRN, Ack No, Signed QR, or explicit e-Invoice header) is present; False ONLY if explicitly marked not an e-invoice or IRN N/A; null if uncertain."
+    )
+    irn_number: Optional[str] = Field(
+        default=None,
+        description="64-character alphanumeric Invoice Reference Number (IRN) if clearly printed; null if missing or illegible. Never invent or guess."
+    )
     raw_summary: Optional[str] = Field(
         default="",
         description="Brief transcription of key bill lines (vendor, bill no, date, line items, words)."
@@ -133,6 +142,10 @@ CRITICAL RULES:
 
 5. MISSING FIELDS:
    - Missing fields must remain null or explicitly unidentified. Never invent missing invoice information.
+
+6. E-INVOICE & IRN:
+   - Extract `irn_number` ONLY if a complete 64-character IRN is explicitly readable. Never fabricate, guess, or pad an IRN.
+   - Set `is_e_invoice` to true if IRN/Ack No/Signed QR/e-Invoice indicators appear, false ONLY if explicitly marked non-e-invoice or IRN N/A, or null if uncertain.
 
 Return strictly the structured JSON object.
 """
@@ -289,6 +302,20 @@ def extract_with_gemini(
             pan=raw_pan,
         )
 
+        # --- BACKEND E-INVOICE & IRN VALIDATION (Rules 1-5) ---
+        qr_data = extract_qr_e_invoice_data(image_path)
+        einv_val = evaluate_e_invoice_status(
+            raw_text=original_pdf_text or '',
+            qr_data=qr_data,
+            gemini_data=data,
+        )
+        final_manual_review = backend_val['requires_manual_review'] or (
+            einv_val['is_e_invoice'] is True and not einv_val['irn_number']
+        )
+        final_approval_eligible = backend_val['is_financial_approval_eligible'] and not (
+            einv_val['is_e_invoice'] is True and not einv_val['irn_number']
+        )
+
         # Assemble separate, preserved fields
         # raw_text preserves original digital PDF or OCR text; gemini summary is stored alongside
         final_raw_text = original_pdf_text if original_pdf_text.strip() else (data.get('raw_summary') or '')
@@ -312,15 +339,18 @@ def extract_with_gemini(
             'hsn_sac': data.get('hsn_sac') or '',
             'payment_details': data.get('payment_details') or '',
             'items': data.get('items') or [],
+            'is_e_invoice': einv_val['is_e_invoice'],
+            'irn_number': einv_val['irn_number'],
+            'e_invoice_source': einv_val['e_invoice_source'],
             'raw_text': final_raw_text,
             'gemini_extracted_data': data,
             'ocr_extracted_text': original_pdf_text,
             'extraction_method': 'GEMINI_VISION_AI',
             'confidence': backend_val['confidence'],
-            'requires_manual_review': backend_val['requires_manual_review'],
+            'requires_manual_review': final_manual_review,
             'is_ambiguous_vendor': backend_val['is_ambiguous_vendor'],
             'vendor_match_status': backend_val['vendor_match_status'],
-            'is_financial_approval_eligible': backend_val['is_financial_approval_eligible'],
+            'is_financial_approval_eligible': final_approval_eligible,
             'audit_notes': backend_val.get('audit_notes', ''),
         }
 

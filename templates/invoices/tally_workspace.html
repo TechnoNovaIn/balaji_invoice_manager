@@ -140,6 +140,22 @@
                             </div>
                         </div>
 
+                        <!-- E-Invoice & IRN -->
+                        <div class="row g-2 mb-3">
+                            <div class="col-5">
+                                <label class="form-label small fw-bold text-dark mb-1">E-Invoice?</label>
+                                <select name="is_e_invoice" class="form-select">
+                                    <option value="" {% if submission.is_e_invoice is None %}selected{% endif %}>NEEDS VERIFICATION</option>
+                                    <option value="true" {% if submission.is_e_invoice is True %}selected{% endif %}>YES (E-Invoice)</option>
+                                    <option value="false" {% if submission.is_e_invoice is False %}selected{% endif %}>NO (Non E-Invoice)</option>
+                                </select>
+                            </div>
+                            <div class="col-7">
+                                <label class="form-label small fw-bold text-dark mb-1">IRN Number</label>
+                                <input type="text" name="irn_number" maxlength="64" class="form-control font-monospace text-uppercase" value="{{ submission.irn_number }}" placeholder="{% if submission.is_e_invoice is False %}N/A{% else %}64-char IRN{% endif %}">
+                            </div>
+                        </div>
+
                         <!-- Financials / Tax Breakup -->
                         <div class="p-3 rounded-3 bg-light border mb-3">
                             <div class="fw-bold small text-secondary mb-2 text-uppercase tracking-wider">Amount & Tax Breakdown</div>
