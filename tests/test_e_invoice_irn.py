@@ -83,13 +83,17 @@ class EInvoiceAndIRNTests(TestCase):
         self.assertEqual(sub.e_invoice_status_label, "YES")
         self.assertEqual(sub.irn_display, VALID_IRN_1)
 
-        # Signed GST JWT QR payload decoding check
+        # Signed GST JWT QR payload decoding check (offline structural decode, no trusted IRP public key)
         jwt_header = base64.urlsafe_b64encode(b'{"alg":"RS256"}').decode().rstrip("=")
         inner = json.dumps({"Irn": VALID_IRN_2.lower(), "SellerGstin": "29AAACJ6716F1ZK"})
         jwt_body = base64.urlsafe_b64encode(json.dumps({"data": inner}).encode()).decode().rstrip("=")
         qr_parsed = _decode_jwt_or_json_qr(f"{jwt_header}.{jwt_body}.signature")
         self.assertTrue(qr_parsed["has_qr_einvoice_data"])
         self.assertEqual(qr_parsed["valid_irn"], VALID_IRN_2)
+        self.assertTrue(qr_parsed["qr_data_extracted"])
+        self.assertTrue(qr_parsed["qr_payload_structurally_valid"])
+        self.assertFalse(qr_parsed["qr_signature_cryptographically_verified"])
+        self.assertEqual(qr_parsed["qr_authenticity_status"], "STRUCTURALLY_VALIDATED")
 
     def test_02_non_einvoice_explicit_classification(self):
         pdf_bytes = _make_pdf_bytes(
@@ -360,4 +364,125 @@ class EInvoiceAndIRNTests(TestCase):
         search_html = search_resp.content.decode("utf-8")
         self.assertIn("INV-E-1", search_html)
         self.assertNotIn("INV-N-2", search_html)
+
+    def test_11_irn_hex_zero_and_boundary_validation(self):
+        # Valid SHA-256 hex IRN containing many '0' digits (including leading zeros)
+        zero_heavy_irn = ("0" * 30) + "1234567890ABCDEF" + ("0" * 18)
+        self.assertEqual(len(zero_heavy_irn), 64)
+        self.assertTrue(is_valid_irn(zero_heavy_irn))
+        text_zero = extract_irn_from_text(f"Tax Invoice (e-Invoice)\nIRN: {zero_heavy_irn}\nTotal: 5000")
+        self.assertEqual(text_zero["valid_irn"], zero_heavy_irn)
+
+        # Invalid IRNs containing G-Z characters must be rejected
+        irn_with_g = VALID_IRN_1[:-1] + "G"
+        irn_with_z = "Z" + VALID_IRN_1[1:]
+        self.assertFalse(is_valid_irn(irn_with_g))
+        self.assertFalse(is_valid_irn(irn_with_z))
+        gz_extract = extract_irn_from_text(f"Tax Invoice\nIRN: {irn_with_g}\nTotal: 500")
+        self.assertEqual(gz_extract["valid_irn"], "")
+        self.assertTrue(gz_extract["invalid_irn_candidate"])
+
+        # Fewer than 64 characters rejected
+        self.assertFalse(is_valid_irn(VALID_IRN_1[:63]))
+        self.assertFalse(is_valid_irn(VALID_IRN_1[:32]))
+
+        # More than 64 characters rejected (both via validator and text extractor without truncation)
+        self.assertFalse(is_valid_irn(VALID_IRN_1 + "0"))
+        self.assertFalse(is_valid_irn(VALID_IRN_1 + "G"))
+        overlong_extract = extract_irn_from_text(f"Tax Invoice\nIRN: {VALID_IRN_1}AB\nTotal: 500")
+        self.assertEqual(overlong_extract["valid_irn"], "")
+        self.assertTrue(overlong_extract["invalid_irn_candidate"])
+
+        # Repeated-character filler values rejected
+        self.assertFalse(is_valid_irn("0" * 64))
+        self.assertFalse(is_valid_irn("A" * 64))
+        self.assertFalse(is_valid_irn("F" * 64))
+        self.assertFalse(is_valid_irn("01" * 32))
+        self.assertFalse(is_valid_irn("AB" * 32))
+
+    def test_12_qr_authenticity_tiers_and_crypto_verification(self):
+        # 1. Non-GST plain text QR: extracted only, NOT structurally valid, NOT cryptographically verified
+        plain_qr = _decode_jwt_or_json_qr("https://example.com/invoice/12345")
+        self.assertTrue(plain_qr["qr_data_extracted"])
+        self.assertFalse(plain_qr["qr_payload_structurally_valid"])
+        self.assertFalse(plain_qr["qr_signature_cryptographically_verified"])
+        self.assertEqual(plain_qr["qr_authenticity_status"], "DATA_EXTRACTED")
+
+        # 2. Valid JWT QR without trusted public key: structurally validated ONLY, NOT cryptographically verified
+        jwt_header = base64.urlsafe_b64encode(b'{"alg":"RS256","typ":"JWT"}').decode().rstrip("=")
+        inner = json.dumps({"Irn": VALID_IRN_1, "SellerGstin": "29AAACJ6716F1ZK"})
+        jwt_body = base64.urlsafe_b64encode(json.dumps({"data": inner}).encode()).decode().rstrip("=")
+        unverified_jwt = f"{jwt_header}.{jwt_body}.fakesig"
+        res_unverified = _decode_jwt_or_json_qr(unverified_jwt)
+        self.assertTrue(res_unverified["qr_data_extracted"])
+        self.assertTrue(res_unverified["qr_payload_structurally_valid"])
+        self.assertFalse(res_unverified["qr_signature_cryptographically_verified"])
+        self.assertEqual(res_unverified["qr_authenticity_status"], "STRUCTURALLY_VALIDATED")
+
+        eval_unverified = evaluate_e_invoice_status(raw_text="", qr_data=res_unverified)
+        self.assertTrue(eval_unverified["qr_data_extracted"])
+        self.assertTrue(eval_unverified["qr_payload_structurally_valid"])
+        self.assertFalse(eval_unverified["qr_signature_cryptographically_verified"])
+        self.assertIn("not cryptographically verified", eval_unverified["notes"].lower())
+
+        # 3. Genuine RS256 signed JWT with matching vs wrong trusted public key
+        import jwt as pyjwt
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+
+        priv_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        priv_pem = priv_key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+        pub_pem = priv_key.public_key().public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        ).decode("ascii")
+
+        wrong_pub_pem = rsa.generate_private_key(public_exponent=65537, key_size=2048).public_key().public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        ).decode("ascii")
+
+        signed_jwt = pyjwt.encode({"data": inner}, priv_pem, algorithm="RS256")
+        verified = _decode_jwt_or_json_qr(signed_jwt, trusted_public_key=pub_pem)
+        self.assertTrue(verified["qr_data_extracted"])
+        self.assertTrue(verified["qr_payload_structurally_valid"])
+        self.assertTrue(verified["qr_signature_cryptographically_verified"])
+        self.assertEqual(verified["qr_authenticity_status"], "CRYPTOGRAPHICALLY_VERIFIED")
+
+        wrong_key_res = _decode_jwt_or_json_qr(signed_jwt, trusted_public_key=wrong_pub_pem)
+        self.assertTrue(wrong_key_res["qr_data_extracted"])
+        self.assertTrue(wrong_key_res["qr_payload_structurally_valid"])
+        self.assertFalse(wrong_key_res["qr_signature_cryptographically_verified"])
+        self.assertEqual(wrong_key_res["qr_authenticity_status"], "STRUCTURALLY_VALIDATED")
+
+    def test_13_missing_or_na_irn_does_not_mark_non_einvoice(self):
+        # Missing IRN (blank field) with no explicit non-e-invoice statement -> NEEDS VERIFICATION (None)
+        blank_irn_res = evaluate_e_invoice_status(
+            raw_text="TAX INVOICE\nJK TYRE & INDUSTRIES LIMITED\nGSTIN: 29AAACJ6716F1ZK\nIRN:\nTotal Amount: 5000.00"
+        )
+        self.assertIsNone(blank_irn_res["is_e_invoice"])
+        self.assertEqual(blank_irn_res["irn_number"], "")
+        self.assertTrue(blank_irn_res["e_invoice_manual_review"])
+
+        # "IRN: N/A" or "IRN: Nil" alone -> NEEDS VERIFICATION (None), NOT Non-E-Invoice (False)
+        for na_label in ("IRN: N/A", "IRN: NA", "IRN: Nil", "IRN: None", "IRN: Not Applicable"):
+            na_res = evaluate_e_invoice_status(
+                raw_text=f"TAX INVOICE\nJK TYRE & INDUSTRIES LIMITED\n{na_label}\nTotal Amount: 2000.00"
+            )
+            self.assertIsNone(na_res["is_e_invoice"], f"{na_label} must yield NEEDS VERIFICATION (None), got {na_res}")
+            self.assertEqual(na_res["irn_number"], "")
+            self.assertTrue(na_res["e_invoice_manual_review"])
+
+        # Uncertain text + Gemini attempting to guess False must still yield NEEDS VERIFICATION (None)
+        uncertain_res = evaluate_e_invoice_status(
+            raw_text="TAX INVOICE\nSupplier: Local Workshop\nIRN: N/A\nTotal Amount: 1200.00",
+            gemini_data={"is_e_invoice": False, "irn_number": None},
+        )
+        self.assertIsNone(uncertain_res["is_e_invoice"])
+        self.assertTrue(uncertain_res["e_invoice_manual_review"])
+
 

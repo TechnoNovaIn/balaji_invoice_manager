@@ -12,20 +12,29 @@ class DepartmentAdmin(admin.ModelAdmin):
 
 @admin.register(User)
 class CustomUserAdmin(UserAdmin):
-    list_display = ('username', 'email', 'first_name', 'last_name', 'role', 'department', 'is_active')
-    list_filter = ('role', 'is_active', 'department')
+    list_display = ('username', 'email', 'first_name', 'last_name', 'role', 'account_status', 'has_admin_access', 'has_accounts_access', 'is_active')
+    list_filter = ('role', 'account_status', 'has_admin_access', 'has_accounts_access', 'is_active', 'department')
     search_fields = ('username', 'first_name', 'last_name', 'email', 'phone_number')
     ordering = ('role', 'username')
 
     fieldsets = UserAdmin.fieldsets + (
         ('Balaji InvoiceHub Role & Profile', {
-            'fields': ('role', 'phone_number', 'department')
+            'fields': (
+                'role', 'has_admin_access', 'has_accounts_access',
+                'can_upload_invoices', 'can_resubmit_invoices',
+                'account_status', 'suspended_at', 'suspended_reason',
+                'phone_number', 'department', 'must_change_password',
+            )
         }),
     )
 
     add_fieldsets = UserAdmin.add_fieldsets + (
         ('Balaji InvoiceHub Role & Profile', {
-            'fields': ('role', 'phone_number', 'department')
+            'fields': (
+                'role', 'has_admin_access', 'has_accounts_access',
+                'can_upload_invoices', 'can_resubmit_invoices',
+                'phone_number', 'department', 'must_change_password',
+            )
         }),
     )
 

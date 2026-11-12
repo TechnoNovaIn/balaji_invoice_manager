@@ -10,9 +10,12 @@ from django.http import FileResponse, Http404, HttpResponseForbidden, HttpRespon
 from datetime import datetime
 from django.utils import timezone
 from django.db.models import Q, Sum
+from django.views.decorators.clickjacking import xframe_options_sameorigin
 
 from apps.accounts.models import UserRole
 from apps.accounts.permissions import role_required, check_user_role
+from apps.accounts.security import record_audit_log
+from .export_security import sanitize_spreadsheet_text
 from .models import (
     InvoiceSubmission,
     InvoiceDocument,
@@ -30,11 +33,55 @@ from .purchase_service import (
     compare_with_gstr2a,
 )
 from .e_invoice_utils import (
+    EINV_STATUS_NO,
+    EINV_STATUS_HANDWRITTEN,
+    EINV_STATUS_NEEDS_VERIFICATION,
+    EINV_STATUS_YES,
+    e_invoice_status_to_bool,
     is_valid_irn,
     normalize_irn,
-    parse_e_invoice_choice,
+    parse_e_invoice_status,
     apply_e_invoice_to_submission,
 )
+from .document_type_utils import audit_submission_financials, has_unclear_financial_values
+
+
+def _parse_e_invoice_post(post_data, submission):
+    """Parse and validate combined e_invoice_status / is_e_invoice / irn_number form inputs."""
+    has_status = 'e_invoice_status' in post_data or 'is_e_invoice' in post_data
+    has_irn = 'irn_number' in post_data
+    if not (has_status or has_irn):
+        return {}, None
+
+    if 'e_invoice_status' in post_data:
+        status_val = parse_e_invoice_status(post_data.get('e_invoice_status'))
+    elif 'is_e_invoice' in post_data:
+        status_val = parse_e_invoice_status(post_data.get('is_e_invoice'))
+    else:
+        status_val = submission.e_invoice_status or EINV_STATUS_NEEDS_VERIFICATION
+
+    if status_val is None:
+        return None, "Invalid E-Invoice status selected. Choose HANDWRITTEN, YES, NO, or NEEDS VERIFICATION."
+
+    irn_val = normalize_irn(post_data.get('irn_number')) if has_irn else submission.irn_number
+    if has_irn and irn_val and not is_valid_irn(irn_val):
+        return None, (
+            "Invalid IRN format: An Indian GST IRN must be a valid 64-character hexadecimal SHA-256 string (0-9, A-F)."
+        )
+    if has_irn and irn_val and status_val in (EINV_STATUS_NO, EINV_STATUS_HANDWRITTEN):
+        return None, (
+            "Conflicting E-Invoice selection: Clear the IRN when marking an invoice as NO or HANDWRITTEN, or select YES."
+        )
+
+    if status_val == EINV_STATUS_NEEDS_VERIFICATION and is_valid_irn(irn_val):
+        status_val = EINV_STATUS_YES
+
+    final_irn = '' if status_val in (EINV_STATUS_NO, EINV_STATUS_HANDWRITTEN) else irn_val
+    return {
+        'e_invoice_status': status_val,
+        'is_e_invoice': e_invoice_status_to_bool(status_val),
+        'irn_number': final_irn,
+    }, None
 from .tally_excel_exporter import generate_tally_structured_excel
 from .analytics_service import (
     get_executive_kpis,
@@ -56,23 +103,63 @@ from .services import (
     resubmit_returned_invoice,
     split_invoice_submission,
     merge_invoice_submissions,
+    sanitize_filename,
     MAX_FILES_PER_SUBMISSION,
     MAX_FILE_SIZE_BYTES,
     MAX_TOTAL_SIZE_BYTES,
 )
 
 
+def _can_view_all_invoices(user) -> bool:
+    return bool(
+        user
+        and user.is_authenticated
+        and getattr(user, 'is_operational_active', user.is_active)
+        and (getattr(user, 'is_naveen', False) or getattr(user, 'is_admin_role', False) or getattr(user, 'is_management', False))
+    )
+
+
+def _can_manage_accounts(user) -> bool:
+    return bool(
+        user
+        and user.is_authenticated
+        and getattr(user, 'is_operational_active', user.is_active)
+        and (getattr(user, 'is_naveen', False) or getattr(user, 'is_admin_role', False))
+    )
+
+
+def _build_protected_document_response(file_handle, raw_filename: str, content_type: str, inline: bool = True):
+    safe_name = sanitize_filename(raw_filename)
+    allowed_types = {'image/jpeg', 'image/png', 'application/pdf'}
+    if content_type in allowed_types and inline:
+        served_type = content_type
+        disposition = f'inline; filename="{safe_name}"'
+    else:
+        served_type = content_type if content_type in allowed_types else 'application/octet-stream'
+        disposition = f'attachment; filename="{safe_name}"'
+
+    response = FileResponse(file_handle, content_type=served_type)
+    response['Content-Disposition'] = disposition
+    response['X-Content-Type-Options'] = 'nosniff'
+    response['Cache-Control'] = 'private, no-store'
+    response['Content-Security-Policy'] = (
+        "default-src 'self'; script-src 'none'; object-src 'self'; frame-ancestors 'self'"
+    )
+    return response
+
+
 @login_required
 def upload_invoice(request):
     """
-    Mobile-first invoice upload interface for Employees.
+    Mobile-first invoice upload interface for Submitters (External Submitters & Employees).
     Allows capturing photos or selecting PDF/image files, entering optional remarks,
     and submitting directly to Naveen's queue.
-    Creates an independent invoice submission for each uploaded document.
     """
-    # Restrict to Employees and Admins (Admins permitted for operational testing)
-    if not (request.user.is_employee or request.user.is_admin_role):
-        raise PermissionDenied("Access Denied: Only field employees can submit invoice documents.")
+    can_upload = request.user.can_submit_invoices() or (
+        request.user.is_admin_role and request.user.is_operational_active
+    )
+    if not can_upload:
+        raise PermissionDenied("Access Denied: Your account does not have permission to upload invoice documents.")
 
     if request.method == 'POST':
         files = request.FILES.getlist('files')
@@ -108,6 +195,16 @@ def upload_invoice(request):
                     duplicate_notes=duplicate_notes,
                     batch_id=batch_id
                 )
+                record_audit_log(
+                    request.user,
+                    "INVOICE_UPLOADED",
+                    request=request,
+                    details={
+                        "uploaded_document_id": uploaded_doc.id,
+                        "file_name": uploaded_doc.file_name,
+                        "async": True,
+                    },
+                )
                 return redirect('invoices:upload_progress', document_id=uploaded_doc.id)
             except ValidationError as e:
                 messages.error(request, e.message if hasattr(e, 'message') else str(e))
@@ -129,6 +226,16 @@ def upload_invoice(request):
                 user=request.user,
                 files=files,
                 remarks=remarks
+            )
+            record_audit_log(
+                request.user,
+                "INVOICE_UPLOADED",
+                request=request,
+                details={
+                    "submission_ids": [s.submission_id for s in submissions],
+                    "count": len(submissions),
+                    "async": False,
+                },
             )
             count = len(submissions)
             if count == 1:
@@ -172,7 +279,7 @@ def upload_progress(request, document_id):
     Real-time progress dashboard for multi-page PDF processing.
     """
     doc = get_object_or_404(UploadedDocument, id=document_id)
-    if request.user.is_employee and doc.uploader != request.user:
+    if not _can_view_all_invoices(request.user) and doc.uploader_id != request.user.id:
         raise PermissionDenied("Access Denied: You cannot view this upload progress.")
     return render(request, 'invoices/upload_progress.html', {
         'document': doc,
@@ -186,7 +293,7 @@ def document_status_api(request, document_id):
     JSON endpoint returning live progress percentage, stage, and detected invoices.
     """
     doc = get_object_or_404(UploadedDocument, id=document_id)
-    if request.user.is_employee and doc.uploader != request.user:
+    if not _can_view_all_invoices(request.user) and doc.uploader_id != request.user.id:
         return JsonResponse({'error': 'Unauthorized'}, status=403)
 
     subs = InvoiceSubmission.objects.filter(source_document=doc).order_by('id')
@@ -230,9 +337,9 @@ def submission_success(request, submission_id):
         submission_id=submission_id
     )
 
-    # Ownership check: Employee can view own, Naveen/Admin/Management can view all
-    if request.user.is_employee and submission.employee != request.user:
-        raise PermissionDenied("Access Denied: You cannot view another employee's submission receipt.")
+    # Ownership check: Submitter can view own only; Accounts/Admin/Management can view all
+    if not _can_view_all_invoices(request.user) and submission.employee_id != request.user.id:
+        raise PermissionDenied("Access Denied: You cannot view another user's submission receipt.")
 
     return render(request, 'invoices/success.html', {
         'submission': submission,
@@ -244,17 +351,18 @@ def submission_success(request, submission_id):
 def my_submissions(request):
     """
     List of invoice submissions.
-    - Employees can strictly view ONLY their own submissions.
-    - Naveen, Admin, and Management can view all submissions with employee filtering.
+    - Submitters (External Submitters & Employees) can strictly view ONLY their own submissions.
+    - Naveen, Admin, and Management can view all submissions with submitter filtering.
     """
     query = request.GET.get('q', '').strip()
     status_filter = request.GET.get('status', '').strip()
 
-    if request.user.is_employee:
-        submissions = InvoiceSubmission.objects.filter(employee=request.user)
-    else:
-        # Operator / Management / Admin view
+    if _can_view_all_invoices(request.user):
         submissions = InvoiceSubmission.objects.all().select_related('employee')
+        base_qs = InvoiceSubmission.objects.all()
+    else:
+        submissions = InvoiceSubmission.objects.filter(employee=request.user)
+        base_qs = InvoiceSubmission.objects.filter(employee=request.user)
 
     if query:
         submissions = submissions.filter(
@@ -270,18 +378,13 @@ def my_submissions(request):
 
     submissions = submissions.prefetch_related('documents').order_by('-created_at')
 
-    # Status counts for filter chips
-    if request.user.is_employee:
-        base_qs = InvoiceSubmission.objects.filter(employee=request.user)
-    else:
-        base_qs = InvoiceSubmission.objects.all()
-
     counts = {
         'all': base_qs.count(),
         'submitted': base_qs.filter(status=InvoiceSubmission.STATUS_SUBMITTED).count(),
         'returned': base_qs.filter(status=InvoiceSubmission.STATUS_RETURNED).count(),
         'resubmitted': base_qs.filter(status=InvoiceSubmission.STATUS_RESUBMITTED).count(),
         'verified': base_qs.filter(status=InvoiceSubmission.STATUS_VERIFIED).count(),
+        'rejected': base_qs.filter(status=InvoiceSubmission.STATUS_REJECTED).count(),
     }
 
     return render(request, 'invoices/my_submissions.html', {
@@ -289,7 +392,7 @@ def my_submissions(request):
         'query': query,
         'status_filter': status_filter,
         'counts': counts,
-        'page_title': 'My Submissions' if request.user.is_employee else 'Invoice Submissions Registry',
+        'page_title': 'My Submissions' if not _can_view_all_invoices(request.user) else 'Invoice Submissions Registry',
     })
 
 
@@ -298,16 +401,16 @@ def submission_detail(request, submission_id):
     """
     Detailed view of an invoice submission with active and historical documents,
     status audit log, and return reasons.
-    Strictly isolated: An employee can only view their own submissions.
+    Strictly isolated: Submitters can only view their own submissions.
     """
     submission = get_object_or_404(
         InvoiceSubmission.objects.select_related('employee'),
         submission_id=submission_id
     )
 
-    # RBAC Isolation Check
-    if request.user.is_employee and submission.employee != request.user:
-        raise PermissionDenied("Access Denied: You are not authorized to view another employee's invoice.")
+    # Strict RBAC & Ownership Isolation Check
+    if not _can_view_all_invoices(request.user) and submission.employee_id != request.user.id:
+        raise PermissionDenied("Access Denied: You are not authorized to view another user's invoice.")
 
     active_docs = submission.documents.filter(is_active_version=True).order_by('page_number')
     historical_docs = submission.documents.filter(is_active_version=False).order_by('-version', 'page_number')
@@ -316,7 +419,7 @@ def submission_detail(request, submission_id):
     # Sequential stream navigation for Naveen
     prev_sub = None
     next_sub = None
-    if request.user.is_naveen or request.user.is_admin_role or request.user.is_management:
+    if _can_view_all_invoices(request.user):
         prev_sub = InvoiceSubmission.objects.filter(created_at__gt=submission.created_at).order_by('created_at').first()
         next_sub = InvoiceSubmission.objects.filter(created_at__lt=submission.created_at).order_by('-created_at').first()
 
@@ -327,7 +430,10 @@ def submission_detail(request, submission_id):
         'status_history': status_history,
         'prev_sub': prev_sub,
         'next_sub': next_sub,
-        'can_edit': submission.can_be_edited and (submission.employee == request.user or request.user.is_admin_role),
+        'can_edit': submission.can_be_edited and (
+            (submission.employee_id == request.user.id and request.user.can_resubmit_own_invoices())
+            or request.user.is_admin_role
+        ),
         'page_title': f"Invoice {submission.submission_id}",
     })
 
@@ -335,14 +441,16 @@ def submission_detail(request, submission_id):
 @login_required
 def resubmit_invoice(request, submission_id):
     """
-    Allows employee to edit and resubmit an invoice returned by Naveen.
-    Gated strictly to returned status and the owning employee.
+    Allows owning submitter (with resubmit permission) to edit and resubmit
+    an invoice returned by Naveen.
     """
     submission = get_object_or_404(InvoiceSubmission, submission_id=submission_id)
 
-    # Permission checks
-    if submission.employee != request.user and not request.user.is_admin_role:
-        raise PermissionDenied("Access Denied: You cannot edit another employee's submission.")
+    # Strict Ownership + Permission Checks
+    if submission.employee_id != request.user.id and not request.user.is_admin_role:
+        raise PermissionDenied("Access Denied: You cannot edit or resubmit another user's submission.")
+    if not request.user.can_resubmit_own_invoices():
+        raise PermissionDenied("Access Denied: Resubmission permission is disabled for your account.")
 
     if not submission.can_be_edited:
         messages.error(request, "This invoice is not in a return status and cannot be edited.")
@@ -358,6 +466,15 @@ def resubmit_invoice(request, submission_id):
                 user=request.user,
                 new_files=new_files if new_files else None,
                 new_remarks=new_remarks
+            )
+            record_audit_log(
+                request.user,
+                "INVOICE_RESUBMITTED",
+                request=request,
+                details={
+                    "submission_id": submission.submission_id,
+                    "new_files_count": len(new_files),
+                },
             )
             messages.success(
                 request,
@@ -380,25 +497,21 @@ def resubmit_invoice(request, submission_id):
 
 
 @login_required
+@xframe_options_sameorigin
 def serve_document(request, doc_id):
     """
     Secure authenticated document serving endpoint.
-    Verifies user has permission to view the document:
-    - Must be the submitting employee OR
-    - Operator (Naveen), Admin, or Management.
-    Prevents unauthorized direct file access.
+    Enforces strict ownership isolation and script-blocking security headers.
     """
     doc = get_object_or_404(
         InvoiceDocument.objects.select_related('submission', 'submission__employee'),
         pk=doc_id
     )
 
-    # Access control check
     user = request.user
-    if user.is_employee and doc.submission.employee != user:
+    if not _can_view_all_invoices(user) and doc.submission.employee_id != user.id:
         raise PermissionDenied("Access Denied: You do not have permission to view this document.")
 
-    # Check file existence on disk
     if not doc.original_file or not doc.original_file.storage.exists(doc.original_file.name):
         raise Http404("Document file not found on server storage.")
 
@@ -407,11 +520,12 @@ def serve_document(request, doc_id):
     except Exception as e:
         raise Http404(f"Could not open document file: {str(e)}")
 
-    # Return response inline (for viewing in browser modal/tab)
-    response = FileResponse(file_handle, content_type=doc.content_type)
-    # Inline disposition allows viewing in browser PDF reader or image viewer
-    response['Content-Disposition'] = f'inline; filename="{os.path.basename(doc.original_filename)}"'
-    return response
+    return _build_protected_document_response(
+        file_handle,
+        doc.original_filename,
+        doc.content_type,
+        inline=True,
+    )
 
 
 @login_required
@@ -443,12 +557,82 @@ def naveen_return_invoice(request, submission_id):
         old_status=old_status,
         new_status=InvoiceSubmission.STATUS_RETURNED,
         changed_by=request.user,
-        notes=f"Returned to employee: {reason}"
+        notes=f"Returned to submitter: {reason}"
+    )
+
+    record_audit_log(
+        request.user,
+        "INVOICE_RETURNED",
+        request=request,
+        details={
+            "submission_id": submission.submission_id,
+            "old_status": old_status,
+            "reason": reason,
+        },
     )
 
     messages.warning(
         request,
         f"Invoice {submission.submission_id} has been returned to {submission.employee.get_full_name() or submission.employee.username} for correction."
+    )
+    return redirect('core:naveen_dashboard')
+
+
+@login_required
+def naveen_reject_invoice(request, submission_id):
+    """
+    Endpoint for Naveen (or Admin) to reject an invoice with a recorded reason.
+    Submitters are strictly blocked (403).
+    """
+    if not _can_manage_accounts(request.user):
+        raise PermissionDenied("Access Denied: Only Naveen or Administrator can reject invoices.")
+
+    if request.method != 'POST':
+        return HttpResponseForbidden("POST method required.")
+
+    submission = get_object_or_404(InvoiceSubmission, submission_id=submission_id)
+    reason = request.POST.get('rejection_reason', '').strip() or request.POST.get('return_reason', '').strip()
+
+    if not reason:
+        messages.error(request, "Please provide a clear reason for rejecting this invoice.")
+        return redirect('invoices:verification_workspace', submission_id=submission.submission_id)
+
+    old_status = submission.status
+    submission.status = InvoiceSubmission.STATUS_REJECTED
+    submission.return_reason = reason
+    submission.save(update_fields=['status', 'return_reason', 'updated_at'])
+
+    PurchaseAuditTrail.objects.create(
+        submission=submission,
+        field_name='Rejection Decision',
+        old_value=old_status,
+        new_value=InvoiceSubmission.STATUS_REJECTED,
+        changed_by=request.user,
+        reason=reason,
+    )
+
+    InvoiceStatusHistory.objects.create(
+        submission=submission,
+        old_status=old_status,
+        new_status=InvoiceSubmission.STATUS_REJECTED,
+        changed_by=request.user,
+        notes=f"Rejected: {reason}",
+    )
+
+    record_audit_log(
+        request.user,
+        "INVOICE_REJECTED",
+        request=request,
+        details={
+            "submission_id": submission.submission_id,
+            "old_status": old_status,
+            "reason": reason,
+        },
+    )
+
+    messages.error(
+        request,
+        f"Invoice {submission.submission_id} has been rejected."
     )
     return redirect('core:naveen_dashboard')
 
@@ -478,12 +662,17 @@ def naveen_verify_invoice(request, submission_id):
     has_blocking_gstin_issue = backend_val['vendor_match_status'] in ('GSTIN_MISMATCH', 'INVALID_GSTIN_FORMAT')
     has_missing_financials = not (submission.party_name or '').strip() or submission.total_amount <= Decimal('0.00')
     has_missing_einv_irn = submission.is_e_invoice is True and not is_valid_irn(submission.irn_number)
+    has_handwritten_gate = (
+        submission.e_invoice_status == EINV_STATUS_HANDWRITTEN
+        or has_unclear_financial_values(submission)
+    )
     needs_review_gate = (
         submission.is_ambiguous_vendor
         or backend_val['is_ambiguous_vendor']
         or submission.requires_manual_review
         or not backend_val['is_financial_approval_eligible']
         or has_missing_einv_irn
+        or has_handwritten_gate
     )
 
     if has_blocking_gstin_issue or has_missing_financials or (needs_review_gate and not confirm_manual):
@@ -517,6 +706,17 @@ def naveen_verify_invoice(request, submission_id):
         notes="Invoice documents verified by Naveen."
     )
 
+    record_audit_log(
+        request.user,
+        "INVOICE_APPROVED",
+        request=request,
+        details={
+            "submission_id": submission.submission_id,
+            "old_status": old_status,
+            "total_amount": str(submission.total_amount),
+        },
+    )
+
     messages.success(request, f"Invoice {submission.submission_id} successfully verified!")
     return redirect('core:naveen_dashboard')
 
@@ -525,13 +725,13 @@ def naveen_verify_invoice(request, submission_id):
 def download_source_document(request, doc_id):
     """
     Direct download endpoint for the original unsegmented source document (e.g. multi-invoice PDF).
-    Ensures complete document provenance and permanent data integrity.
+    Enforces strict ownership isolation and safe filename headers.
     """
     source_doc = get_object_or_404(UploadedDocument, pk=doc_id)
 
-    # Access control: uploader or Naveen / Admin / Management
-    if request.user.is_employee and source_doc.uploader != request.user:
-        raise PermissionDenied("Access Denied: You cannot download another employee's source document.")
+    # Positive Access Control: Owner OR privileged accounts/admin/management
+    if not _can_view_all_invoices(request.user) and source_doc.uploader_id != request.user.id:
+        raise PermissionDenied("Access Denied: You cannot download another user's source document.")
 
     if not source_doc.original_file or not source_doc.original_file.storage.exists(source_doc.original_file.name):
         raise Http404("Original source file not found on storage.")
@@ -541,9 +741,12 @@ def download_source_document(request, doc_id):
     except Exception as e:
         raise Http404(f"Could not open source file: {str(e)}")
 
-    response = FileResponse(fh, content_type=source_doc.content_type)
-    response['Content-Disposition'] = f'attachment; filename="{source_doc.file_name}"'
-    return response
+    return _build_protected_document_response(
+        fh,
+        source_doc.file_name,
+        source_doc.content_type,
+        inline=False,
+    )
 
 
 @login_required
@@ -660,27 +863,12 @@ def tally_workspace(request, submission_id):
             'igst_amount': igst_amount,
             'total_amount': total_amount,
         }
-        if 'is_e_invoice' in request.POST or 'irn_number' in request.POST:
-            einv_val = (
-                parse_e_invoice_choice(request.POST.get('is_e_invoice'))
-                if 'is_e_invoice' in request.POST
-                else submission.is_e_invoice
-            )
-            irn_val = (
-                normalize_irn(request.POST.get('irn_number'))
-                if 'irn_number' in request.POST
-                else submission.irn_number
-            )
-            if irn_val and not is_valid_irn(irn_val):
-                messages.error(request, "Invalid IRN: IRN must be a valid 64-character alphanumeric value.")
-                return redirect('invoices:tally_workspace', submission_id=submission.submission_id)
-            if einv_val is False and irn_val:
-                messages.error(request, "Conflict: Clear the IRN before marking an invoice as Non E-Invoice (NO), or select YES.")
-                return redirect('invoices:tally_workspace', submission_id=submission.submission_id)
-            if einv_val is None and is_valid_irn(irn_val):
-                einv_val = True
-            new_data['is_e_invoice'] = einv_val
-            new_data['irn_number'] = '' if einv_val is False else irn_val
+        einv_patch, einv_err = _parse_e_invoice_post(request.POST, submission)
+        if einv_err:
+            messages.error(request, einv_err)
+            return redirect('invoices:tally_workspace', submission_id=submission.submission_id)
+        if einv_patch:
+            new_data.update(einv_patch)
 
         if invoice_date_str:
             try:
@@ -692,6 +880,8 @@ def tally_workspace(request, submission_id):
         submission.refresh_from_db()
 
         apply_vendor_validation_to_submission(submission)
+        if einv_patch:
+            submission.e_invoice_manually_verified = True
         apply_e_invoice_to_submission(submission)
         submission.tally_voucher_no = tally_voucher_no
         submission.gst_filing_period = gst_filing_period
@@ -790,32 +980,36 @@ def quick_update_metadata(request, submission_id):
         except ValueError:
             pass
 
-    if 'is_e_invoice' in request.POST or 'irn_number' in request.POST:
-        einv_val = (
-            parse_e_invoice_choice(request.POST.get('is_e_invoice'))
-            if 'is_e_invoice' in request.POST
-            else submission.is_e_invoice
-        )
-        irn_val = (
-            normalize_irn(request.POST.get('irn_number'))
-            if 'irn_number' in request.POST
-            else submission.irn_number
-        )
-        if irn_val and not is_valid_irn(irn_val):
-            return JsonResponse({'status': 'error', 'message': 'Invalid 64-character IRN.'}, status=400)
-        if einv_val is False and irn_val:
-            return JsonResponse({'status': 'error', 'message': 'Clear IRN before marking Non E-Invoice.'}, status=400)
-        if einv_val is None and is_valid_irn(irn_val):
-            einv_val = True
-        new_data['is_e_invoice'] = einv_val
-        new_data['irn_number'] = '' if einv_val is False else irn_val
+    einv_patch, einv_err = _parse_e_invoice_post(request.POST, submission)
+    if einv_err:
+        if request.headers.get('x-requested-with') == 'XMLHttpRequest' or request.GET.get('ajax'):
+            return JsonResponse({'status': 'error', 'message': einv_err}, status=400)
+        messages.error(request, einv_err)
+        next_url = request.POST.get('next') or request.META.get('HTTP_REFERER') or '/dashboard/naveen/'
+        return redirect(next_url)
+    if einv_patch:
+        new_data.update(einv_patch)
 
     if new_data:
         record_field_corrections(submission, new_data, request.user, reason="Quick dashboard inline update")
         submission.refresh_from_db()
         apply_vendor_validation_to_submission(submission)
+        if einv_patch:
+            submission.e_invoice_manually_verified = True
         apply_e_invoice_to_submission(submission)
-        submission.save(update_fields=['is_ambiguous_vendor', 'requires_manual_review', 'ocr_confidence', 'is_e_invoice', 'irn_number', 'updated_at'])
+        submission.save(update_fields=[
+            'is_ambiguous_vendor', 'requires_manual_review', 'ocr_confidence',
+            'e_invoice_status', 'e_invoice_manually_verified', 'is_e_invoice', 'irn_number', 'updated_at',
+        ])
+        record_audit_log(
+            request.user,
+            "IRN_OR_EINV_CORRECTED" if einv_patch else "INVOICE_CORRECTED",
+            request=request,
+            details={
+                "submission_id": submission.submission_id,
+                "corrected_fields": sorted(list(new_data.keys())),
+            },
+        )
 
     # Return JSON if requested via AJAX
     if request.headers.get('x-requested-with') == 'XMLHttpRequest' or request.GET.get('ajax'):
@@ -825,7 +1019,11 @@ def quick_update_metadata(request, submission_id):
             'party_name': submission.party_name,
             'party_gstin': submission.party_gstin,
             'invoice_number': submission.invoice_number,
-            'expense_ledger': submission.expense_ledger
+            'expense_ledger': submission.expense_ledger,
+            'e_invoice_status': submission.e_invoice_status,
+            'is_e_invoice': submission.is_e_invoice,
+            'irn_number': submission.irn_number,
+            'e_invoice_manually_verified': submission.e_invoice_manually_verified,
         })
 
     messages.success(request, f"Updated {submission.submission_id}: Vendor '{submission.party_name}', Bill #{submission.invoice_number}.")
@@ -980,21 +1178,21 @@ def export_gst_csv(request):
 
     for sub in submissions:
         writer.writerow([
-            sub.party_gstin or '',
-            sub.party_name or 'Unregistered Supplier',
-            sub.invoice_number or sub.submission_id,
+            sanitize_spreadsheet_text(sub.party_gstin or ''),
+            sanitize_spreadsheet_text(sub.party_name or 'Unregistered Supplier'),
+            sanitize_spreadsheet_text(sub.invoice_number or sub.submission_id),
             sub.invoice_date.strftime('%d-%b-%Y') if sub.invoice_date else sub.created_at.strftime('%d-%b-%Y'),
             f"{float(sub.total_amount):.2f}",
             f"{float(sub.taxable_amount):.2f}",
             f"{float(sub.igst_amount):.2f}",
             f"{float(sub.cgst_amount):.2f}",
             f"{float(sub.sgst_amount):.2f}",
-            sub.expense_ledger,
-            sub.tally_voucher_no,
+            sanitize_spreadsheet_text(sub.expense_ledger),
+            sanitize_spreadsheet_text(sub.tally_voucher_no),
             'YES' if sub.is_entered_in_tally else 'NO',
             'YES' if sub.is_filed_in_gst else 'NO',
-            sub.submission_id,
-            sub.employee.get_full_name() or sub.employee.username
+            sanitize_spreadsheet_text(sub.submission_id),
+            sanitize_spreadsheet_text(sub.employee.get_full_name() or sub.employee.username),
         ])
 
     return response
@@ -1161,35 +1359,12 @@ def verification_workspace(request, submission_id):
             'total_amount': to_dec(request.POST.get('total_amount')),
         }
 
-        if 'is_e_invoice' in request.POST or 'irn_number' in request.POST:
-            einv_val = (
-                parse_e_invoice_choice(request.POST.get('is_e_invoice'))
-                if 'is_e_invoice' in request.POST
-                else submission.is_e_invoice
-            )
-            irn_val = (
-                normalize_irn(request.POST.get('irn_number'))
-                if 'irn_number' in request.POST
-                else submission.irn_number
-            )
-            if irn_val and not is_valid_irn(irn_val):
-                messages.error(
-                    request,
-                    "Invalid IRN format: An Indian GST IRN must be a valid 64-character alphanumeric string. "
-                    "Incomplete or fabricated IRNs cannot be saved."
-                )
-                return redirect('invoices:verification_workspace', submission_id=submission.submission_id)
-            if einv_val is False and irn_val:
-                messages.error(
-                    request,
-                    "Conflicting E-Invoice selection: Clear the IRN if marking as Non E-Invoice (NO), "
-                    "or set E-Invoice Status to YES."
-                )
-                return redirect('invoices:verification_workspace', submission_id=submission.submission_id)
-            if einv_val is None and is_valid_irn(irn_val):
-                einv_val = True
-            new_data['is_e_invoice'] = einv_val
-            new_data['irn_number'] = '' if einv_val is False else irn_val
+        einv_patch, einv_err = _parse_e_invoice_post(request.POST, submission)
+        if einv_err:
+            messages.error(request, einv_err)
+            return redirect('invoices:verification_workspace', submission_id=submission.submission_id)
+        if einv_patch:
+            new_data.update(einv_patch)
 
         # Handle Date
         inv_date_str = request.POST.get('invoice_date', '').strip()
@@ -1225,11 +1400,12 @@ def verification_workspace(request, submission_id):
                 return redirect('invoices:verification_workspace', submission_id=submission.submission_id)
 
             einv_missing_irn = submission.is_e_invoice is True and not is_valid_irn(submission.irn_number)
-            if (backend_val['is_ambiguous_vendor'] or einv_missing_irn) and not confirm_manual:
+            unclear_hw_amounts = has_unclear_financial_values(submission)
+            if (backend_val['is_ambiguous_vendor'] or einv_missing_irn or unclear_hw_amounts) and not confirm_manual:
                 messages.error(
                     request,
-                    "Manual review confirmation required: Confirm missing IRN or ambiguous vendor details "
-                    "(tick the manual-review confirmation box) before approving."
+                    "Manual review confirmation required: Confirm unclear financial values, missing IRN, "
+                    "or ambiguous vendor details (tick the manual-review confirmation box) before approving."
                 )
                 return redirect('invoices:verification_workspace', submission_id=submission.submission_id)
 
@@ -1239,6 +1415,8 @@ def verification_workspace(request, submission_id):
             submission.verified_at = timezone.now()
             submission.is_ambiguous_vendor = backend_val['is_ambiguous_vendor']
             submission.requires_manual_review = False
+            if einv_patch:
+                submission.e_invoice_manually_verified = True
             apply_e_invoice_to_submission(submission)
             # If manually confirmed with missing IRN, preserve verified status without silent approval
             if einv_missing_irn and confirm_manual:
@@ -1246,7 +1424,8 @@ def verification_workspace(request, submission_id):
             submission.save(update_fields=[
                 'status', 'verified_by', 'verified_at',
                 'is_ambiguous_vendor', 'requires_manual_review',
-                'is_e_invoice', 'irn_number', 'updated_at'
+                'e_invoice_status', 'e_invoice_manually_verified',
+                'is_e_invoice', 'irn_number', 'updated_at',
             ])
 
             PurchaseAuditTrail.objects.create(
@@ -1265,17 +1444,43 @@ def verification_workspace(request, submission_id):
                 changed_by=request.user,
                 notes=f"Verified and approved by {request.user.get_full_name() or request.user.username}."
             )
+            record_audit_log(
+                request.user,
+                "INVOICE_APPROVED",
+                request=request,
+                details={
+                    "submission_id": submission.submission_id,
+                    "old_status": old_status,
+                    "party_gstin": submission.party_gstin,
+                    "irn_number": submission.irn_number,
+                    "total_amount": str(submission.total_amount),
+                },
+            )
             messages.success(request, f"✓ Invoice {submission.submission_id} verified and ready for Tally entry!")
             return redirect('core:naveen_dashboard')
 
         # Save-only path: keep backend vendor, e-invoice & manual review flags authoritative
         submission.is_ambiguous_vendor = backend_val['is_ambiguous_vendor']
         submission.requires_manual_review = backend_val['requires_manual_review']
+        if einv_patch:
+            submission.e_invoice_manually_verified = True
         apply_e_invoice_to_submission(submission)
         submission.save(update_fields=[
             'is_ambiguous_vendor', 'requires_manual_review',
-            'is_e_invoice', 'irn_number', 'updated_at'
+            'e_invoice_status', 'e_invoice_manually_verified',
+            'is_e_invoice', 'irn_number', 'updated_at',
         ])
+        record_audit_log(
+            request.user,
+            "IRN_OR_GSTIN_CORRECTED" if (einv_patch or new_data.get('party_gstin')) else "INVOICE_CORRECTED",
+            request=request,
+            details={
+                "submission_id": submission.submission_id,
+                "reason": reason,
+                "e_invoice_status": submission.e_invoice_status,
+                "party_gstin": submission.party_gstin,
+            },
+        )
 
         messages.success(request, f"Corrections for invoice {submission.submission_id} saved successfully!")
         return redirect('invoices:verification_workspace', submission_id=submission.submission_id)
@@ -1289,11 +1494,16 @@ def verification_workspace(request, submission_id):
     prev_sub = InvoiceSubmission.objects.filter(created_at__gt=submission.created_at).order_by('created_at').first()
     next_sub = InvoiceSubmission.objects.filter(created_at__lt=submission.created_at).order_by('-created_at').first()
 
+    financial_warnings = audit_submission_financials(submission)
+    amount_in_words = (getattr(submission, 'gemini_extracted_data', None) or {}).get('amount_in_words') or ''
+
     return render(request, 'invoices/verification_workspace.html', {
         'submission': submission,
         'active_docs': active_docs,
         'audit_trails': audit_trails,
         'ledger_mappings': ledger_mappings,
+        'financial_warnings': financial_warnings,
+        'amount_in_words': amount_in_words,
         'prev_sub': prev_sub,
         'next_sub': next_sub,
         'page_title': f"Verify Purchase - {submission.submission_id}",
@@ -1390,12 +1600,24 @@ def ledger_mappings_view(request):
                     description=desc,
                     is_active=True
                 )
+                record_audit_log(
+                    request.user,
+                    "ADMIN_CONFIG_LEDGER_ADDED",
+                    request=request,
+                    details={"category_name": cat, "tally_expense_ledger": exp_ledger},
+                )
                 messages.success(request, f"Created ledger mapping '{cat}' -> '{exp_ledger}'.")
         elif action == 'toggle':
             mapping_id = request.POST.get('mapping_id')
             m = get_object_or_404(TallyLedgerMapping, pk=mapping_id)
             m.is_active = not m.is_active
             m.save()
+            record_audit_log(
+                request.user,
+                "ADMIN_CONFIG_LEDGER_TOGGLED",
+                request=request,
+                details={"category_name": m.category_name, "is_active": m.is_active},
+            )
             messages.info(request, f"Updated mapping status for '{m.category_name}'.")
 
         return redirect('invoices:ledger_mappings')

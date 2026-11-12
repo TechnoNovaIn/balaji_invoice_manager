@@ -248,6 +248,7 @@ def enhance_preview_image(img_bytes: bytes, is_upside_down: bool = False, fast_m
         import numpy as np
         import io
 
+        Image.MAX_IMAGE_PIXELS = 40_000_000
         pil_img = Image.open(io.BytesIO(img_bytes))
         pil_img = ImageOps.exif_transpose(pil_img)
         if is_upside_down:
@@ -394,20 +395,41 @@ def segment_and_extract_pdf(file_path: str, timer=None, ocr_engine=None) -> List
         # Extract metadata
         meta = extract_metadata_from_text(combined_text)
 
+        # Classify segment appearance internally and re-evaluate combined E-Invoice? status
+        from .document_type_utils import classify_document_type
+        first_page_class = (
+            seg['page_data_list'][0].get('classification')
+            if seg.get('page_data_list') else None
+        )
+        doc_type_res = classify_document_type(
+            file_path=file_path,
+            raw_text=combined_text,
+            page_classification=first_page_class,
+            page_indices=seg.get('pages'),
+            content_type='application/pdf',
+        )
+
         # Decode e-invoice QR code from scanned/mixed segment pages if IRN wasn't found in text
+        qr_data = None
         if not meta.get('irn_number'):
             has_images = any(
                 (p.get('classification') or {}).get('image_count', 0) > 0
                 for p in seg.get('page_data_list', [])
             )
             if has_images:
-                from .e_invoice_utils import extract_qr_e_invoice_data, evaluate_e_invoice_status
+                from .e_invoice_utils import extract_qr_e_invoice_data
                 qr_data = extract_qr_e_invoice_data(file_path, page_indices=seg['pages'])
-                if qr_data.get('valid_irn') or qr_data.get('has_qr_einvoice_data'):
-                    einv_val = evaluate_e_invoice_status(raw_text=combined_text, qr_data=qr_data)
-                    meta['is_e_invoice'] = einv_val['is_e_invoice']
-                    meta['irn_number'] = einv_val['irn_number']
-                    meta['e_invoice_source'] = einv_val['e_invoice_source']
+
+        from .e_invoice_utils import evaluate_e_invoice_status
+        einv_val = evaluate_e_invoice_status(
+            raw_text=combined_text,
+            qr_data=qr_data,
+            appearance_data=doc_type_res,
+        )
+        meta['e_invoice_status'] = einv_val['e_invoice_status']
+        meta['is_e_invoice'] = einv_val['is_e_invoice']
+        meta['irn_number'] = einv_val['irn_number']
+        meta['e_invoice_source'] = einv_val['e_invoice_source']
 
         # Propagate invoice_number and total_amount from individual page analysis if missing in combined meta
         if not meta.get('invoice_number'):

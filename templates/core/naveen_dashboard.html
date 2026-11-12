@@ -314,7 +314,7 @@
                         </thead>
                         <tbody class="small">
                             {% for sub in carryover_invoices %}
-                            <tr class="invoice-row carryover-row" id="row-{{ sub.submission_id }}" data-timestamp="{{ sub.created_at|date:'U' }}" data-date-group="carried" data-submitter="{{ sub.employee.get_full_name|default:sub.employee.username|lower }}" data-vendor="{{ sub.party_name|lower }}" data-has-inv="{% if sub.invoice_number %}1{% else %}0{% endif %}" data-inv-num="{{ sub.invoice_number|lower }}" data-e-invoice="{% if sub.is_e_invoice is True %}YES{% elif sub.is_e_invoice is False %}NO{% else %}NEEDS_VERIFICATION{% endif %}">
+                            <tr class="invoice-row carryover-row" id="row-{{ sub.submission_id }}" data-timestamp="{{ sub.created_at|date:'U' }}" data-date-group="carried" data-submitter="{{ sub.employee.get_full_name|default:sub.employee.username|lower }}" data-vendor="{{ sub.party_name|lower }}" data-has-inv="{% if sub.invoice_number %}1{% else %}0{% endif %}" data-inv-num="{{ sub.invoice_number|lower }}" data-e-invoice="{{ sub.e_invoice_status|default:'NEEDS_VERIFICATION' }}">
                                 <td class="ps-3 fw-bold text-danger">{{ forloop.counter }}</td>
                                 
                                 <!-- Date and Time -->
@@ -594,7 +594,7 @@
                         </thead>
                         <tbody class="small">
                             {% for sub in today_invoices %}
-                            <tr class="invoice-row today-row" id="row-{{ sub.submission_id }}" data-timestamp="{{ sub.created_at|date:'U' }}" data-date-group="today" data-submitter="{{ sub.employee.get_full_name|default:sub.employee.username|lower }}" data-vendor="{{ sub.party_name|lower }}" data-has-inv="{% if sub.invoice_number %}1{% else %}0{% endif %}" data-inv-num="{{ sub.invoice_number|lower }}" data-e-invoice="{% if sub.is_e_invoice is True %}YES{% elif sub.is_e_invoice is False %}NO{% else %}NEEDS_VERIFICATION{% endif %}">
+                            <tr class="invoice-row today-row" id="row-{{ sub.submission_id }}" data-timestamp="{{ sub.created_at|date:'U' }}" data-date-group="today" data-submitter="{{ sub.employee.get_full_name|default:sub.employee.username|lower }}" data-vendor="{{ sub.party_name|lower }}" data-has-inv="{% if sub.invoice_number %}1{% else %}0{% endif %}" data-inv-num="{{ sub.invoice_number|lower }}" data-e-invoice="{{ sub.e_invoice_status|default:'NEEDS_VERIFICATION' }}">
                                 <td class="ps-3 fw-bold text-muted">{{ forloop.counter }}</td>
 
                                 <!-- Date and Time -->
@@ -835,7 +835,7 @@
                     </thead>
                     <tbody class="small">
                         {% for sub in completed_invoices %}
-                        <tr class="invoice-row completed-row" id="row-{{ sub.submission_id }}" data-timestamp="{{ sub.tally_entered_at|default:sub.created_at|date:'U' }}" data-submitter="{{ sub.employee.get_full_name|default:sub.employee.username|lower }}" data-vendor="{{ sub.party_name|lower }}" data-has-inv="{% if sub.invoice_number %}1{% else %}0{% endif %}" data-inv-num="{{ sub.invoice_number|lower }}" data-e-invoice="{% if sub.is_e_invoice is True %}YES{% elif sub.is_e_invoice is False %}NO{% else %}NEEDS_VERIFICATION{% endif %}">
+                        <tr class="invoice-row completed-row" id="row-{{ sub.submission_id }}" data-timestamp="{{ sub.tally_entered_at|default:sub.created_at|date:'U' }}" data-submitter="{{ sub.employee.get_full_name|default:sub.employee.username|lower }}" data-vendor="{{ sub.party_name|lower }}" data-has-inv="{% if sub.invoice_number %}1{% else %}0{% endif %}" data-inv-num="{{ sub.invoice_number|lower }}" data-e-invoice="{{ sub.e_invoice_status|default:'NEEDS_VERIFICATION' }}">
                             <td class="ps-3 fw-bold text-muted">{{ forloop.counter }}</td>
                             <td>
                                 <div class="fw-bold text-success">{{ sub.tally_entered_at|date:"d M Y"|default:sub.created_at|date:"d M Y" }}</div>
@@ -1053,7 +1053,7 @@
                 </thead>
                 <tbody class="small">
                     {% for sub in all_invoices %}
-                    <tr class="invoice-row all-row" id="row-{{ sub.submission_id }}" data-timestamp="{{ sub.created_at|date:'U' }}" data-submitter="{{ sub.employee.get_full_name|default:sub.employee.username|lower }}" data-vendor="{{ sub.party_name|lower }}" data-has-inv="{% if sub.invoice_number %}1{% else %}0{% endif %}" data-inv-num="{{ sub.invoice_number|lower }}" data-e-invoice="{% if sub.is_e_invoice is True %}YES{% elif sub.is_e_invoice is False %}NO{% else %}NEEDS_VERIFICATION{% endif %}">
+                    <tr class="invoice-row all-row" id="row-{{ sub.submission_id }}" data-timestamp="{{ sub.created_at|date:'U' }}" data-submitter="{{ sub.employee.get_full_name|default:sub.employee.username|lower }}" data-vendor="{{ sub.party_name|lower }}" data-has-inv="{% if sub.invoice_number %}1{% else %}0{% endif %}" data-inv-num="{{ sub.invoice_number|lower }}" data-e-invoice="{{ sub.e_invoice_status|default:'NEEDS_VERIFICATION' }}">
                         <td class="ps-3 fw-bold text-muted">{{ forloop.counter }}</td>
                         <td>
                             <div class="fw-bold text-dark">{{ sub.created_at|date:"d M Y" }}</div>
@@ -1163,6 +1163,43 @@
         {% endif %}
     </div>
     {% endif %}
+</div>
+
+<!-- Compact Modal for Inline E-Invoice? & IRN Correction on Accounts Dashboard -->
+<div class="modal fade" id="eInvoiceEditModal" tabindex="-1" aria-labelledby="eInvoiceEditModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-sm">
+        <div class="modal-content border-0 shadow">
+            <div class="modal-header py-2 bg-light">
+                <h6 class="modal-title fw-bold mb-0" id="eInvoiceEditModalLabel">Update E-Invoice? Status</h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form method="POST" id="eInvoiceEditForm" action="">
+                {% csrf_token %}
+                <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                <div class="modal-body py-3">
+                    <div class="small text-muted mb-2">Submission: <strong class="font-monospace text-dark" id="eInvModalSubId"></strong></div>
+                    <div class="mb-2">
+                        <label for="eInvModalStatus" class="form-label small fw-bold mb-1">E-Invoice? Status</label>
+                        <select name="e_invoice_status" id="eInvModalStatus" class="form-select form-select-sm fw-semibold" onchange="syncModalIrnFieldState()">
+                            <option value="HANDWRITTEN">HANDWRITTEN</option>
+                            <option value="YES">YES (E-Invoice)</option>
+                            <option value="NO">NO (Non E-Invoice)</option>
+                            <option value="NEEDS_VERIFICATION">NEEDS VERIFICATION</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="eInvModalIrn" class="form-label small fw-bold mb-1">IRN Number (64-Char Hex)</label>
+                        <input type="text" name="irn_number" id="eInvModalIrn" maxlength="64" class="form-control form-control-sm font-monospace text-uppercase" placeholder="64-character hex (0-9, A-F)">
+                        <div class="form-text" style="font-size: 0.7rem;">N/A for HANDWRITTEN and NO statuses.</div>
+                    </div>
+                </div>
+                <div class="modal-footer py-2 bg-light">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-sm btn-primary fw-bold">Save Correction</button>
+                </div>
+            </form>
+        </div>
+    </div>
 </div>
 
 <!-- ================================================================= -->
@@ -1298,7 +1335,7 @@ function filterDashboardTable(triggerEl, filterKey, filterVal) {
             }
         } else if (filterKey === 'e_invoice') {
             if (filterVal && filterVal !== 'ALL') {
-                show = ((row.dataset.eInvoice || '') === filterVal);
+                show = ((row.dataset.eInvoice || 'NEEDS_VERIFICATION') === filterVal);
             }
         } else if (filterKey === 'tally_status') {
             const chk = row.querySelector('.invoice-checkbox');
@@ -1390,7 +1427,9 @@ function quickSelectVendor(submissionId, vendorName) {
             }
             const ledgerEl = document.getElementById(`ledger-badge-${submissionId}`);
             if (ledgerEl && data.expense_ledger) {
-                ledgerEl.innerHTML = `<i class="bi bi-tag me-1"></i>${data.expense_ledger}`;
+                const iconEl = document.createElement('i');
+                iconEl.className = 'bi bi-tag me-1';
+                ledgerEl.replaceChildren(iconEl, document.createTextNode(data.expense_ledger));
             }
             const gstinEl = document.getElementById(`gstin-badge-${submissionId}`);
             if (gstinEl) {
@@ -1446,6 +1485,36 @@ function fallbackCopyText(text, onSuccess) {
         }
     } catch (e) {}
     document.body.removeChild(ta);
+}
+
+function syncModalIrnFieldState() {
+    const sel = document.getElementById('eInvModalStatus');
+    const irn = document.getElementById('eInvModalIrn');
+    if (!sel || !irn) return;
+    if (sel.value === 'NO' || sel.value === 'HANDWRITTEN') {
+        irn.value = '';
+        irn.readOnly = true;
+        irn.placeholder = 'N/A';
+    } else {
+        irn.readOnly = false;
+        irn.placeholder = '64-character hex (0-9, A-F)';
+    }
+}
+
+function openEInvoiceEditModal(subId, currentStatus, currentIrn) {
+    const form = document.getElementById('eInvoiceEditForm');
+    const subLabel = document.getElementById('eInvModalSubId');
+    const sel = document.getElementById('eInvModalStatus');
+    const irn = document.getElementById('eInvModalIrn');
+    if (!form || !sel || !irn) return;
+    form.action = '/invoices/' + encodeURIComponent(subId) + '/quick-update/';
+    if (subLabel) subLabel.textContent = subId;
+    sel.value = currentStatus || 'NEEDS_VERIFICATION';
+    irn.value = currentIrn || '';
+    syncModalIrnFieldState();
+    if (typeof bootstrap !== 'undefined' && bootstrap.Modal) {
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('eInvoiceEditModal')).show();
+    }
 }
 
 function filterHeaderVendorList(input) {

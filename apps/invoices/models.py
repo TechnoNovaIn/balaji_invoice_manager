@@ -179,12 +179,26 @@ class InvoiceSubmission(models.Model):
     STATUS_RETURNED = 'RETURNED'
     STATUS_RESUBMITTED = 'RESUBMITTED'
     STATUS_VERIFIED = 'VERIFIED'
+    STATUS_REJECTED = 'REJECTED'
 
     STATUS_CHOICES = [
         (STATUS_SUBMITTED, 'Submitted'),
         (STATUS_RETURNED, 'Returned for Correction'),
         (STATUS_RESUBMITTED, 'Resubmitted'),
         (STATUS_VERIFIED, 'Verified'),
+        (STATUS_REJECTED, 'Rejected'),
+    ]
+
+    EINV_STATUS_YES = 'YES'
+    EINV_STATUS_NO = 'NO'
+    EINV_STATUS_HANDWRITTEN = 'HANDWRITTEN'
+    EINV_STATUS_NEEDS_VERIFICATION = 'NEEDS_VERIFICATION'
+
+    E_INVOICE_STATUS_CHOICES = [
+        (EINV_STATUS_YES, 'YES'),
+        (EINV_STATUS_NO, 'NO'),
+        (EINV_STATUS_HANDWRITTEN, 'HANDWRITTEN'),
+        (EINV_STATUS_NEEDS_VERIFICATION, 'NEEDS VERIFICATION'),
     ]
 
     submission_id = models.CharField(
@@ -331,6 +345,17 @@ class InvoiceSubmission(models.Model):
         default=True,
         help_text="Financial safety gate: manual verification required"
     )
+    e_invoice_status = models.CharField(
+        max_length=24,
+        choices=E_INVOICE_STATUS_CHOICES,
+        default=EINV_STATUS_NEEDS_VERIFICATION,
+        db_index=True,
+        help_text="Combined E-Invoice? display status: YES, NO, HANDWRITTEN, or NEEDS_VERIFICATION"
+    )
+    e_invoice_manually_verified = models.BooleanField(
+        default=False,
+        help_text="True when operator manually updated E-Invoice? status; prevents silent OCR/Gemini overwrites."
+    )
     is_e_invoice = models.BooleanField(
         null=True,
         blank=True,
@@ -399,9 +424,11 @@ class InvoiceSubmission(models.Model):
 
     @property
     def e_invoice_status_label(self):
-        if self.is_e_invoice is True:
+        if self.e_invoice_status == self.EINV_STATUS_HANDWRITTEN:
+            return 'HANDWRITTEN'
+        if self.e_invoice_status == self.EINV_STATUS_YES or self.is_e_invoice is True:
             return 'YES'
-        if self.is_e_invoice is False:
+        if self.e_invoice_status == self.EINV_STATUS_NO or self.is_e_invoice is False:
             return 'NO'
         return 'NEEDS VERIFICATION'
 
@@ -409,16 +436,16 @@ class InvoiceSubmission(models.Model):
     def irn_display(self):
         """
         Safe presentation value for IRN column:
-        - Non-e-invoice -> 'N/A'
-        - Valid IRN -> complete 64-char IRN
-        - Identified as e-invoice without valid IRN -> 'IRN Not Found'
+        - HANDWRITTEN or confirmed NO -> 'N/A'
+        - Valid IRN -> complete 64-char hex IRN
+        - Marked YES without valid IRN -> 'IRN Not Found'
         - Insufficient info (NEEDS VERIFICATION) -> '' (pending check)
         """
-        if self.is_e_invoice is False:
+        if self.e_invoice_status in (self.EINV_STATUS_NO, self.EINV_STATUS_HANDWRITTEN) or self.is_e_invoice is False:
             return 'N/A'
         if self.is_irn_valid:
             return self.irn_number.strip().upper()
-        if self.is_e_invoice is True:
+        if self.e_invoice_status == self.EINV_STATUS_YES or self.is_e_invoice is True:
             return 'IRN Not Found'
         return ''
 

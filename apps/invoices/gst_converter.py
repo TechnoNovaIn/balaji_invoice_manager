@@ -2,6 +2,7 @@ import io
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from datetime import datetime
+from .export_security import safe_xlsx_value, sanitize_spreadsheet_text
 
 
 def create_gst_portal_excel(invoices_data: list) -> io.BytesIO:
@@ -88,12 +89,12 @@ def create_gst_portal_excel(invoices_data: list) -> io.BytesIO:
             pos = state_map.get(state_code, f"{state_code}-Other")
 
         row = [
-            gstin,
-            party_name,
-            inv_no,
-            inv_date_str,
+            safe_xlsx_value(gstin),
+            safe_xlsx_value(party_name),
+            safe_xlsx_value(inv_no),
+            safe_xlsx_value(inv_date_str),
             round(inv_value, 2),
-            pos,
+            safe_xlsx_value(pos),
             "N",
             "",
             "Regular",

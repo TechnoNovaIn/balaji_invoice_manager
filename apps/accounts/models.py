@@ -26,9 +26,17 @@ class Department(models.Model):
 
 class UserRole(models.TextChoices):
     EMPLOYEE = 'EMPLOYEE', _('Employee (Invoice Collector)')
+    EXTERNAL_SUBMITTER = 'EXTERNAL_SUBMITTER', _('External Submitter')
     NAVEEN = 'NAVEEN', _('Naveen (Accounts Operator)')
+    ACCOUNTS = 'ACCOUNTS', _('Accounts Operator')
     ADMIN = 'ADMIN', _('System Administrator')
     MANAGEMENT = 'MANAGEMENT', _('Management (Read-Only Executive)')
+
+
+class AccountStatus(models.TextChoices):
+    ACTIVE = 'ACTIVE', _('Active')
+    SUSPENDED = 'SUSPENDED', _('Suspended')
+    DEACTIVATED = 'DEACTIVATED', _('Deactivated')
 
 
 class User(AbstractUser):
@@ -36,11 +44,47 @@ class User(AbstractUser):
     Custom User Model for Balaji InvoiceHub with strict Role-Based Access Control (RBAC).
     """
     role = models.CharField(
-        max_length=20,
+        max_length=24,
         choices=UserRole.choices,
         default=UserRole.EMPLOYEE,
         db_index=True,
         help_text="Designated role defining authorization level across InvoiceHub."
+    )
+    has_admin_access = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text="Grants System Administrator permissions alongside the user's primary role."
+    )
+    has_accounts_access = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text="Grants Accounts Operations permissions alongside the user's primary role."
+    )
+    can_upload_invoices = models.BooleanField(
+        default=True,
+        help_text="Permits submitter accounts to upload new invoices."
+    )
+    can_resubmit_invoices = models.BooleanField(
+        default=True,
+        help_text="Permits submitter accounts to resubmit returned invoices."
+    )
+    account_status = models.CharField(
+        max_length=20,
+        choices=AccountStatus.choices,
+        default=AccountStatus.ACTIVE,
+        db_index=True,
+        help_text="Lifecycle status controlling authentication and portal access."
+    )
+    suspended_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Timestamp when account was suspended by an administrator."
+    )
+    suspended_reason = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+        help_text="Administrative reason recorded when suspending the account."
     )
     phone_number = models.CharField(
         max_length=20,
@@ -54,12 +98,12 @@ class User(AbstractUser):
         null=True,
         blank=True,
         related_name='members',
-        help_text="Associated business department in Balaji Transports."
+        help_text="Associated business department or external group in Balaji Transports."
     )
     must_change_password = models.BooleanField(
         default=False,
         db_index=True,
-        help_text="Flag requiring the employee to set their own password upon first login."
+        help_text="Flag requiring the user to set their own password upon first login."
     )
 
     class Meta:
@@ -73,47 +117,82 @@ class User(AbstractUser):
         display = full if full else self.username
         return f"{display} [{self.get_role_display()}]"
 
-    # Role Convenience Properties
+    # Role & Status Convenience Properties
+    @property
+    def is_operational_active(self) -> bool:
+        return bool(self.is_active and self.account_status == AccountStatus.ACTIVE)
+
     @property
     def is_employee(self) -> bool:
         return self.role == UserRole.EMPLOYEE
 
     @property
+    def is_external_submitter(self) -> bool:
+        return self.role == UserRole.EXTERNAL_SUBMITTER
+
+    @property
+    def is_submitter(self) -> bool:
+        return self.role in (UserRole.EMPLOYEE, UserRole.EXTERNAL_SUBMITTER)
+
+    @property
     def is_naveen(self) -> bool:
-        return self.role == UserRole.NAVEEN
+        return self.role in (UserRole.NAVEEN, UserRole.ACCOUNTS) or self.has_accounts_access
+
+    @property
+    def is_accounts(self) -> bool:
+        return self.is_naveen
 
     @property
     def is_admin_role(self) -> bool:
-        return self.role == UserRole.ADMIN or self.is_superuser
+        return self.role == UserRole.ADMIN or self.is_superuser or self.has_admin_access
 
     @property
     def is_management(self) -> bool:
         return self.role == UserRole.MANAGEMENT
 
+    @property
+    def is_privileged_user(self) -> bool:
+        return self.is_admin_role or self.is_naveen or self.is_management
+
+    @property
+    def can_view_all_invoices(self) -> bool:
+        return self.is_operational_active and (self.is_naveen or self.is_admin_role or self.is_management)
+
     # Fine-Grained Permission Capabilities
     def can_submit_invoices(self) -> bool:
-        return self.is_active and self.is_employee
+        return self.is_operational_active and self.is_submitter and self.can_upload_invoices
+
+    def can_resubmit_own_invoices(self) -> bool:
+        return self.is_operational_active and (
+            (self.is_submitter and self.can_resubmit_invoices) or self.is_admin_role
+        )
 
     def can_verify_invoices(self) -> bool:
-        return self.is_active and self.is_naveen
+        return self.is_operational_active and self.is_naveen
 
     def can_record_advances(self) -> bool:
-        return self.is_active and self.is_naveen
+        return self.is_operational_active and self.is_naveen
 
     def can_manage_reminders(self) -> bool:
-        return self.is_active and self.is_naveen
+        return self.is_operational_active and self.is_naveen
 
     def can_convert_tally(self) -> bool:
-        return self.is_active and self.is_naveen
+        return self.is_operational_active and self.is_naveen
 
     def can_view_financial_reports(self) -> bool:
-        return self.is_active and (self.is_naveen or self.is_management or self.is_admin_role)
+        return self.is_operational_active and (self.is_naveen or self.is_management or self.is_admin_role)
 
     def can_manage_users(self) -> bool:
-        return self.is_active and self.is_admin_role
+        return self.is_operational_active and self.is_admin_role
 
     def can_trigger_backups(self) -> bool:
-        return self.is_active and self.is_admin_role
+        return self.is_operational_active and self.is_admin_role
+
+    def can_view_audit_logs(self) -> bool:
+        return self.is_operational_active and self.is_admin_role
+
+    def can_manage_settings(self) -> bool:
+        return self.is_operational_active and self.is_admin_role
 
 
 class AuditLog(models.Model):

@@ -1,0 +1,74 @@
+{% extends 'base.html' %}
+{% block title %}User History: {{ target_user.username }} - Balaji InvoiceHub{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+    <div>
+        <h2 class="fw-bold mb-1">Submission & Activity History: @{{ target_user.username }}</h2>
+        <p class="text-secondary mb-0">{{ target_user.get_full_name|default:target_user.username }} &middot; {{ target_user.get_role_display }} &middot; Total Submissions: {{ total_submissions }}</p>
+    </div>
+    <div class="d-flex gap-2">
+        <a href="{% url 'accounts:user_edit' target_user.pk %}" class="btn btn-outline-primary">Edit User</a>
+        <a href="{% url 'accounts:user_list' %}" class="btn btn-outline-secondary">Back to Users</a>
+    </div>
+</div>
+
+<div class="row g-4">
+    <div class="col-lg-7">
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-white fw-bold">Submitted Invoices</div>
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Submission ID</th>
+                            <th>Vendor / Invoice No.</th>
+                            <th>Status</th>
+                            <th>Submitted</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for sub in page_obj %}
+                        <tr>
+                            <td>
+                                <a href="{% url 'invoices:submission_detail' sub.submission_id %}" class="fw-semibold text-decoration-none">
+                                    {{ sub.submission_id }}
+                                </a>
+                            </td>
+                            <td>
+                                <div>{{ sub.party_name|default:"Pending Extraction" }}</div>
+                                <div class="small text-secondary">{{ sub.invoice_number|default:"—" }}</div>
+                            </td>
+                            <td><span class="badge bg-secondary-subtle text-dark">{{ sub.get_status_display }}</span></td>
+                            <td class="small text-secondary">{{ sub.created_at|date:"M d, Y H:i" }}</td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="4" class="text-center py-4 text-secondary">No invoice submissions recorded.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-5">
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-white fw-bold">Security & Audit Activity</div>
+            <div class="list-group list-group-flush">
+                {% for log in user_audits %}
+                <div class="list-group-item">
+                    <div class="d-flex justify-content-between">
+                        <span class="fw-semibold small">{{ log.action }}</span>
+                        <span class="text-secondary small">{{ log.timestamp|date:"M d, H:i" }}</span>
+                    </div>
+                    <div class="small text-secondary mt-1">
+                        Actor: {{ log.user.username|default:"System" }}{% if log.ip_address %} &middot; IP: {{ log.ip_address }}{% endif %}
+                    </div>
+                </div>
+                {% empty %}
+                <div class="list-group-item text-secondary text-center py-4">No audit events recorded for this user.</div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

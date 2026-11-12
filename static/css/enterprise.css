@@ -202,13 +202,15 @@ body {
   letter-spacing: 0.02em;
 }
 
-.role-badge-EMPLOYEE {
+.role-badge-EMPLOYEE,
+.role-badge-EXTERNAL_SUBMITTER {
   background-color: #f0fdfa;
   color: #0f766e;
   border: 1px solid #ccfbf1;
 }
 
-.role-badge-NAVEEN {
+.role-badge-NAVEEN,
+.role-badge-ACCOUNTS {
   background-color: #f0f9ff;
   color: #0369a1;
   border: 1px solid #e0f2fe;

@@ -13,6 +13,7 @@ urlpatterns = [
     path('resubmit/<str:submission_id>/', views.resubmit_invoice, name='resubmit'),
     path('document/<int:doc_id>/serve/', views.serve_document, name='serve_document'),
     path('action/<str:submission_id>/return/', views.naveen_return_invoice, name='naveen_return'),
+    path('action/<str:submission_id>/reject/', views.naveen_reject_invoice, name='naveen_reject'),
     path('action/<str:submission_id>/verify/', views.naveen_verify_invoice, name='naveen_verify'),
     path('action/<str:submission_id>/split/', views.split_invoice_view, name='split_invoice'),
     path('action/<str:submission_id>/merge/', views.merge_invoices_view, name='merge_invoices'),
