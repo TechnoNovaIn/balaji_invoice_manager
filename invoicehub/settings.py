@@ -113,21 +113,37 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'invoicehub.wsgi.application'
 
-# Database Configuration (Strictly PostgreSQL 18 - SQLite is prohibited in production)
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.getenv('DB_NAME', 'balaji_invoicehub_db'),
-        'USER': os.getenv('DB_USER', 'postgres'),
-        'PASSWORD': os.getenv('DB_PASSWORD', ''),
-        'HOST': os.getenv('DB_HOST', '127.0.0.1'),
-        'PORT': os.getenv('DB_PORT', '5432'),
-        'CONN_MAX_AGE': 600,
-        'OPTIONS': {
-            'connect_timeout': 10,
+# Database Configuration (supports SQLite or PostgreSQL via DB_ENGINE)
+DB_ENGINE = os.getenv('DB_ENGINE', 'django.db.backends.sqlite3').strip()
+if 'sqlite' in DB_ENGINE.lower():
+    _sqlite_name = os.getenv('DB_NAME', 'db.sqlite3').strip()
+    _sqlite_path = Path(_sqlite_name)
+    if not _sqlite_path.is_absolute():
+        _sqlite_path = BASE_DIR / _sqlite_path
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': _sqlite_path,
+            'OPTIONS': {
+                'timeout': 30,
+            },
         }
     }
-}
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': os.getenv('DB_NAME', 'balaji_invoicehub_db'),
+            'USER': os.getenv('DB_USER', 'postgres'),
+            'PASSWORD': os.getenv('DB_PASSWORD', ''),
+            'HOST': os.getenv('DB_HOST', '127.0.0.1'),
+            'PORT': os.getenv('DB_PORT', '5432'),
+            'CONN_MAX_AGE': 600,
+            'OPTIONS': {
+                'connect_timeout': 10,
+            }
+        }
+    }
 
 # Custom User Model definition (Mandatory before initial migration)
 AUTH_USER_MODEL = 'accounts.User'

@@ -1,6 +1,7 @@
 # Run as Administrator on the target Windows 11 production server.
-# Registers BalajiInvoiceHub (Waitress) via NSSM and schedules daily backups,
-# weekly sandbox restore verification drills, and startup OCR recovery tasks.
+# Registers BalajiInvoiceHub (Waitress) via NSSM and schedules daily backups
+# and weekly sandbox restore verification drills. Startup OCR recovery is
+# executed once on boot by serve_production.py.
 param(
     [string]$ProjectRoot = "C:\Apps\balaji_invoice_manager",
     [string]$NssmPath = "C:\Tools\nssm\nssm.exe"
@@ -21,12 +22,11 @@ if (-not (Test-Path $LogDir)) {
     New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
 }
 
-# 1. Install / Update Waitress Windows Service
+# 1. Install / Update Waitress Windows Service (SQLite-backed; no PostgreSQL service dependency)
 & $NssmPath stop BalajiInvoiceHub 2>$null | Out-Null
 & $NssmPath remove BalajiInvoiceHub confirm 2>$null | Out-Null
 & $NssmPath install BalajiInvoiceHub $PythonExe "`"$ServeScript`""
 & $NssmPath set BalajiInvoiceHub AppDirectory $ProjectRoot
-& $NssmPath set BalajiInvoiceHub DependOnService postgresql-x64-18
 & $NssmPath set BalajiInvoiceHub AppStdout (Join-Path $LogDir "waitress_service_stdout.log")
 & $NssmPath set BalajiInvoiceHub AppStderr (Join-Path $LogDir "waitress_service_stderr.log")
 & $NssmPath set BalajiInvoiceHub AppRotateFiles 1
@@ -45,10 +45,8 @@ $RestoreAction = New-ScheduledTaskAction -Execute $PythonExe -Argument "manage.p
 $RestoreTrigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At 3:00AM
 Register-ScheduledTask -TaskName "BalajiInvoiceHub-WeeklyRestoreDrill" -Action $RestoreAction -Trigger $RestoreTrigger -RunLevel Highest -Force
 
-# 4. Boot-time OCR Orphaned Job Recovery Safety Check (2 min stale guard)
-$OcrAction = New-ScheduledTaskAction -Execute $PythonExe -Argument "manage.py recover_incomplete_uploads --stale-minutes=2" -WorkingDirectory $ProjectRoot
-$OcrTrigger = New-ScheduledTaskTrigger -AtStartup
-Register-ScheduledTask -TaskName "BalajiInvoiceHub-StartupOcrRecovery" -Action $OcrAction -Trigger $OcrTrigger -RunLevel Highest -Force
+# 4. Remove redundant boot-time OCR recovery task (serve_production.py runs startup recovery once on boot)
+Unregister-ScheduledTask -TaskName "BalajiInvoiceHub-StartupOcrRecovery" -Confirm:$false -ErrorAction SilentlyContinue
 
 Write-Host "Service and scheduled tasks registered. Start service with: Start-Service BalajiInvoiceHub"
 

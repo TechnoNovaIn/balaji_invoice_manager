@@ -455,13 +455,13 @@ class DocumentTypeClassificationTests(TestCase):
         # Separate "Invoice Type" column & dropdown must NOT exist anywhere
         self.assertNotIn("Invoice Type", html)
         self.assertNotIn('name="document_type"', html)
-        # Combined E-Invoice? column and all 4 statuses + IRN behaviors must render
+        # Combined E-Invoice? column and simplified YES/NO + IRN behaviors must render
         self.assertIn("E-Invoice?", html)
         self.assertIn("IRN Number", html)
-        self.assertIn("HANDWRITTEN", html)
         self.assertIn("YES", html)
         self.assertIn("NO", html)
-        self.assertIn("NEEDS VERIFICATION", html)
+        self.assertNotIn("NEEDS VERIFICATION", html)
+        self.assertNotIn('<option value="HANDWRITTEN">', html)
         self.assertIn("N/A", html)
         self.assertIn(VALID_IRN, html)
         self.assertIn("IRN Not Found", html)

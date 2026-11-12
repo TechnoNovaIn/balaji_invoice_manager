@@ -246,5 +246,7 @@ class TestInterruptedOCRRecoverySafety:
             assert crashed_doc.processing_status == UploadedDocument.STATUS_QUEUED
             assert not lock_file.exists()
         finally:
+            active_lock_file.unlink(missing_ok=True)
+            lock_file.unlink(missing_ok=True)
             _release_worker_lock(active_doc.id)
             _release_worker_lock(crashed_doc.id)

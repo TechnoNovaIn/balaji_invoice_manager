@@ -144,26 +144,20 @@
                 {% endif %}
                 <div>
                     <span class="text-muted small text-uppercase fw-semibold d-block" style="font-size: 0.72rem;">E-Invoice?</span>
-                    {% if submission.e_invoice_status == 'HANDWRITTEN' %}
-                        <span class="badge text-white" style="background-color: #fd7e14;">HANDWRITTEN</span>
-                    {% elif submission.e_invoice_status == 'YES' or submission.is_e_invoice is True %}
+                    {% if submission.e_invoice_status == 'YES' or submission.is_e_invoice is True %}
                         <span class="badge bg-success">YES</span>
-                    {% elif submission.e_invoice_status == 'NO' or submission.is_e_invoice is False %}
-                        <span class="badge bg-secondary">NO</span>
                     {% else %}
-                        <span class="badge bg-warning text-dark">NEEDS VERIFICATION</span>
+                        <span class="badge bg-secondary">NO</span>
                     {% endif %}
                 </div>
                 <div>
                     <span class="text-muted small text-uppercase fw-semibold d-block" style="font-size: 0.72rem;">IRN Number</span>
-                    {% if submission.e_invoice_status == 'NO' or submission.e_invoice_status == 'HANDWRITTEN' or submission.is_e_invoice is False %}
+                    {% if submission.e_invoice_status != 'YES' and submission.is_e_invoice is not True %}
                         <span class="text-muted fw-semibold small">N/A</span>
                     {% elif submission.is_irn_valid %}
                         <code class="small text-dark bg-light border rounded px-1">{{ submission.irn_number }}</code>
-                    {% elif submission.e_invoice_status == 'YES' or submission.is_e_invoice is True %}
-                        <span class="badge bg-danger bg-opacity-10 text-danger border border-danger">IRN Not Found</span>
                     {% else %}
-                        <span class="text-muted small fst-italic">Pending Verification</span>
+                        <span class="badge bg-danger bg-opacity-10 text-danger border border-danger">IRN Not Found</span>
                     {% endif %}
                 </div>
             </div>
