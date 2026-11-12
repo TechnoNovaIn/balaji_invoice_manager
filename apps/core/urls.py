@@ -10,5 +10,7 @@ urlpatterns = [
     path('dashboard/admin/', views.admin_dashboard, name='admin_dashboard'),
     path('dashboard/management/', views.management_dashboard, name='management_dashboard'),
     path('health/', views.health_check, name='health_check'),
+    path('offline/', views.offline_view, name='offline'),
+    path('sw.js', views.service_worker_view, name='service_worker'),
 ]
 

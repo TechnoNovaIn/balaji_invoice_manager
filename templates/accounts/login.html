@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% load static %}
 
 {% block title %}Sign In - Balaji InvoiceHub{% endblock %}
 
@@ -8,9 +9,7 @@
         <div class="card card-enterprise shadow-sm border-0">
             <!-- Header with deep navy accent -->
             <div class="p-4 text-center border-bottom bg-white" style="border-top-left-radius: 12px; border-top-right-radius: 12px;">
-                <div class="mx-auto mb-3 d-flex align-items-center justify-content-center text-white rounded-3 shadow-sm" style="width: 54px; height: 54px; background: linear-gradient(135deg, var(--primary-navy), var(--secondary-navy));">
-                    <i class="bi bi-truck-flatbed fs-2 text-info"></i>
-                </div>
+                <img src="{% static 'img/logo.png' %}" alt="Balaji InvoiceHub" class="mx-auto mb-3 d-block shadow-sm" style="width: 68px; height: 68px; border-radius: 16px; object-fit: contain;">
                 <h4 class="fw-bold mb-1" style="color: var(--primary-navy); letter-spacing: -0.02em;">Balaji <span style="color: var(--accent-teal);">InvoiceHub</span></h4>
                 <p class="text-secondary small mb-0">Internal Invoice & Transport Receipts Portal</p>
             </div>

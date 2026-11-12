@@ -44,7 +44,8 @@ class Command(BaseCommand):
                 f"Recovery complete: found={summary['total_found']}, "
                 f"recovered={summary['recovered_ids']}, "
                 f"already_completed={summary['already_completed_ids']}, "
-                f"failed_missing={summary['failed_missing_ids']}"
+                f"failed_missing={summary['failed_missing_ids']}, "
+                f"skipped_active={summary.get('skipped_active_ids', [])}"
             )
         )
 

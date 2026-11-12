@@ -2,6 +2,7 @@ from django.contrib import messages
 from django.contrib.auth import logout
 from django.shortcuts import redirect
 from django.urls import reverse
+from django.utils.cache import patch_vary_headers
 
 
 class ForcePasswordChangeMiddleware:
@@ -27,10 +28,45 @@ class ForcePasswordChangeMiddleware:
                 allowed_paths = [
                     reverse('accounts:change_password'),
                     reverse('accounts:logout'),
+                    '/sw.js',
+                    '/offline/',
                 ]
                 path = request.path
                 if not any(path.startswith(p) for p in allowed_paths) and not path.startswith('/static/'):
                     return redirect('accounts:change_password')
 
         return self.get_response(request)
+
+
+class SensitiveResponseNoCacheMiddleware:
+    """
+    Prevents browsers, Service Workers, and intermediate proxies from caching
+    authenticated HTML pages, login pages, or sensitive financial/invoice routes.
+    """
+    _SENSITIVE_PREFIXES = (
+        '/accounts/',
+        '/invoices/',
+        '/dashboard/',
+        '/backup/',
+        '/admin/',
+    )
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        response = self.get_response(request)
+        path = request.path or ''
+        if path.startswith('/static/') or path in ('/sw.js', '/offline/'):
+            return response
+
+        is_authenticated = bool(getattr(getattr(request, 'user', None), 'is_authenticated', False))
+        if is_authenticated or any(path.startswith(p) for p in self._SENSITIVE_PREFIXES):
+            if not response.has_header('Cache-Control'):
+                response['Cache-Control'] = 'private, no-store, no-cache, must-revalidate, max-age=0'
+            if not response.has_header('Pragma'):
+                response['Pragma'] = 'no-cache'
+            patch_vary_headers(response, ('Cookie',))
+
+        return response
 

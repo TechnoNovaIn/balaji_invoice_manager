@@ -531,3 +531,16 @@ class DocumentTypeClassificationTests(TestCase):
         ).content.decode("utf-8")
         self.assertIn("Financial Discrepancies Detected", ws_html)
 
+    def test_14_mixed_preprinted_handwritten_bill_without_gemini_sets_handwritten(self):
+        # Pre-printed bill books with handwritten entries classify as MIXED in local OCR (gemini_data=None)
+        res = evaluate_e_invoice_status(
+            raw_text="KARNATAKA TYRE CARE CENTRE\nBill No 2305\nTotal 1062.00",
+            qr_data={},
+            gemini_data=None,
+            appearance_data={"document_type": DOC_TYPE_MIXED, "confidence": 0.82},
+        )
+        self.assertEqual(res["e_invoice_status"], EINV_STATUS_HANDWRITTEN)
+        self.assertIsNone(res["is_e_invoice"])
+        self.assertEqual(res["irn_number"], "")
+        self.assertTrue(res["e_invoice_manual_review"])
+

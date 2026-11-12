@@ -2,8 +2,10 @@ import logging
 from django.shortcuts import render, redirect
 
 logger = logging.getLogger(__name__)
+from pathlib import Path
+from django.conf import settings
 from django.contrib.auth.decorators import login_required
-from django.http import JsonResponse
+from django.http import HttpResponse, JsonResponse
 from django.db import connection
 from django.db.models import Q
 from django.core.paginator import Paginator
@@ -245,6 +247,28 @@ def management_dashboard(request):
         'top_suppliers': top_suppliers,
         'ledger_dist': ledger_dist,
     })
+
+
+@require_GET
+def offline_view(request):
+    """Non-sensitive static offline fallback page for PWA navigation requests."""
+    response = render(request, 'core/offline.html')
+    response['Cache-Control'] = 'public, max-age=300'
+    return response
+
+
+@require_GET
+def service_worker_view(request):
+    """
+    Serves the PWA Service Worker from root '/' scope with no-cache headers
+    so browser updates apply immediately and scope covers the full application.
+    """
+    sw_path = Path(settings.BASE_DIR) / 'static' / 'js' / 'sw.js'
+    content = sw_path.read_text(encoding='utf-8')
+    response = HttpResponse(content, content_type='application/javascript; charset=utf-8')
+    response['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response['Service-Worker-Allowed'] = '/'
+    return response
 
 
 @require_GET
