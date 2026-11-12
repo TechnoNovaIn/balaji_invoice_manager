@@ -1,12 +1,15 @@
 import os
+import json
 import time
 import logging
 import threading
 import hashlib
 from datetime import timedelta
+from pathlib import Path
 from typing import Dict, Any, Optional, List
 from decimal import Decimal
 
+from django.conf import settings
 from django.db import transaction, connection, close_old_connections
 from django.utils import timezone
 from django.core.files.base import ContentFile
@@ -23,6 +26,97 @@ logger = logging.getLogger(__name__)
 
 _ACTIVE_LOCK = threading.Lock()
 _ACTIVE_DOCUMENT_IDS = set()
+_ACTIVE_THREADS: Dict[int, threading.Thread] = {}
+
+
+def _worker_lock_dir() -> Path:
+    lock_dir = Path(settings.MEDIA_ROOT) / '.worker_locks'
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    return lock_dir
+
+
+def _is_pid_alive(pid: int) -> bool:
+    """Cross-platform check for whether a worker process PID is still running."""
+    if not pid or pid <= 0:
+        return False
+    if os.name == 'nt':
+        try:
+            import ctypes
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            STILL_ACTIVE = 259
+            kernel32 = ctypes.windll.kernel32
+            handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+            if not handle:
+                return False
+            try:
+                exit_code = ctypes.c_ulong()
+                if kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                    return exit_code.value == STILL_ACTIVE
+                return True
+            finally:
+                kernel32.CloseHandle(handle)
+        except Exception:
+            return False
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except OSError:
+        return False
+
+
+def _write_worker_lock(doc_id: int) -> None:
+    try:
+        lock_file = _worker_lock_dir() / f"doc_{doc_id}.lock"
+        lock_file.write_text(
+            json.dumps({'pid': os.getpid(), 'doc_id': doc_id, 'started_at': timezone.now().isoformat()}),
+            encoding='utf-8',
+        )
+    except Exception:
+        logger.debug("Could not write worker lock for UploadedDocument #%s", doc_id, exc_info=True)
+
+
+def _release_worker_lock(doc_id: int) -> None:
+    try:
+        lock_file = _worker_lock_dir() / f"doc_{doc_id}.lock"
+        if lock_file.exists():
+            lock_file.unlink()
+    except Exception:
+        logger.debug("Could not remove worker lock for UploadedDocument #%s", doc_id, exc_info=True)
+
+
+def _has_live_external_worker(doc_id: int) -> bool:
+    """Return True if another live OS process holds the worker lock for doc_id."""
+    try:
+        lock_file = _worker_lock_dir() / f"doc_{doc_id}.lock"
+        if not lock_file.exists():
+            return False
+        data = json.loads(lock_file.read_text(encoding='utf-8'))
+        pid = int(data.get('pid', 0))
+        if pid == os.getpid():
+            with _ACTIVE_LOCK:
+                return doc_id in _ACTIVE_DOCUMENT_IDS
+        if _is_pid_alive(pid):
+            return True
+        # Stale lock left behind by terminated/crashed process -> clean up
+        _release_worker_lock(doc_id)
+        return False
+    except Exception:
+        return False
+
+
+def wait_for_active_jobs(timeout: float = 15.0) -> int:
+    """Wait up to `timeout` seconds for active OCR threads to finish cleanly during shutdown."""
+    deadline = time.monotonic() + max(0.0, timeout)
+    with _ACTIVE_LOCK:
+        threads = list(_ACTIVE_THREADS.values())
+    remaining = 0
+    for t in threads:
+        left = deadline - time.monotonic()
+        if left > 0 and t.is_alive():
+            t.join(timeout=left)
+        if t.is_alive():
+            remaining += 1
+    return remaining
 
 
 def get_active_processing_ids() -> set:
@@ -33,58 +127,85 @@ def get_active_processing_ids() -> set:
 def get_incomplete_documents(stale_minutes: int = 0):
     """
     Identifies UploadedDocument records left in QUEUED or PROCESSING states
-    (e.g., after an unexpected server restart) that are not actively running in this worker.
+    (e.g., after an unexpected server restart) that are not actively running in
+    this process or another live OS worker process.
     """
-    active_ids = get_active_processing_ids()
+    active_ids = set(get_active_processing_ids())
     qs = UploadedDocument.objects.filter(
         processing_status__in=[UploadedDocument.STATUS_QUEUED, UploadedDocument.STATUS_PROCESSING]
     ).exclude(id__in=active_ids).order_by('created_at')
     if stale_minutes and stale_minutes > 0:
         cutoff = timezone.now() - timedelta(minutes=stale_minutes)
         qs = qs.filter(updated_at__lte=cutoff)
+
+    live_external_ids = [doc_id for doc_id in qs.values_list('id', flat=True) if _has_live_external_worker(doc_id)]
+    if live_external_ids:
+        qs = qs.exclude(id__in=live_external_ids)
     return qs
 
 
 def recover_incomplete_documents(stale_minutes: int = 0, requeue_only: bool = False) -> Dict[str, Any]:
     """
     Safely recovers orphaned QUEUED/PROCESSING UploadedDocument records without
-    losing uploaded files or duplicating already-created submissions.
+    losing uploaded files, hijacking live workers, or duplicating already-created submissions.
     """
-    incomplete_docs = list(get_incomplete_documents(stale_minutes=stale_minutes))
+    candidate_ids = list(get_incomplete_documents(stale_minutes=stale_minutes).values_list('id', flat=True))
     summary = {
-        'total_found': len(incomplete_docs),
+        'total_found': 0,
         'recovered_ids': [],
         'already_completed_ids': [],
         'failed_missing_ids': [],
+        'skipped_active_ids': [],
     }
 
-    for doc in incomplete_docs:
-        if InvoiceSubmission.objects.filter(source_document=doc).exists():
-            doc.processing_status = UploadedDocument.STATUS_DETECTION_COMPLETED
-            doc.progress_percent = 100
-            doc.current_stage = "Recovered: Submissions already generated."
-            doc.save(update_fields=['processing_status', 'progress_percent', 'current_stage'])
-            summary['already_completed_ids'].append(doc.id)
+    for doc_id in candidate_ids:
+        if doc_id in get_active_processing_ids() or _has_live_external_worker(doc_id):
+            summary['skipped_active_ids'].append(doc_id)
             continue
 
-        file_exists = bool(doc.original_file and doc.original_file.storage.exists(doc.original_file.name))
-        if not file_exists:
-            doc.processing_status = UploadedDocument.STATUS_FAILED
-            doc.error_message = "Original uploaded file is missing from storage during crash recovery."
-            doc.current_stage = "Processing Failed: Original uploaded file missing"
-            doc.save(update_fields=['processing_status', 'error_message', 'current_stage'])
-            summary['failed_missing_ids'].append(doc.id)
-            continue
+        should_dispatch = False
+        with transaction.atomic():
+            doc = (
+                UploadedDocument.objects.select_for_update(skip_locked=True)
+                .filter(id=doc_id)
+                .first()
+            )
+            if doc is None or doc.processing_status not in (
+                UploadedDocument.STATUS_QUEUED,
+                UploadedDocument.STATUS_PROCESSING,
+            ):
+                summary['skipped_active_ids'].append(doc_id)
+                continue
 
-        doc.processing_status = UploadedDocument.STATUS_QUEUED
-        doc.current_stage = "Recovered after server restart — queued for processing"
-        doc.error_message = ''
-        doc.progress_percent = 5
-        doc.save(update_fields=['processing_status', 'current_stage', 'error_message', 'progress_percent'])
-        summary['recovered_ids'].append(doc.id)
+            summary['total_found'] += 1
 
-        if not requeue_only:
-            dispatch_background_processing(uploaded_document_id=doc.id, force_recover=True)
+            if InvoiceSubmission.objects.filter(source_document=doc).exists():
+                doc.processing_status = UploadedDocument.STATUS_DETECTION_COMPLETED
+                doc.progress_percent = 100
+                doc.current_stage = "Recovered: Submissions already generated."
+                doc.save(update_fields=['processing_status', 'progress_percent', 'current_stage', 'updated_at'])
+                summary['already_completed_ids'].append(doc.id)
+                continue
+
+            file_exists = bool(doc.original_file and doc.original_file.storage.exists(doc.original_file.name))
+            if not file_exists:
+                doc.processing_status = UploadedDocument.STATUS_FAILED
+                doc.error_message = "Original uploaded file is missing from storage during crash recovery."
+                doc.current_stage = "Processing Failed: Original uploaded file missing"
+                doc.save(update_fields=['processing_status', 'error_message', 'current_stage', 'updated_at'])
+                summary['failed_missing_ids'].append(doc.id)
+                continue
+
+            doc.processing_status = UploadedDocument.STATUS_QUEUED
+            doc.current_stage = "Recovered after server restart — queued for processing"
+            doc.error_message = ''
+            doc.progress_percent = 5
+            doc.save(update_fields=['processing_status', 'current_stage', 'error_message', 'progress_percent', 'updated_at'])
+            summary['recovered_ids'].append(doc.id)
+            should_dispatch = not requeue_only
+
+        if should_dispatch:
+            dispatch_background_processing(uploaded_document_id=doc_id, force_recover=True)
 
     return summary
 
@@ -146,6 +267,7 @@ def process_uploaded_document_task(
                     return []
                 _ACTIVE_DOCUMENT_IDS.add(uploaded_doc_id)
                 registered_active = True
+                _write_worker_lock(uploaded_doc_id)
 
             file_name = uploaded_doc.file_name
             file_sha256 = uploaded_doc.file_sha256
@@ -156,7 +278,7 @@ def process_uploaded_document_task(
             uploaded_doc.error_message = ''
             uploaded_doc.current_stage = f"Document Received & Cryptographic Checksum Verified ({file_sha256[:12]}...)"
             uploaded_doc.progress_percent = 10
-            uploaded_doc.save(update_fields=['processing_status', 'error_message', 'current_stage', 'progress_percent'])
+            uploaded_doc.save(update_fields=['processing_status', 'error_message', 'current_stage', 'progress_percent', 'updated_at'])
 
         if not uploaded_doc.original_file or not uploaded_doc.original_file.storage.exists(uploaded_doc.original_file.name):
             raise FileNotFoundError(f"Uploaded source file missing from storage for UploadedDocument #{uploaded_doc_id}.")
@@ -175,7 +297,7 @@ def process_uploaded_document_task(
 
             uploaded_doc.current_stage = f"Classifying {total_pgs} pages (Digital / Scanned / Mixed / Blank)..."
             uploaded_doc.progress_percent = 25
-            uploaded_doc.save(update_fields=['total_pages', 'current_stage', 'progress_percent'])
+            uploaded_doc.save(update_fields=['total_pages', 'current_stage', 'progress_percent', 'updated_at'])
 
             timer.start_timing('page_classification_ms')
             classifications = classify_document_pages(doc_fitz)
@@ -190,7 +312,7 @@ def process_uploaded_document_task(
         # Stage 3: Conditional text extraction & OCR
         uploaded_doc.current_stage = f"Extracting text & conditional OCR ({digital_count} digital, {scanned_count} scanned, {mixed_count} mixed)..."
         uploaded_doc.progress_percent = 50
-        uploaded_doc.save(update_fields=['current_stage', 'progress_percent'])
+        uploaded_doc.save(update_fields=['current_stage', 'progress_percent', 'updated_at'])
 
         # Stage 4: Segmentation & invoice boundary detection
         segments = segment_and_extract_pdf(file_path, timer=timer)
@@ -201,12 +323,12 @@ def process_uploaded_document_task(
         uploaded_doc.progress_percent = 75
         uploaded_doc.invoices_detected = len(segments)
         uploaded_doc.pages_processed = total_pgs
-        uploaded_doc.save(update_fields=['current_stage', 'progress_percent', 'invoices_detected', 'pages_processed'])
+        uploaded_doc.save(update_fields=['current_stage', 'progress_percent', 'invoices_detected', 'pages_processed', 'updated_at'])
 
         # Stage 5: Statutory vendor validation & Database creation
         uploaded_doc.current_stage = "Validating vendors against authoritative master (Rules A-E) & creating purchase records..."
         uploaded_doc.progress_percent = 90
-        uploaded_doc.save(update_fields=['current_stage', 'progress_percent'])
+        uploaded_doc.save(update_fields=['current_stage', 'progress_percent', 'updated_at'])
 
         timer.start_timing('database_ops_ms')
         created_submissions = []
@@ -365,6 +487,8 @@ def process_uploaded_document_task(
         if registered_active:
             with _ACTIVE_LOCK:
                 _ACTIVE_DOCUMENT_IDS.discard(uploaded_doc_id)
+                _ACTIVE_THREADS.pop(uploaded_doc_id, None)
+            _release_worker_lock(uploaded_doc_id)
         _safe_close_old_connections()
 
 
@@ -377,7 +501,7 @@ def dispatch_background_processing(
     force_recover: bool = False,
 ):
     """
-    Spawns a background daemon thread to process the uploaded document asynchronously,
+    Spawns a background thread to process the uploaded document asynchronously,
     guarding against duplicate concurrent dispatches for the same document ID.
     """
     with _ACTIVE_LOCK:
@@ -390,5 +514,7 @@ def dispatch_background_processing(
         args=(uploaded_document_id, remarks, is_suspected, duplicate_notes, batch_id, force_recover),
         daemon=True,
     )
+    with _ACTIVE_LOCK:
+        _ACTIVE_THREADS[uploaded_document_id] = thread
     thread.start()
     return thread

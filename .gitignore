@@ -9,5 +9,7 @@ media/invoices/processed/*
 backups/*
 !backups/.gitkeep
 staticfiles/
+logs/
+media/.worker_locks/
 .pytest_cache/
 vendor_directory.py

@@ -543,10 +543,14 @@ def evaluate_e_invoice_status(
         or (gemini_data or {}).get('document_type')
         or ''
     ).strip().upper()
-    has_hw_amounts = bool((gemini_data or {}).get('has_handwritten_amounts'))
+    gemini_hw = (gemini_data or {}).get('has_handwritten_amounts') if isinstance(gemini_data, dict) else None
+    has_hw_strokes = bool((appearance_data or {}).get('has_handwritten_strokes'))
     is_handwritten = (
         detected_appearance == 'HANDWRITTEN'
-        or (detected_appearance == 'MIXED' and has_hw_amounts)
+        or (
+            detected_appearance == 'MIXED'
+            and (bool(gemini_hw) or (gemini_hw is None and (has_hw_strokes or bool(appearance_data))))
+        )
     )
 
     # 1. Validated 64-char hex IRN from QR or extracted PDF/OCR text overrides appearance (including handwritten)

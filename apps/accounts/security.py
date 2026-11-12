@@ -27,14 +27,45 @@ def _parse_valid_ip(raw_ip: Optional[str]) -> Optional[str]:
         return None
 
 
+def _is_remote_trusted_proxy(remote_addr: Optional[str]) -> Tuple[bool, bool]:
+    """
+    Validate whether REMOTE_ADDR is a trusted reverse proxy.
+    Returns (is_trusted_for_forwarded, is_trusted_for_cloudflare):
+    - If TRUSTED_PROXY_IPS is explicitly configured, REMOTE_ADDR must match one of its IPs/CIDRs.
+    - Otherwise, X-Forwarded-For falls back to hop-count rules while CF-Connecting-IP strictly requires loopback REMOTE_ADDR.
+    """
+    if not remote_addr:
+        return (False, False)
+
+    try:
+        addr_obj = ipaddress.ip_address(remote_addr)
+    except ValueError:
+        return (False, False)
+
+    configured = getattr(settings, 'TRUSTED_PROXY_IPS', None) or []
+    if configured:
+        for entry in configured:
+            try:
+                if '/' in entry:
+                    if addr_obj in ipaddress.ip_network(entry, strict=False):
+                        return (True, True)
+                elif addr_obj == ipaddress.ip_address(entry):
+                    return (True, True)
+            except ValueError:
+                continue
+        return (False, False)
+
+    return (True, addr_obj.is_loopback)
+
+
 def get_client_ip(request) -> Optional[str]:
     """
-    Resolve client IP safely without blindly trusting client-supplied X-Forwarded-For.
+    Resolve client IP safely without blindly trusting client-supplied forwarding headers.
 
     When DJANGO_TRUSTED_PROXY_COUNT <= 0 (default), REMOTE_ADDR is used directly.
-    When running behind N trusted proxies (DJANGO_TRUSTED_PROXY_COUNT = N),
-    reads the Nth hop from the right of X-Forwarded-For so spoofed leftmost entries
-    cannot evade IP-based rate limits or forge audit logs.
+    When behind Cloudflare Tunnel (TRUSTED_PROXY_COUNT >= 1), inspects CF-Connecting-IP ONLY if
+    REMOTE_ADDR is verified as a trusted proxy (or loopback when TRUSTED_PROXY_IPS is unset)
+    and TRUST_CF_CONNECTING_IP is enabled; otherwise selects the Nth hop from the right of X-Forwarded-For.
     """
     if request is None:
         return None
@@ -43,6 +74,15 @@ def get_client_ip(request) -> Optional[str]:
     trusted_proxies = int(getattr(settings, 'TRUSTED_PROXY_COUNT', 0) or 0)
     if trusted_proxies <= 0:
         return remote_addr
+
+    trusted_forwarded, trusted_cf = _is_remote_trusted_proxy(remote_addr)
+    if not trusted_forwarded:
+        return remote_addr
+
+    if getattr(settings, 'TRUST_CF_CONNECTING_IP', False) and trusted_cf:
+        cf_ip = _parse_valid_ip(request.META.get('HTTP_CF_CONNECTING_IP'))
+        if cf_ip:
+            return cf_ip
 
     forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR', '')
     if not forwarded_for:

@@ -9,6 +9,9 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Balaji InvoiceHub">
+    <link rel="manifest" href="{% static 'manifest.json' %}">
+    <link rel="icon" type="image/png" sizes="192x192" href="{% static 'img/icon-192.png' %}">
+    <link rel="apple-touch-icon" sizes="192x192" href="{% static 'img/icon-192.png' %}">
     <title>{% block title %}{{ APP_NAME }}{% endblock %} | {{ COMPANY_NAME }}</title>
     
     <!-- Bootstrap 5 CSS -->
@@ -28,9 +31,7 @@
     <aside class="app-sidebar d-none d-lg-flex">
         <!-- Brand Header -->
         <a class="sidebar-brand" href="{% url 'core:dashboard_router' %}">
-            <div class="sidebar-brand-icon">
-                <i class="bi bi-truck-flatbed"></i>
-            </div>
+            <img src="{% static 'img/logo.png' %}" alt="Balaji InvoiceHub" style="width: 38px; height: 38px; object-fit: contain; flex-shrink: 0;">
             <div>
                 <div class="sidebar-brand-text">Balaji <span style="color: var(--accent-teal-light);">InvoiceHub</span></div>
                 <div class="sidebar-brand-sub">{{ COMPANY_NAME }}</div>
@@ -131,20 +132,10 @@
                 <i class="bi bi-person-badge"></i>
                 <span>My Profile</span>
             </a>
-            {% if user.is_admin_role %}
-            <a href="{% url 'admin:index' %}" class="sidebar-link" target="_blank">
-                <i class="bi bi-sliders"></i>
-                <span>Django Admin</span>
-            </a>
-            {% endif %}
         </nav>
 
-        <!-- Sidebar Footer Status -->
+        <!-- Sidebar Footer -->
         <div class="sidebar-footer">
-            <div class="d-flex align-items-center gap-2 mb-1">
-                <span class="rounded-circle bg-success" style="width: 8px; height: 8px; display: inline-block;"></span>
-                <span class="text-white small fw-semibold">PostgreSQL 18 Connected</span>
-            </div>
             <div>Balaji InvoiceHub &copy; 2026</div>
         </div>
     </aside>
@@ -153,7 +144,7 @@
     <div class="offcanvas offcanvas-start bg-dark text-white d-lg-none" tabindex="-1" id="mobileSidebar" aria-labelledby="mobileSidebarLabel" style="background-color: var(--primary-navy) !important; width: 280px;">
         <div class="offcanvas-header border-bottom border-secondary border-opacity-25 py-3">
             <div class="d-flex align-items-center gap-2">
-                <i class="bi bi-truck-flatbed text-info fs-4"></i>
+                <img src="{% static 'img/logo.png' %}" alt="Balaji InvoiceHub" style="width: 30px; height: 30px; object-fit: contain;">
                 <h6 class="offcanvas-title fw-bold mb-0 text-white" id="mobileSidebarLabel">Balaji InvoiceHub</h6>
             </div>
             <button type="button" class="btn-close btn-close-white text-reset" data-bs-dismiss="offcanvas" aria-label="Close"></button>
@@ -301,9 +292,6 @@
                         </li>
                         <li><a class="dropdown-item py-2" href="{% url 'accounts:profile' %}"><i class="bi bi-person me-2 text-secondary"></i>My Profile</a></li>
                         <li><a class="dropdown-item py-2" href="{% url 'accounts:change_password' %}"><i class="bi bi-key me-2 text-secondary"></i>Change Password</a></li>
-                        {% if user.is_admin_role %}
-                        <li><a class="dropdown-item py-2" href="{% url 'admin:index' %}" target="_blank"><i class="bi bi-sliders me-2 text-secondary"></i>Django Admin</a></li>
-                        {% endif %}
                         <li><hr class="dropdown-divider my-1"></li>
                         <li>
                             <form method="post" action="{% url 'accounts:logout' %}">
@@ -322,9 +310,7 @@
         <nav class="navbar navbar-light bg-white border-bottom py-3">
             <div class="container d-flex justify-content-between align-items-center">
                 <div class="d-flex align-items-center gap-2">
-                    <div class="rounded p-2 text-white d-flex align-items-center justify-content-center" style="background-color: var(--primary-navy); width: 34px; height: 34px;">
-                        <i class="bi bi-truck-flatbed text-info"></i>
-                    </div>
+                    <img src="{% static 'img/logo.png' %}" alt="Balaji InvoiceHub" style="width: 34px; height: 34px; object-fit: contain;">
                     <span class="fw-bold" style="color: var(--primary-navy);">Balaji <span style="color: var(--accent-teal);">InvoiceHub</span></span>
                 </div>
                 <span class="text-muted small fw-semibold d-none d-sm-inline">{{ COMPANY_NAME }}</span>
@@ -359,11 +345,6 @@
         <footer class="bg-white border-top py-3 px-4 text-center text-md-start">
             <div class="d-flex flex-column flex-md-row justify-content-between align-items-center gap-2 text-muted small">
                 <div><strong>{{ COMPANY_NAME }}</strong> — Balaji InvoiceHub &copy; 2026. All rights reserved.</div>
-                <div class="d-flex align-items-center gap-3">
-                    <span><i class="bi bi-shield-check text-success me-1"></i>RBAC Active</span>
-                    <span><i class="bi bi-database text-primary me-1"></i>PostgreSQL 18</span>
-                    <a href="{% url 'core:health_check' %}" target="_blank" class="text-decoration-none text-muted">Health</a>
-                </div>
             </div>
         </footer>
     </div>
@@ -371,6 +352,20 @@
 
 <!-- Bootstrap 5 Bundle JS -->
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
+<script>
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => {});
+    });
+    document.querySelectorAll('form[action$="/logout/"]').forEach((form) => {
+        form.addEventListener('submit', () => {
+            if (navigator.serviceWorker.controller) {
+                navigator.serviceWorker.controller.postMessage({ type: 'LOGOUT_CLEAR_CACHE' });
+            }
+        });
+    });
+}
+</script>
 {% block extra_js %}{% endblock %}
 </body>
 </html>

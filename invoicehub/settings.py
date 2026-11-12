@@ -81,6 +81,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -88,6 +89,7 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'apps.accounts.middleware.ForcePasswordChangeMiddleware',
+    'apps.accounts.middleware.SensitiveResponseNoCacheMiddleware',
 ]
 
 ROOT_URLCONF = 'invoicehub.urls'
@@ -162,6 +164,16 @@ USE_TZ = True
 STATIC_URL = '/static/'
 STATICFILES_DIRS = [BASE_DIR / 'static']
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+STORAGES = {
+    'default': {
+        'BACKEND': 'django.core.files.storage.FileSystemStorage',
+    },
+    'staticfiles': {
+        'BACKEND': 'whitenoise.storage.CompressedStaticFilesStorage',
+    },
+}
+WHITENOISE_AUTOREFRESH = DEBUG
+WHITENOISE_USE_FINDERS = DEBUG
 
 # Media files (Protected Invoices & Receipts)
 MEDIA_URL = '/media/'
@@ -186,6 +198,12 @@ SESSION_SAVE_EVERY_REQUEST = True
 
 # Reverse Proxy & Brute-Force Login Rate Limiting
 TRUSTED_PROXY_COUNT = int(os.getenv('DJANGO_TRUSTED_PROXY_COUNT', 0))
+_trusted_proxy_ips_raw = os.getenv('DJANGO_TRUSTED_PROXY_IPS', '')
+TRUSTED_PROXY_IPS = [ip.strip() for ip in _trusted_proxy_ips_raw.split(',') if ip.strip()]
+TRUST_CF_CONNECTING_IP = os.getenv(
+    'DJANGO_TRUST_CF_CONNECTING_IP',
+    'True' if TRUSTED_PROXY_COUNT > 0 else 'False',
+).lower() in ('true', '1', 't')
 LOGIN_MAX_ATTEMPTS = int(os.getenv('LOGIN_MAX_ATTEMPTS', 5))
 LOGIN_ATTEMPT_WINDOW_SECONDS = int(os.getenv('LOGIN_ATTEMPT_WINDOW_SECONDS', 300))
 LOGIN_COOLDOWN_SECONDS = int(os.getenv('LOGIN_COOLDOWN_SECONDS', 300))
@@ -238,3 +256,71 @@ BACKUP_RETENTION_DAYS = int(os.getenv('BACKUP_RETENTION_DAYS', 3650))
 # Gemini Vision AI for High-Accuracy Autonomous Invoice Extraction
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '').strip()
 GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash').strip()
+
+# Rotating Production Logging Configuration
+LOG_DIR = Path(os.getenv('LOG_DIR', str(BASE_DIR / 'logs')))
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+LOG_LEVEL = os.getenv('DJANGO_LOG_LEVEL', 'INFO').upper()
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '[{asctime}] {levelname} {name} [{process:d}:{thread:d}] {message}',
+            'style': '{',
+        },
+        'simple': {
+            'format': '[{asctime}] {levelname} {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'simple',
+        },
+        'app_file': {
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': str(LOG_DIR / 'invoicehub.log'),
+            'maxBytes': 10 * 1024 * 1024,  # 10 MB
+            'backupCount': 10,
+            'encoding': 'utf-8',
+            'formatter': 'verbose',
+        },
+        'security_file': {
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': str(LOG_DIR / 'security.log'),
+            'maxBytes': 10 * 1024 * 1024,  # 10 MB
+            'backupCount': 10,
+            'encoding': 'utf-8',
+            'formatter': 'verbose',
+        },
+    },
+    'root': {
+        'handlers': ['console', 'app_file'],
+        'level': LOG_LEVEL,
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console', 'app_file'],
+            'level': LOG_LEVEL,
+            'propagate': False,
+        },
+        'django.security': {
+            'handlers': ['console', 'security_file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'apps': {
+            'handlers': ['console', 'app_file'],
+            'level': LOG_LEVEL,
+            'propagate': False,
+        },
+        'waitress': {
+            'handlers': ['console', 'app_file'],
+            'level': LOG_LEVEL,
+            'propagate': False,
+        },
+    },
+}

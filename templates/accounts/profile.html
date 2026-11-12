@@ -90,36 +90,6 @@
                     </form>
                 </div>
                 {% endif %}
-
-                <div class="mt-4 pt-3 border-top">
-                    <h6 class="fw-bold mb-2 text-dark">Active RBAC Permissions Matrix</h6>
-                    <ul class="list-group list-group-flush small">
-                        {% if user.can_submit_invoices %}
-                        <li class="list-group-item px-0 text-success d-flex align-items-center"><i class="bi bi-check2-circle me-2 fs-5"></i>Invoice Document Submission via Mobile Browser</li>
-                        {% endif %}
-                        {% if user.can_verify_invoices %}
-                        <li class="list-group-item px-0 text-success d-flex align-items-center"><i class="bi bi-check2-circle me-2 fs-5"></i>Centralized Invoice Verification & Return for Correction</li>
-                        {% endif %}
-                        {% if user.can_record_advances %}
-                        <li class="list-group-item px-0 text-success d-flex align-items-center"><i class="bi bi-check2-circle me-2 fs-5"></i>Advance & Partial Settlement Financial Ledger Recording</li>
-                        {% endif %}
-                        {% if user.can_manage_reminders %}
-                        <li class="list-group-item px-0 text-success d-flex align-items-center"><i class="bi bi-check2-circle me-2 fs-5"></i>Automated Daily WhatsApp Payment Reminders Scheduling</li>
-                        {% endif %}
-                        {% if user.can_convert_tally %}
-                        <li class="list-group-item px-0 text-success d-flex align-items-center"><i class="bi bi-check2-circle me-2 fs-5"></i>GST Excel Ingestion & Verified Tally XML Conversion</li>
-                        {% endif %}
-                        {% if user.can_view_financial_reports %}
-                        <li class="list-group-item px-0 text-success d-flex align-items-center"><i class="bi bi-check2-circle me-2 fs-5"></i>Executive & Operational Monthly Reporting Access</li>
-                        {% endif %}
-                        {% if user.can_manage_users %}
-                        <li class="list-group-item px-0 text-success d-flex align-items-center"><i class="bi bi-check2-circle me-2 fs-5"></i>User Account Administration & Role Management</li>
-                        {% endif %}
-                        {% if user.can_trigger_backups %}
-                        <li class="list-group-item px-0 text-success d-flex align-items-center"><i class="bi bi-check2-circle me-2 fs-5"></i>Database & Document Backup Trigger & Disaster Recovery Drills</li>
-                        {% endif %}
-                    </ul>
-                </div>
             </div>
         </div>
     </div>
