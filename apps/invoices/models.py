@@ -37,20 +37,45 @@ class InvoiceSequence(models.Model):
     def get_next_submission_id(cls) -> str:
         """
         Thread-safe and transaction-safe monthly tracking ID generator.
-        Uses select_for_update inside an atomic transaction.
+        Uses SQLite-safe write-first atomic updates with bounded lock retry,
+        and row-level select_for_update when running on PostgreSQL.
         """
+        from django.db import IntegrityError, connection
+        from django.db.models import F
+        from .db_utils import run_with_sqlite_retry
+
         now = timezone.now()
         ym_str = now.strftime('%Y%m')
 
-        with transaction.atomic():
-            seq_record, _ = cls.objects.select_for_update().get_or_create(
-                year_month=ym_str,
-                defaults={'last_number': 0}
-            )
-            seq_record.last_number += 1
-            seq_record.save(update_fields=['last_number', 'updated_at'])
-            seq_num = seq_record.last_number
+        def _increment() -> int:
+            with transaction.atomic():
+                if connection.vendor == 'postgresql':
+                    seq_record, _ = cls.objects.select_for_update().get_or_create(
+                        year_month=ym_str,
+                        defaults={'last_number': 0}
+                    )
+                    seq_record.last_number += 1
+                    seq_record.save(update_fields=['last_number', 'updated_at'])
+                    return seq_record.last_number
 
+                # SQLite: execute UPDATE first so SQLite acquires a RESERVED write lock
+                # immediately, avoiding SHARED->RESERVED upgrade deadlocks.
+                updated = cls.objects.filter(year_month=ym_str).update(
+                    last_number=F('last_number') + 1,
+                    updated_at=now,
+                )
+                if updated == 0:
+                    try:
+                        cls.objects.create(year_month=ym_str, last_number=1)
+                        return 1
+                    except IntegrityError:
+                        cls.objects.filter(year_month=ym_str).update(
+                            last_number=F('last_number') + 1,
+                            updated_at=now,
+                        )
+                return cls.objects.values_list('last_number', flat=True).get(year_month=ym_str)
+
+        seq_num = run_with_sqlite_retry(_increment)
         return f"BTI-{ym_str}-{seq_num:05d}"
 
 

@@ -85,39 +85,50 @@ class BackupService:
             created_by=created_by
         )
 
-        db_dump_file = target_dir / f"{backup_id}_postgres.dump"
+        from django.db import connection
+        is_sqlite = connection.vendor == 'sqlite'
+        db_dump_file = target_dir / (f"{backup_id}_sqlite.db" if is_sqlite else f"{backup_id}_postgres.dump")
         docs_zip_file = target_dir / f"{backup_id}_documents.zip"
 
         try:
-            # 1. Database Backup via pg_dump
-            from django.db import connection
+            # 1. Database Backup (SQLite online backup or PostgreSQL pg_dump)
             active_db_name = connection.settings_dict.get('NAME', settings.DATABASES['default']['NAME'])
-            db_conf = settings.DATABASES['default']
-            env = os.environ.copy()
-            env['PGPASSWORD'] = str(db_conf['PASSWORD'])
+            if is_sqlite:
+                import sqlite3
+                connection.ensure_connection()
+                src_conn = connection.connection
+                dst_conn = sqlite3.connect(str(db_dump_file))
+                try:
+                    src_conn.backup(dst_conn)
+                finally:
+                    dst_conn.close()
+            else:
+                db_conf = settings.DATABASES['default']
+                env = os.environ.copy()
+                env['PGPASSWORD'] = str(db_conf['PASSWORD'])
 
-            cmd = [
-                str(cls.PG_DUMP_PATH),
-                "-h", str(db_conf['HOST']),
-                "-p", str(db_conf['PORT']),
-                "-U", str(db_conf['USER']),
-                "-d", str(active_db_name),
-                "-F", "c",          # Custom binary compressed format
-                "-b",               # Include large objects
-                "-v",               # Verbose
-                "-f", str(db_dump_file)
-            ]
+                cmd = [
+                    str(cls.PG_DUMP_PATH),
+                    "-h", str(db_conf['HOST']),
+                    "-p", str(db_conf['PORT']),
+                    "-U", str(db_conf['USER']),
+                    "-d", str(active_db_name),
+                    "-F", "c",          # Custom binary compressed format
+                    "-b",               # Include large objects
+                    "-v",               # Verbose
+                    "-f", str(db_dump_file)
+                ]
 
-            process = subprocess.run(
-                cmd,
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=300
-            )
+                process = subprocess.run(
+                    cmd,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=300
+                )
 
-            if process.returncode != 0 or not db_dump_file.exists():
-                raise RuntimeError(f"pg_dump failed with code {process.returncode}: {process.stderr}")
+                if process.returncode != 0 or not db_dump_file.exists():
+                    raise RuntimeError(f"pg_dump failed with code {process.returncode}: {process.stderr}")
 
             db_size = db_dump_file.stat().st_size
             db_hash = cls.calculate_sha256(db_dump_file)
@@ -235,68 +246,92 @@ class RestoreService:
         if current_db_hash != backup_record.db_sha256:
             raise ValueError(f"Integrity check failed: Current SHA-256 does not match recorded checksum.")
 
-        db_conf = settings.DATABASES['default']
-        env = os.environ.copy()
-        env['PGPASSWORD'] = str(db_conf['PASSWORD'])
+        if connection.vendor == 'sqlite' or str(db_dump_path).endswith('.db'):
+            import shutil
+            import sqlite3
+            sandbox_db_dir = settings.BACKUP_STORAGE_DIR / "sandbox_restore" / restore_id
+            sandbox_db_dir.mkdir(parents=True, exist_ok=True)
+            sandbox_db_path = sandbox_db_dir / "balaji_test_restore.sqlite3"
+            shutil.copy2(db_dump_path, sandbox_db_path)
+            test_conn = sqlite3.connect(str(sandbox_db_path))
+            verified_counts = {}
+            try:
+                cur = test_conn.cursor()
+                cur.execute("PRAGMA integrity_check;")
+                integrity = cur.fetchone()[0]
+                if integrity != 'ok':
+                    raise RuntimeError(f"SQLite integrity check failed: {integrity}")
+                for table in ['balaji_users', 'balaji_departments', 'balaji_audit_logs']:
+                    try:
+                        cur.execute(f"SELECT COUNT(*) FROM {table};")
+                        verified_counts[table] = cur.fetchone()[0]
+                    except Exception:
+                        verified_counts[table] = 0
+            finally:
+                test_conn.close()
+        else:
+            db_conf = settings.DATABASES['default']
+            env = os.environ.copy()
+            env['PGPASSWORD'] = str(db_conf['PASSWORD'])
 
-        # Step 2: Reset isolated test database 'balaji_test_restore'
-        conn = psycopg.connect(
-            dbname="postgres",
-            user=db_conf['USER'],
-            password=db_conf['PASSWORD'],
-            host=db_conf['HOST'],
-            port=db_conf['PORT'],
-            autocommit=True
-        )
-        with conn.cursor() as cur:
-            # Terminate active connections on target test database
-            cur.execute("""
-                SELECT pg_terminate_backend(pg_stat_activity.pid)
-                FROM pg_stat_activity
-                WHERE pg_stat_activity.datname = %s
-                  AND pid <> pg_backend_pid();
-            """, (target_db,))
-            cur.execute(f"DROP DATABASE IF EXISTS {target_db};")
-            cur.execute(f"CREATE DATABASE {target_db};")
-        conn.close()
+            # Step 2: Reset isolated test database 'balaji_test_restore'
+            conn = psycopg.connect(
+                dbname="postgres",
+                user=db_conf['USER'],
+                password=db_conf['PASSWORD'],
+                host=db_conf['HOST'],
+                port=db_conf['PORT'],
+                autocommit=True
+            )
+            with conn.cursor() as cur:
+                # Terminate active connections on target test database
+                cur.execute("""
+                    SELECT pg_terminate_backend(pg_stat_activity.pid)
+                    FROM pg_stat_activity
+                    WHERE pg_stat_activity.datname = %s
+                      AND pid <> pg_backend_pid();
+                """, (target_db,))
+                cur.execute(f"DROP DATABASE IF EXISTS {target_db};")
+                cur.execute(f"CREATE DATABASE {target_db};")
+            conn.close()
 
-        # Step 3: Run pg_restore into isolated test database
-        restore_cmd = [
-            str(BackupService.PG_RESTORE_PATH),
-            "-h", str(db_conf['HOST']),
-            "-p", str(db_conf['PORT']),
-            "-U", str(db_conf['USER']),
-            "-d", target_db,
-            "--no-owner",
-            "-v",
-            str(db_dump_path)
-        ]
+            # Step 3: Run pg_restore into isolated test database
+            restore_cmd = [
+                str(BackupService.PG_RESTORE_PATH),
+                "-h", str(db_conf['HOST']),
+                "-p", str(db_conf['PORT']),
+                "-U", str(db_conf['USER']),
+                "-d", target_db,
+                "--no-owner",
+                "-v",
+                str(db_dump_path)
+            ]
 
-        restore_proc = subprocess.run(
-            restore_cmd,
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=300
-        )
+            restore_proc = subprocess.run(
+                restore_cmd,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=300
+            )
 
-        # Step 4: Verify restored database counts
-        test_conn = psycopg.connect(
-            dbname=target_db,
-            user=db_conf['USER'],
-            password=db_conf['PASSWORD'],
-            host=db_conf['HOST'],
-            port=db_conf['PORT']
-        )
-        verified_counts = {}
-        with test_conn.cursor() as cur:
-            for table in ['balaji_users', 'balaji_departments', 'balaji_audit_logs']:
-                try:
-                    cur.execute(f"SELECT COUNT(*) FROM {table};")
-                    verified_counts[table] = cur.fetchone()[0]
-                except Exception:
-                    verified_counts[table] = 0
-        test_conn.close()
+            # Step 4: Verify restored database counts
+            test_conn = psycopg.connect(
+                dbname=target_db,
+                user=db_conf['USER'],
+                password=db_conf['PASSWORD'],
+                host=db_conf['HOST'],
+                port=db_conf['PORT']
+            )
+            verified_counts = {}
+            with test_conn.cursor() as cur:
+                for table in ['balaji_users', 'balaji_departments', 'balaji_audit_logs']:
+                    try:
+                        cur.execute(f"SELECT COUNT(*) FROM {table};")
+                        verified_counts[table] = cur.fetchone()[0]
+                    except Exception:
+                        verified_counts[table] = 0
+            test_conn.close()
 
         # Step 5: Test Document Archive Extraction in isolated sandbox
         sandbox_media_dir = settings.BACKUP_STORAGE_DIR / "sandbox_restore" / restore_id
