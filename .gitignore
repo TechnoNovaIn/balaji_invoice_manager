@@ -13,3 +13,4 @@ logs/
 media/.worker_locks/
 .pytest_cache/
 vendor_directory.py
+.env.example
