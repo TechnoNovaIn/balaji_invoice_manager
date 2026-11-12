@@ -26,8 +26,8 @@ class InvoiceStatusHistoryInline(admin.TabularInline):
 
 @admin.register(InvoiceSubmission)
 class InvoiceSubmissionAdmin(admin.ModelAdmin):
-    list_display = ('submission_id', 'employee', 'status', 'is_e_invoice', 'irn_number', 'is_duplicate_suspected', 'total_active_pages', 'created_at')
-    list_filter = ('status', 'is_e_invoice', 'is_duplicate_suspected', 'created_at')
+    list_display = ('submission_id', 'employee', 'status', 'e_invoice_status', 'is_e_invoice', 'irn_number', 'e_invoice_manually_verified', 'is_duplicate_suspected', 'total_active_pages', 'created_at')
+    list_filter = ('status', 'e_invoice_status', 'is_e_invoice', 'e_invoice_manually_verified', 'is_duplicate_suspected', 'created_at')
     search_fields = ('submission_id', 'irn_number', 'party_name', 'party_gstin', 'employee__username', 'employee__first_name', 'employee__last_name', 'remarks')
     readonly_fields = ('submission_id', 'created_at', 'updated_at')
     inlines = [InvoiceDocumentInline, InvoiceStatusHistoryInline]

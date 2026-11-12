@@ -281,6 +281,7 @@ def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
         'sgst_amount': Decimal('0.00'),
         'igst_amount': Decimal('0.00'),
         'total_amount': Decimal('0.00'),
+        'e_invoice_status': 'NEEDS_VERIFICATION',
         'is_e_invoice': None,
         'irn_number': '',
         'e_invoice_source': '',
@@ -628,6 +629,7 @@ def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
             result['total_amount'] = gtotal_val
             from .e_invoice_utils import evaluate_e_invoice_status
             einv_val = evaluate_e_invoice_status(raw_text=raw_text)
+            result['e_invoice_status'] = einv_val['e_invoice_status']
             result['is_e_invoice'] = einv_val['is_e_invoice']
             result['irn_number'] = einv_val['irn_number']
             result['e_invoice_source'] = einv_val['e_invoice_source']
@@ -933,6 +935,7 @@ def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
         # --- F. E-Invoice & IRN Detection ---
         from .e_invoice_utils import evaluate_e_invoice_status
         einv_val = evaluate_e_invoice_status(raw_text=raw_text)
+        result['e_invoice_status'] = einv_val['e_invoice_status']
         result['is_e_invoice'] = einv_val['is_e_invoice']
         result['irn_number'] = einv_val['irn_number']
         result['e_invoice_source'] = einv_val['e_invoice_source']
@@ -995,6 +998,7 @@ def extract_invoice_metadata(file_path: str, content_type: str = '') -> Dict[str
 
     raw_text = original_pdf_text
     extraction_method = 'PYMUPDF_DIGITAL' if original_pdf_text.strip() else 'RAPIDOCR_LOCAL'
+    ocr_res = None
 
     # 3. Photographed Receipt & Image Reader (Deep Learning OCR)
     if not raw_text.strip():
@@ -1011,6 +1015,7 @@ def extract_invoice_metadata(file_path: str, content_type: str = '') -> Dict[str
         if not raw_text.strip():
             try:
                 from PIL import Image, ImageEnhance
+                Image.MAX_IMAGE_PIXELS = 40_000_000
                 img = Image.open(file_path)
                 if img.mode != 'L':
                     img_gray = img.convert('L')
@@ -1029,12 +1034,31 @@ def extract_invoice_metadata(file_path: str, content_type: str = '') -> Dict[str
                 pass
 
     local_meta = extract_metadata_from_text(raw_text)
+    from .document_type_utils import (
+        DOC_TYPE_HANDWRITTEN,
+        DOC_TYPE_NEEDS_REVIEW,
+        classify_document_type,
+        has_unclear_financial_values,
+    )
+    doc_type_info = classify_document_type(
+        file_path=file_path,
+        raw_text=raw_text,
+        ocr_res=ocr_res,
+        content_type=content_type,
+    )
+
     from .e_invoice_utils import extract_qr_e_invoice_data, evaluate_e_invoice_status
     qr_data = extract_qr_e_invoice_data(file_path)
-    einv_val = evaluate_e_invoice_status(raw_text=raw_text, qr_data=qr_data)
+    einv_val = evaluate_e_invoice_status(
+        raw_text=raw_text,
+        qr_data=qr_data,
+        appearance_data=doc_type_info,
+    )
+    local_meta['e_invoice_status'] = einv_val['e_invoice_status']
     local_meta['is_e_invoice'] = einv_val['is_e_invoice']
     local_meta['irn_number'] = einv_val['irn_number']
     local_meta['e_invoice_source'] = einv_val['e_invoice_source']
+
     local_meta['raw_text'] = raw_text
     local_meta['ocr_extracted_text'] = raw_text
     local_meta['gemini_extracted_data'] = None
@@ -1047,14 +1071,24 @@ def extract_invoice_metadata(file_path: str, content_type: str = '') -> Dict[str
         party_gstin=local_meta.get('party_gstin'),
         default_expense_ledger=local_meta.get('expense_ledger', 'Purchase Spares & Consumables'),
     )
+    unclear_financials = has_unclear_financial_values(local_meta)
+    hw_or_unclear_gate = (
+        local_meta['e_invoice_status'] == 'HANDWRITTEN'
+        or doc_type_info['document_type'] in (DOC_TYPE_HANDWRITTEN, DOC_TYPE_NEEDS_REVIEW)
+        or unclear_financials
+    )
     local_meta['is_ambiguous_vendor'] = backend_val['is_ambiguous_vendor']
-    local_meta['requires_manual_review'] = backend_val['requires_manual_review'] or (
-        local_meta['is_e_invoice'] is True and not local_meta['irn_number']
+    local_meta['requires_manual_review'] = (
+        backend_val['requires_manual_review']
+        or hw_or_unclear_gate
+        or (local_meta['is_e_invoice'] is True and not local_meta['irn_number'])
     )
     local_meta['confidence'] = min(local_meta.get('confidence', 0.8), backend_val['confidence'])
     local_meta['vendor_match_status'] = backend_val['vendor_match_status']
-    local_meta['is_financial_approval_eligible'] = backend_val['is_financial_approval_eligible'] and not (
-        local_meta['is_e_invoice'] is True and not local_meta['irn_number']
+    local_meta['is_financial_approval_eligible'] = (
+        backend_val['is_financial_approval_eligible']
+        and not unclear_financials
+        and not (local_meta['is_e_invoice'] is True and not local_meta['irn_number'])
     )
     if backend_val.get('audit_notes'):
         local_meta['audit_notes'] = backend_val['audit_notes']

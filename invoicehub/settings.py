@@ -176,10 +176,19 @@ SESSION_COOKIE_HTTPONLY = True
 CSRF_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = 'Lax'
 CSRF_COOKIE_SAMESITE = 'Lax'
-# Persistent 1-year mobile session: Employees stay logged in without remembering passwords
-SESSION_COOKIE_AGE = 31536000  # 365 days
+# Bounded default session age; role-specific expiries are enforced on login
+SESSION_COOKIE_AGE = int(os.getenv('SESSION_COOKIE_AGE', 1209600))  # 14 days default
+PRIVILEGED_SESSION_AGE = int(os.getenv('PRIVILEGED_SESSION_AGE', 28800))  # 8 hours for Admin/Accounts/Mgmt
+EXTERNAL_SUBMITTER_SESSION_AGE = int(os.getenv('EXTERNAL_SUBMITTER_SESSION_AGE', 1209600))  # 14 days
+EMPLOYEE_SESSION_AGE = int(os.getenv('EMPLOYEE_SESSION_AGE', 31536000))  # 365 days mobile convenience
 SESSION_EXPIRE_AT_BROWSER_CLOSE = False
 SESSION_SAVE_EVERY_REQUEST = True
+
+# Reverse Proxy & Brute-Force Login Rate Limiting
+TRUSTED_PROXY_COUNT = int(os.getenv('DJANGO_TRUSTED_PROXY_COUNT', 0))
+LOGIN_MAX_ATTEMPTS = int(os.getenv('LOGIN_MAX_ATTEMPTS', 5))
+LOGIN_ATTEMPT_WINDOW_SECONDS = int(os.getenv('LOGIN_ATTEMPT_WINDOW_SECONDS', 300))
+LOGIN_COOLDOWN_SECONDS = int(os.getenv('LOGIN_COOLDOWN_SECONDS', 300))
 
 # Generous upload limits for high-resolution mobile photos and multi-page PDFs
 DATA_UPLOAD_MAX_MEMORY_SIZE = 104857600   # 100 MB
@@ -188,6 +197,7 @@ FILE_UPLOAD_MAX_MEMORY_SIZE = 104857600   # 100 MB
 # Security Headers & Environment-based SSL Protection
 X_FRAME_OPTIONS = 'DENY'
 SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = 'same-origin'
 
 # Environment-based Production SSL Controls (Enabled by default when DEBUG=False)
 ENABLE_SSL = os.getenv('DJANGO_ENABLE_SSL', 'False' if DEBUG else 'True').lower() in ('true', '1', 't')
@@ -225,6 +235,6 @@ BACKUP_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 # Permanent retention policy: 3650 days (10+ years / Permanent Archive) for statutory GST & tax compliance
 BACKUP_RETENTION_DAYS = int(os.getenv('BACKUP_RETENTION_DAYS', 3650))
 
-# Gemini Vision AI for High-Accuracy Autonomous Invoice Extraction (Google AI Studio Free Tier)
+# Gemini Vision AI for High-Accuracy Autonomous Invoice Extraction
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '').strip()
-GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-3.5-flash-lite').strip()
+GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash').strip()

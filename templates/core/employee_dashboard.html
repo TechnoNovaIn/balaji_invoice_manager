@@ -1,10 +1,10 @@
 {% extends 'base.html' %}
 
-{% block title %}Employee Portal - Balaji InvoiceHub{% endblock %}
-{% block page_heading %}Invoice Collector Portal{% endblock %}
+{% block title %}{{ page_title|default:"Submitter Portal" }} - Balaji InvoiceHub{% endblock %}
+{% block page_heading %}{{ page_title|default:"Invoice Submitter Portal" }}{% endblock %}
 
 {% block content %}
-<div class="mx-auto" style="max-width: 800px;">
+<div class="mx-auto" style="max-width: 900px;">
     <!-- Welcome Identity Banner -->
     <div class="card card-enterprise mb-4">
         <div class="card-body p-4">
@@ -16,48 +16,83 @@
                     <div>
                         <h5 class="fw-bold mb-0" style="color: var(--primary-navy);">{{ user.get_full_name|default:user.username }}</h5>
                         <div class="text-secondary small">
+                            {% if user.is_external_submitter %}
+                            External Invoice Submitter &bull; {{ user.department.name|default:"Balaji InvoiceHub Partner" }}
+                            {% else %}
                             Department: <strong>{{ user.department.name|default:"General Fleet Operations" }}</strong>
+                            {% endif %}
                         </div>
                     </div>
                 </div>
-                <span class="role-badge role-badge-EMPLOYEE py-1 px-3">
-                    <i class="bi bi-person-badge"></i> Invoice Collector
+                <span class="role-badge role-badge-{{ user.role }} py-1 px-3">
+                    <i class="bi bi-person-badge"></i> {{ user.get_role_display }}
                 </span>
             </div>
         </div>
     </div>
 
-    <!-- Quick Touch Grid: Simple & Direct -->
+    <!-- Quick Touch Grid -->
     <div class="row g-3 mb-4">
-        <div class="col-12 col-md-8">
+        <div class="col-12 col-md-7">
             <div class="card card-enterprise h-100 p-4 border-2 border-teal shadow-sm d-flex flex-column justify-content-between">
                 <div>
                     <div class="d-flex align-items-center gap-2 mb-2">
                         <i class="bi bi-camera-fill fs-3 text-teal"></i>
                         <h5 class="fw-bold mb-0" style="color: var(--primary-navy);">Send Invoice to Naveen</h5>
                     </div>
-                    <p class="text-secondary small mb-3">Snap bill photos with phone camera or upload PDF receipts directly up to 100 MB.</p>
+                    <p class="text-secondary small mb-3">Upload PDF invoices or bill photos up to 100 MB. Track approval, correction requests, and status updates in real time.</p>
                 </div>
                 <div>
+                    {% if user.can_submit_invoices %}
                     <a href="{% url 'invoices:upload' %}" class="btn btn-teal py-2 px-4 fw-bold shadow-sm">
                         <i class="bi bi-camera-fill me-2"></i>Take Photo / Upload PDF
                     </a>
+                    {% else %}
+                    <span class="badge bg-warning-subtle text-warning-emphasis border border-warning px-3 py-2">
+                        <i class="bi bi-lock me-1"></i>New invoice uploads are currently restricted for your account.
+                    </span>
+                    {% endif %}
                 </div>
             </div>
         </div>
 
-        <div class="col-12 col-md-4">
-            <div class="card card-enterprise h-100 text-center p-4 shadow-sm d-flex flex-column justify-content-between">
-                <div class="rounded-circle mx-auto mb-2 d-flex align-items-center justify-content-center" style="width: 52px; height: 52px; background-color: var(--accent-blue-subtle); color: var(--accent-blue);">
-                    <i class="bi bi-folder2-open fs-3"></i>
-                </div>
-                <div>
-                    <div class="metric-value mb-0">{{ total_count|default:0 }}</div>
-                    <div class="text-secondary small fw-semibold">Invoices Sent</div>
+        <div class="col-12 col-md-5">
+            <div class="card card-enterprise h-100 p-4 shadow-sm d-flex flex-column justify-content-between">
+                <div class="row g-2 text-center mb-2">
+                    <div class="col-6">
+                        <div class="p-2 rounded bg-light border">
+                            <div class="fs-4 fw-bold" style="color: var(--primary-navy);">{{ total_count|default:0 }}</div>
+                            <div class="text-secondary" style="font-size: 0.72rem;">Total Submitted</div>
+                        </div>
+                    </div>
+                    <div class="col-6">
+                        <div class="p-2 rounded bg-info-subtle border border-info-subtle">
+                            <div class="fs-4 fw-bold text-info-emphasis">{{ pending_count|default:0 }}</div>
+                            <div class="text-info-emphasis" style="font-size: 0.72rem;">In Review</div>
+                        </div>
+                    </div>
+                    <div class="col-4">
+                        <div class="p-2 rounded bg-success-subtle border border-success-subtle">
+                            <div class="fs-5 fw-bold text-success">{{ verified_count|default:0 }}</div>
+                            <div class="text-success" style="font-size: 0.68rem;">Approved</div>
+                        </div>
+                    </div>
+                    <div class="col-4">
+                        <div class="p-2 rounded bg-warning-subtle border border-warning-subtle">
+                            <div class="fs-5 fw-bold text-warning-emphasis">{{ returned_count|default:0 }}</div>
+                            <div class="text-warning-emphasis" style="font-size: 0.68rem;">Correction</div>
+                        </div>
+                    </div>
+                    <div class="col-4">
+                        <div class="p-2 rounded bg-danger-subtle border border-danger-subtle">
+                            <div class="fs-5 fw-bold text-danger">{{ rejected_count|default:0 }}</div>
+                            <div class="text-danger" style="font-size: 0.68rem;">Rejected</div>
+                        </div>
+                    </div>
                 </div>
                 <div class="mt-2">
                     <a href="{% url 'invoices:my_submissions' %}" class="btn btn-sm btn-outline-secondary w-100">
-                        View All
+                        View All My Submissions
                     </a>
                 </div>
             </div>
@@ -77,6 +112,7 @@
                     <tr>
                         <th class="ps-3">Tracking ID</th>
                         <th>Sent Date & Time</th>
+                        <th>Status</th>
                         <th>Pages</th>
                         <th class="text-end pe-3">Action</th>
                     </tr>
@@ -86,8 +122,29 @@
                     <tr>
                         <td class="ps-3 fw-bold font-monospace text-dark">{{ item.submission_id }}</td>
                         <td class="text-secondary">{{ item.created_at|date:"d M Y, h:i A" }}</td>
+                        <td>
+                            {% if item.status == 'VERIFIED' %}
+                            <span class="badge bg-success-subtle text-success border border-success-subtle">Approved</span>
+                            {% elif item.status == 'RETURNED' %}
+                            <span class="badge bg-warning-subtle text-warning-emphasis border border-warning">Correction Requested</span>
+                            {% elif item.status == 'REJECTED' %}
+                            <span class="badge bg-danger-subtle text-danger border border-danger-subtle">Rejected</span>
+                            {% elif item.status == 'RESUBMITTED' %}
+                            <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle">Resubmitted</span>
+                            {% else %}
+                            <span class="badge bg-secondary-subtle text-secondary border">Submitted</span>
+                            {% endif %}
+                            {% if item.return_reason %}
+                            <div class="text-danger mt-1" style="font-size: 0.72rem;">{{ item.return_reason|truncatechars:80 }}</div>
+                            {% endif %}
+                        </td>
                         <td><span class="badge bg-light text-dark border">{{ item.total_active_pages }} Page{{ item.total_active_pages|pluralize }}</span></td>
                         <td class="text-end pe-3">
+                            {% if item.can_be_edited and user.can_resubmit_own_invoices %}
+                            <a href="{% url 'invoices:resubmit' item.submission_id %}" class="btn btn-sm btn-warning text-dark py-1 px-2 me-1">
+                                <i class="bi bi-arrow-repeat me-1"></i>Resubmit
+                            </a>
+                            {% endif %}
                             <a href="{% url 'invoices:submission_detail' item.submission_id %}" class="btn btn-sm btn-outline-secondary py-1 px-2">
                                 <i class="bi bi-eye me-1"></i>View
                             </a>
@@ -103,10 +160,12 @@
                 <i class="bi bi-inbox display-4"></i>
             </div>
             <h6 class="fw-bold mb-1" style="color: var(--primary-navy);">No Invoices Sent Yet</h6>
-            <p class="small text-muted mb-3">Snap bill photos from your phone camera or select a PDF to send directly to Naveen.</p>
+            <p class="small text-muted mb-3">Upload PDFs or capture bill photos to submit directly to Naveen.</p>
+            {% if user.can_submit_invoices %}
             <a href="{% url 'invoices:upload' %}" class="btn btn-sm btn-teal">
-                <i class="bi bi-camera-fill me-1"></i> Take Photo Now
+                <i class="bi bi-camera-fill me-1"></i> Upload Invoice Now
             </a>
+            {% endif %}
         </div>
         {% endif %}
     </div>

@@ -84,6 +84,28 @@
         </div>
     </div>
 
+    {% if submission.status == 'RETURNED' or submission.status == 'REJECTED' %}
+    <div class="alert {% if submission.status == 'REJECTED' %}alert-danger{% else %}alert-warning{% endif %} shadow-sm d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
+        <div>
+            <div class="fw-bold">
+                {% if submission.status == 'REJECTED' %}
+                <i class="bi bi-x-octagon-fill me-1"></i> Invoice Rejected by Accounts
+                {% else %}
+                <i class="bi bi-arrow-counterclockwise me-1"></i> Correction / Resubmission Requested
+                {% endif %}
+            </div>
+            {% if submission.return_reason %}
+            <div class="small mt-1">{{ submission.return_reason }}</div>
+            {% endif %}
+        </div>
+        {% if submission.employee_id == request.user.id and request.user.can_resubmit_own_invoices %}
+        <a href="{% url 'invoices:resubmit' submission.submission_id %}" class="btn btn-sm btn-dark fw-semibold">
+            <i class="bi bi-upload me-1"></i> Resubmit / Replace Invoice
+        </a>
+        {% endif %}
+    </div>
+    {% endif %}
+
     <!-- Invoice Party & Number Details Card (Visible to Naveen / Admin) -->
     <div class="card card-enterprise shadow-sm mb-3 bg-white border-primary border-opacity-25">
         <div class="card-body p-3 d-flex justify-content-between align-items-center flex-wrap gap-3">
@@ -122,9 +144,11 @@
                 {% endif %}
                 <div>
                     <span class="text-muted small text-uppercase fw-semibold d-block" style="font-size: 0.72rem;">E-Invoice?</span>
-                    {% if submission.is_e_invoice is True %}
+                    {% if submission.e_invoice_status == 'HANDWRITTEN' %}
+                        <span class="badge text-white" style="background-color: #fd7e14;">HANDWRITTEN</span>
+                    {% elif submission.e_invoice_status == 'YES' or submission.is_e_invoice is True %}
                         <span class="badge bg-success">YES</span>
-                    {% elif submission.is_e_invoice is False %}
+                    {% elif submission.e_invoice_status == 'NO' or submission.is_e_invoice is False %}
                         <span class="badge bg-secondary">NO</span>
                     {% else %}
                         <span class="badge bg-warning text-dark">NEEDS VERIFICATION</span>
@@ -132,11 +156,11 @@
                 </div>
                 <div>
                     <span class="text-muted small text-uppercase fw-semibold d-block" style="font-size: 0.72rem;">IRN Number</span>
-                    {% if submission.is_e_invoice is False %}
+                    {% if submission.e_invoice_status == 'NO' or submission.e_invoice_status == 'HANDWRITTEN' or submission.is_e_invoice is False %}
                         <span class="text-muted fw-semibold small">N/A</span>
                     {% elif submission.is_irn_valid %}
                         <code class="small text-dark bg-light border rounded px-1">{{ submission.irn_number }}</code>
-                    {% elif submission.is_e_invoice is True %}
+                    {% elif submission.e_invoice_status == 'YES' or submission.is_e_invoice is True %}
                         <span class="badge bg-danger bg-opacity-10 text-danger border border-danger">IRN Not Found</span>
                     {% else %}
                         <span class="text-muted small fst-italic">Pending Verification</span>

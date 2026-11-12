@@ -13,17 +13,29 @@ from apps.accounts.models import UserRole
 
 def check_user_role(user, allowed_roles: Union[Sequence[str], str]) -> bool:
     """
-    Evaluates whether the given user possesses any of the permitted roles.
-    Superusers automatically pass Admin role checks.
+    Evaluates whether the given user possesses any of the permitted roles or granted capabilities.
+    Inactive or suspended accounts are always denied.
     """
-    if not user or not user.is_authenticated or not user.is_active:
+    if not user or not user.is_authenticated or not getattr(user, 'is_operational_active', user.is_active):
         return False
 
     if isinstance(allowed_roles, str):
         allowed_roles = [allowed_roles]
 
-    if user.is_superuser and (UserRole.ADMIN in allowed_roles):
+    if (UserRole.ADMIN in allowed_roles) and getattr(user, 'is_admin_role', False):
         return True
+
+    if (UserRole.NAVEEN in allowed_roles or UserRole.ACCOUNTS in allowed_roles) and getattr(user, 'is_naveen', False):
+        return True
+
+    if (UserRole.EMPLOYEE in allowed_roles or UserRole.EXTERNAL_SUBMITTER in allowed_roles) and getattr(user, 'is_submitter', False):
+        # Respect explicit role subset if only EXTERNAL_SUBMITTER or EMPLOYEE was requested alongside submitter checks
+        if UserRole.EMPLOYEE in allowed_roles and UserRole.EXTERNAL_SUBMITTER in allowed_roles:
+            return True
+        if UserRole.EMPLOYEE in allowed_roles and getattr(user, 'is_submitter', False):
+            return True
+        if UserRole.EXTERNAL_SUBMITTER in allowed_roles and getattr(user, 'is_external_submitter', False):
+            return True
 
     return user.role in allowed_roles
 
@@ -43,9 +55,9 @@ def role_required(allowed_roles: Union[Sequence[str], str], require_safe_method:
                     f"Access Denied: Your assigned role '{request.user.get_role_display()}' "
                     f"does not have permission to access this module."
                 )
-            
+
             # Management role strict read-only enforcement
-            if request.user.role == UserRole.MANAGEMENT or require_safe_method:
+            if (request.user.is_management and not request.user.is_naveen and not request.user.is_admin_role) or require_safe_method:
                 if request.method not in ('GET', 'HEAD', 'OPTIONS'):
                     raise PermissionDenied(
                         "Access Denied: Management role has strictly READ-ONLY privileges. "
@@ -57,10 +69,12 @@ def role_required(allowed_roles: Union[Sequence[str], str], require_safe_method:
 
 
 # Strict Segregated Role Decorators
-employee_required = role_required([UserRole.EMPLOYEE])
-naveen_required = role_required([UserRole.NAVEEN])
+submitter_required = role_required([UserRole.EMPLOYEE, UserRole.EXTERNAL_SUBMITTER])
+employee_required = submitter_required
+naveen_required = role_required([UserRole.NAVEEN, UserRole.ACCOUNTS])
+accounts_required = naveen_required
 admin_required = role_required([UserRole.ADMIN])
-management_required = role_required([UserRole.MANAGEMENT, UserRole.NAVEEN, UserRole.ADMIN], require_safe_method=True)
+management_required = role_required([UserRole.MANAGEMENT, UserRole.NAVEEN, UserRole.ACCOUNTS, UserRole.ADMIN], require_safe_method=True)
 
 
 class RoleRequiredMixin(AccessMixin):
@@ -81,7 +95,7 @@ class RoleRequiredMixin(AccessMixin):
                 f"is not authorized to perform this operation."
             )
 
-        if (request.user.role == UserRole.MANAGEMENT or self.require_safe_method) and request.method not in ('GET', 'HEAD', 'OPTIONS'):
+        if ((request.user.is_management and not request.user.is_naveen and not request.user.is_admin_role) or self.require_safe_method) and request.method not in ('GET', 'HEAD', 'OPTIONS'):
             raise PermissionDenied("Access Denied: Read-only access policy prevents data modification.")
 
         return super().dispatch(request, *args, **kwargs)

@@ -12,6 +12,7 @@ from django.db.models import Sum, Count, Avg, Q
 from django.utils import timezone
 from datetime import date, datetime
 from .models import InvoiceSubmission, ExportAuditLog
+from .export_security import safe_xlsx_value
 
 
 def get_executive_kpis():
@@ -236,9 +237,9 @@ def generate_executive_excel_report(report_type="monthly_summary", user=None):
         suppliers = get_top_suppliers(limit=100)
         curr_row = 5
         for s in suppliers:
-            ws.cell(row=curr_row, column=1, value=s['party_name'] or 'Unregistered').alignment = Alignment(horizontal="left", vertical="center")
-            ws.cell(row=curr_row, column=2, value=s['party_gstin'] or '').alignment = Alignment(horizontal="center", vertical="center")
-            ws.cell(row=curr_row, column=3, value=s['expense_ledger']).alignment = Alignment(horizontal="left", vertical="center")
+            ws.cell(row=curr_row, column=1, value=safe_xlsx_value(s['party_name'] or 'Unregistered')).alignment = Alignment(horizontal="left", vertical="center")
+            ws.cell(row=curr_row, column=2, value=safe_xlsx_value(s['party_gstin'] or '')).alignment = Alignment(horizontal="center", vertical="center")
+            ws.cell(row=curr_row, column=3, value=safe_xlsx_value(s['expense_ledger'])).alignment = Alignment(horizontal="left", vertical="center")
             ws.cell(row=curr_row, column=4, value=s['invoice_count']).alignment = Alignment(horizontal="right", vertical="center")
             
             c5 = ws.cell(row=curr_row, column=5, value=float(s['taxable_spend'] or 0.0))
@@ -306,11 +307,11 @@ def generate_executive_excel_report(report_type="monthly_summary", user=None):
             if inv.is_duplicate_suspected:
                 issue.append("Duplicate Hash Detected")
 
-            ws.cell(row=curr_row, column=1, value=inv.submission_id).alignment = Alignment(horizontal="center", vertical="center")
-            ws.cell(row=curr_row, column=2, value=inv.invoice_number or '-').alignment = Alignment(horizontal="center", vertical="center")
+            ws.cell(row=curr_row, column=1, value=safe_xlsx_value(inv.submission_id)).alignment = Alignment(horizontal="center", vertical="center")
+            ws.cell(row=curr_row, column=2, value=safe_xlsx_value(inv.invoice_number or '-')).alignment = Alignment(horizontal="center", vertical="center")
             ws.cell(row=curr_row, column=3, value=inv.invoice_date.strftime('%d-%m-%Y') if inv.invoice_date else '').alignment = Alignment(horizontal="center", vertical="center")
-            ws.cell(row=curr_row, column=4, value=inv.party_name or 'Unregistered').alignment = Alignment(horizontal="left", vertical="center")
-            ws.cell(row=curr_row, column=5, value=inv.party_gstin or 'MISSING').alignment = Alignment(horizontal="center", vertical="center")
+            ws.cell(row=curr_row, column=4, value=safe_xlsx_value(inv.party_name or 'Unregistered')).alignment = Alignment(horizontal="left", vertical="center")
+            ws.cell(row=curr_row, column=5, value=safe_xlsx_value(inv.party_gstin or 'MISSING')).alignment = Alignment(horizontal="center", vertical="center")
             
             c6 = ws.cell(row=curr_row, column=6, value=float(inv.total_amount))
             c6.number_format = '#,##0.00'

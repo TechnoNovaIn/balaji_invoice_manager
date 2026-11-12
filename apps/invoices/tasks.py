@@ -258,7 +258,7 @@ def process_uploaded_document_task(
                     requires_manual_review=backend_val['requires_manual_review'] or einv_manual_gate,
                 )
                 apply_e_invoice_to_submission(sub, meta)
-                sub.save(update_fields=['is_e_invoice', 'irn_number', 'requires_manual_review', 'updated_at'])
+                sub.save(update_fields=['e_invoice_status', 'is_e_invoice', 'irn_number', 'requires_manual_review', 'updated_at'])
 
                 # Fallback party name matching from remarks if not detected, then re-validate
                 if not sub.party_name and remarks.strip():

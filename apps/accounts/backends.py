@@ -12,6 +12,9 @@ class CaseInsensitiveOrPhoneAuthBackend(ModelBackend):
     2. Phone number matching (as indicated by the login UI 'Username or Phone')
     Strictly verifies passwords via Django's cryptographic password hasher.
     """
+    def user_can_authenticate(self, user):
+        return bool(super().user_can_authenticate(user) and getattr(user, 'is_operational_active', user.is_active))
+
     def authenticate(self, request, username=None, password=None, **kwargs):
         if not username or not password:
             return None

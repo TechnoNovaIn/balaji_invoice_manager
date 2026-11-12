@@ -46,8 +46,10 @@ class Command(BaseCommand):
                 "last_name": "Accounts",
                 "email": "naveen@balajitransports.com",
                 "department": ops_dept,
-                "is_staff": False,
-                "is_superuser": False
+                "is_staff": True,
+                "is_superuser": False,
+                "has_admin_access": True,
+                "has_accounts_access": True,
             },
             {
                 "username": "employee",
@@ -95,6 +97,8 @@ class Command(BaseCommand):
             user.is_active = True
             user.is_staff = acc["is_staff"]
             user.is_superuser = acc["is_superuser"]
+            user.has_admin_access = acc.get("has_admin_access", False)
+            user.has_accounts_access = acc.get("has_accounts_access", False)
             user.save()
 
             action_label = "Created" if created else "Updated password for"

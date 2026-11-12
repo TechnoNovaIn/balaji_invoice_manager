@@ -342,23 +342,24 @@
 
                     <!-- E-Invoice Status & IRN Number -->
                     <div class="row g-2 mb-2 p-2 bg-light border rounded-3">
-                        <div class="col-12 col-md-4">
+                        <div class="col-12 col-md-5">
                             <label class="form-label small fw-bold text-dark mb-1">E-Invoice?</label>
-                            <select name="is_e_invoice" id="fieldIsEInvoice" class="form-select form-select-sm fw-semibold">
-                                <option value="" {% if submission.is_e_invoice is None %}selected{% endif %}>NEEDS VERIFICATION</option>
-                                <option value="true" {% if submission.is_e_invoice is True %}selected{% endif %}>YES (E-Invoice)</option>
-                                <option value="false" {% if submission.is_e_invoice is False %}selected{% endif %}>NO (Non E-Invoice)</option>
+                            <select name="e_invoice_status" id="fieldIsEInvoice" class="form-select form-select-sm fw-semibold">
+                                <option value="NEEDS_VERIFICATION" {% if submission.e_invoice_status == 'NEEDS_VERIFICATION' or not submission.e_invoice_status %}selected{% endif %}>NEEDS VERIFICATION</option>
+                                <option value="HANDWRITTEN" {% if submission.e_invoice_status == 'HANDWRITTEN' %}selected{% endif %}>HANDWRITTEN</option>
+                                <option value="YES" {% if submission.e_invoice_status == 'YES' or submission.is_e_invoice is True %}selected{% endif %}>YES (E-Invoice)</option>
+                                <option value="NO" {% if submission.e_invoice_status == 'NO' or submission.is_e_invoice is False %}selected{% endif %}>NO (Non E-Invoice)</option>
                             </select>
                         </div>
-                        <div class="col-12 col-md-8">
+                        <div class="col-12 col-md-7">
                             <label class="form-label small fw-bold text-dark mb-1">
-                                IRN Number (64-Char Alphanumeric)
-                                {% if submission.is_e_invoice is True and not submission.is_irn_valid %}
+                                IRN Number (64-Char Hex)
+                                {% if submission.e_invoice_status == 'YES' and not submission.is_irn_valid %}
                                     <span class="badge bg-danger ms-1">IRN Not Found</span>
                                 {% endif %}
                             </label>
                             <div class="input-group input-group-sm">
-                                <input type="text" name="irn_number" id="fieldIrnNumber" value="{{ submission.irn_number }}" maxlength="64" class="form-control form-control-sm font-monospace text-uppercase" placeholder="{% if submission.is_e_invoice is False %}N/A (Non E-Invoice){% else %}64-character alphanumeric IRN{% endif %}">
+                                <input type="text" name="irn_number" id="fieldIrnNumber" value="{{ submission.irn_number }}" maxlength="64" class="form-control form-control-sm font-monospace text-uppercase" placeholder="{% if submission.e_invoice_status == 'NO' or submission.e_invoice_status == 'HANDWRITTEN' %}N/A{% else %}64-character hex IRN (0-9, A-F){% endif %}">
                                 {% if submission.is_irn_valid %}
                                 <button type="button" class="btn btn-outline-secondary" onclick="navigator.clipboard && navigator.clipboard.writeText(document.getElementById('fieldIrnNumber').value)" title="Copy IRN">
                                     <i class="bi bi-clipboard"></i>
@@ -423,6 +424,25 @@
                                 <input type="number" step="0.01" name="total_amount" id="valTotal" value="{{ submission.total_amount }}" class="form-control form-control-sm text-end font-monospace fw-bold fs-6 text-success border-success" required>
                             </div>
                         </div>
+
+                        {% if amount_in_words %}
+                        <div class="mt-2 pt-2 border-top small text-secondary">
+                            <span class="fw-semibold">Extracted Words on Bill:</span>
+                            <span class="fst-italic text-dark">{{ amount_in_words }}</span>
+                        </div>
+                        {% endif %}
+
+                        {% if financial_warnings %}
+                        <div class="alert alert-danger py-2 px-2 mt-2 mb-0 small border-danger">
+                            <div class="fw-bold mb-1"><i class="bi bi-exclamation-octagon-fill me-1"></i>Financial Discrepancies Detected:</div>
+                            <ul class="mb-0 ps-3">
+                                {% for warn in financial_warnings %}
+                                <li>{{ warn }}</li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                        {% endif %}
+                        <div id="liveMathWarning" class="alert alert-danger py-1 px-2 mt-2 mb-0 small d-none"></div>
                     </div>
 
                     <!-- Audit Reason Note (Optional) -->
@@ -444,9 +464,14 @@
 
                     <!-- Submission Action Buttons -->
                     <div class="d-flex align-items-center justify-content-between gap-2 pt-2 border-top flex-wrap">
-                        <button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#returnModal">
-                            <i class="bi bi-arrow-return-left me-1"></i>Return for Correction
-                        </button>
+                        <div class="d-flex align-items-center gap-2">
+                            <button type="button" class="btn btn-sm btn-outline-warning text-dark" data-bs-toggle="modal" data-bs-target="#returnModal">
+                                <i class="bi bi-arrow-return-left me-1"></i>Return for Correction
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#rejectModal">
+                                <i class="bi bi-x-octagon me-1"></i>Reject Invoice
+                            </button>
+                        </div>
 
                         <div class="d-flex align-items-center gap-2">
                             <button type="submit" name="action" value="save_only" class="btn btn-sm btn-outline-secondary fw-semibold">
@@ -529,6 +554,36 @@
                 <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
                 <button type="submit" class="btn btn-sm btn-danger fw-bold">
                     <i class="bi bi-arrow-return-left me-1"></i>Confirm Return
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Modal: Reject Invoice -->
+<div class="modal fade" id="rejectModal" tabindex="-1" aria-labelledby="rejectModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <form method="POST" action="{% url 'invoices:naveen_reject' submission.submission_id %}" class="modal-content">
+            {% csrf_token %}
+            <div class="modal-header bg-dark text-white py-2">
+                <h6 class="modal-title fw-bold" id="rejectModalLabel">
+                    <i class="bi bi-x-octagon-fill text-danger me-1"></i>Reject Invoice {{ submission.submission_id }}
+                </h6>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p class="small text-muted mb-2">
+                    Provide a clear reason for rejecting this invoice. The submitter will see the rejected status and reason.
+                </p>
+                <div class="mb-3">
+                    <label class="form-label small fw-bold">Reason for Rejection <span class="text-danger">*</span></label>
+                    <textarea name="rejection_reason" class="form-control form-control-sm" rows="3" placeholder="e.g. Duplicate submission, invalid supplier GSTIN, or unauthorized expense" required></textarea>
+                </div>
+            </div>
+            <div class="modal-footer py-2">
+                <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="submit" class="btn btn-sm btn-danger fw-bold">
+                    <i class="bi bi-x-octagon me-1"></i>Confirm Reject
                 </button>
             </div>
         </form>
@@ -758,8 +813,38 @@ document.addEventListener('DOMContentLoaded', function() {
                 document.getElementById('valIgst').value = '0.00';
                 document.getElementById('valTotal').value = (taxable + (parseFloat(halfTax) * 2)).toFixed(2);
             }
+            checkLiveMathConsistency();
         }
     });
+
+    // 4. Real-Time Arithmetic Guard on Financial Inputs
+    function checkLiveMathConsistency() {
+        const box = document.getElementById('liveMathWarning');
+        if (!box) return;
+        const t = parseFloat(document.getElementById('valTaxable')?.value) || 0;
+        const c = parseFloat(document.getElementById('valCgst')?.value) || 0;
+        const s = parseFloat(document.getElementById('valSgst')?.value) || 0;
+        const i = parseFloat(document.getElementById('valIgst')?.value) || 0;
+        const tot = parseFloat(document.getElementById('valTotal')?.value) || 0;
+        const msgs = [];
+        const taxSum = c + s + i;
+        if (taxSum > 0 && t > 0 && Math.abs((t + taxSum) - tot) > 2.0) {
+            msgs.push(`Taxable + Taxes (₹${(t + taxSum).toFixed(2)}) ≠ Total (₹${tot.toFixed(2)})`);
+        }
+        if ((c > 0) !== (s > 0) || (c > 0 && s > 0 && Math.abs(c - s) > 1.0)) {
+            msgs.push(`Asymmetrical GST: CGST ₹${c.toFixed(2)} vs SGST ₹${s.toFixed(2)}`);
+        }
+        if (msgs.length > 0) {
+            box.textContent = '⚠️ ' + msgs.join(' | ');
+            box.classList.remove('d-none');
+        } else {
+            box.classList.add('d-none');
+        }
+    }
+    ['valTaxable', 'valCgst', 'valSgst', 'valIgst', 'valTotal'].forEach(id => {
+        document.getElementById(id)?.addEventListener('input', checkLiveMathConsistency);
+    });
+    checkLiveMathConsistency();
 });
 </script>
 {% endblock %}

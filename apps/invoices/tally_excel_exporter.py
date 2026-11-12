@@ -8,6 +8,7 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from django.utils import timezone
 from .models import TallyLedgerMapping, ExportAuditLog
+from .export_security import safe_xlsx_value, sanitize_spreadsheet_text
 
 
 def generate_tally_structured_excel(queryset, user=None, filter_info=None):
@@ -150,7 +151,7 @@ def generate_tally_structured_excel(queryset, user=None, filter_info=None):
         fill_color = FILL_ZEBRA if idx % 2 == 0 else PatternFill(fill_type=None)
 
         for col_idx, val in enumerate(row_data, 1):
-            cell = ws.cell(row=current_row, column=col_idx, value=val)
+            cell = ws.cell(row=current_row, column=col_idx, value=safe_xlsx_value(val))
             cell.font = FONT_DATA
             cell.border = BORDER_THIN
             if fill_color.fill_type:

@@ -246,13 +246,29 @@ document.addEventListener('DOMContentLoaded', function() {
 
             const info = document.createElement('div');
             info.className = 'mt-auto small text-truncate';
-            info.innerHTML = `
-                <div class="text-truncate fw-semibold" title="${item.file.name}">${item.file.name}</div>
-                <div class="d-flex justify-content-between align-items-center mt-1">
-                    <span class="text-muted" style="font-size: 0.72rem;">${(item.file.size / (1024*1024) > 1 ? (item.file.size / (1024*1024)).toFixed(1) + ' MB' : (item.file.size / 1024).toFixed(0) + ' KB')}</span>
-                    <span id="res_${item.id}"></span>
-                </div>
-            `;
+
+            const nameEl = document.createElement('div');
+            nameEl.className = 'text-truncate fw-semibold';
+            nameEl.title = item.file.name;
+            nameEl.textContent = item.file.name;
+
+            const metaRow = document.createElement('div');
+            metaRow.className = 'd-flex justify-content-between align-items-center mt-1';
+
+            const sizeSpan = document.createElement('span');
+            sizeSpan.className = 'text-muted';
+            sizeSpan.style.fontSize = '0.72rem';
+            sizeSpan.textContent = item.file.size / (1024 * 1024) > 1
+                ? (item.file.size / (1024 * 1024)).toFixed(1) + ' MB'
+                : (item.file.size / 1024).toFixed(0) + ' KB';
+
+            const resSpan = document.createElement('span');
+            resSpan.id = `res_${item.id}`;
+
+            metaRow.appendChild(sizeSpan);
+            metaRow.appendChild(resSpan);
+            info.appendChild(nameEl);
+            info.appendChild(metaRow);
             card.appendChild(info);
 
             col.appendChild(card);

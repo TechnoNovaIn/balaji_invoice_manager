@@ -1,109 +1,192 @@
 {% extends 'base.html' %}
-
-{% block title %}User Management - Balaji InvoiceHub{% endblock %}
-{% block page_heading %}User & Access Administration{% endblock %}
+{% block title %}User & Role Administration - Balaji InvoiceHub{% endblock %}
 
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
     <div>
-        <h4 class="fw-bold mb-1" style="color: var(--primary-navy); letter-spacing: -0.02em;">
-            <i class="bi bi-people-fill me-2 text-rose"></i>User & Role Administration
-        </h4>
-        <p class="text-secondary small mb-0">Manage employee accounts, assign transport departments, enforce role boundaries, and control active status.</p>
+        <h2 class="fw-bold mb-1">User & Role Administration</h2>
+        <p class="text-secondary mb-0">Manage external invoice submitters, account statuses, permissions, and password resets.</p>
     </div>
-    <a href="{% url 'accounts:user_create' %}" class="btn btn-teal btn-sm shadow-sm">
-        <i class="bi bi-person-plus-fill me-1"></i> Add New Employee / User
-    </a>
+    <div class="d-flex gap-2">
+        <a href="{% url 'accounts:audit_logs' %}" class="btn btn-outline-secondary">
+            <i class="bi bi-journal-text me-1"></i> Audit Logs
+        </a>
+        <a href="{% url 'accounts:user_create' %}" class="btn btn-primary">
+            <i class="bi bi-person-plus-fill me-1"></i> Add External User
+        </a>
+    </div>
 </div>
 
-<div class="card card-enterprise">
-    <div class="card-enterprise-header">
-        <div class="d-flex align-items-center gap-2">
-            <h6 class="fw-bold mb-0 text-dark"><i class="bi bi-person-lines-fill me-2 text-teal"></i>Registered Accounts</h6>
-            <span class="badge bg-light text-secondary border small">{{ users_list|length }} Total</span>
+<!-- Summary Cards -->
+<div class="row g-3 mb-4">
+    <div class="col-6 col-md-3">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-body">
+                <div class="text-secondary small fw-semibold">Total Users</div>
+                <div class="fs-4 fw-bold mt-1">{{ total_users_count }}</div>
+            </div>
         </div>
     </div>
-    <div class="card-body p-0">
-        <div class="table-responsive">
-            <table class="table table-enterprise align-middle">
-                <thead>
-                    <tr>
-                        <th class="ps-4">User</th>
-                        <th>Assigned Role</th>
-                        <th>Department</th>
-                        <th>Contact Number / Email</th>
-                        <th>Account Status</th>
-                        <th>Date Joined</th>
-                        <th class="text-end pe-4">Actions</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for u in users_list %}
-                    <tr>
-                        <td class="ps-4">
-                            <div class="d-flex align-items-center gap-2">
-                                <div class="rounded-circle d-flex align-items-center justify-content-center fw-bold text-white small" style="width: 32px; height: 32px; background-color: var(--primary-navy);">
-                                    {{ u.first_name|default:u.username|slice:":1"|upper }}
-                                </div>
-                                <div>
-                                    <div class="fw-bold text-dark">{{ u.get_full_name|default:u.username }}</div>
-                                    <small class="text-muted">@{{ u.username }}</small>
-                                </div>
-                            </div>
-                        </td>
-                        <td>
-                            <span class="role-badge role-badge-{{ u.role }}">{{ u.get_role_display }}</span>
-                        </td>
-                        <td>
-                            <span class="badge bg-light text-secondary border small">{{ u.department.name|default:"General" }}</span>
-                        </td>
-                        <td>
-                            <small class="text-secondary">{{ u.phone_number|default:u.email|default:"Not Provided" }}</small>
-                        </td>
-                        <td>
-                            {% if u.is_active %}
-                            <span class="badge bg-success-subtle text-success border border-success-subtle">
-                                <i class="bi bi-check-circle me-1"></i>Active
-                            </span>
-                            {% else %}
-                            <span class="badge bg-danger-subtle text-danger border border-danger-subtle">
-                                <i class="bi bi-x-circle me-1"></i>Deactivated
-                            </span>
+    <div class="col-6 col-md-3">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-body">
+                <div class="text-secondary small fw-semibold">External Submitters</div>
+                <div class="fs-4 fw-bold text-primary mt-1">{{ external_count }}</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-body">
+                <div class="text-secondary small fw-semibold">Active Accounts</div>
+                <div class="fs-4 fw-bold text-success mt-1">{{ active_count }}</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-body">
+                <div class="text-secondary small fw-semibold">Suspended</div>
+                <div class="fs-4 fw-bold text-warning mt-1">{{ suspended_count }}</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card border-0 shadow-sm mb-4">
+    <div class="card-body">
+        <form method="get" class="row g-2 align-items-end">
+            <div class="col-md-4">
+                <label class="form-label small fw-semibold text-secondary">Search User</label>
+                <input type="text" name="q" value="{{ q }}" class="form-control" placeholder="Username, name, or email...">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label small fw-semibold text-secondary">Role</label>
+                <select name="role" class="form-select">
+                    <option value="">All Roles</option>
+                    <option value="EXTERNAL_SUBMITTER" {% if role_filter == 'EXTERNAL_SUBMITTER' %}selected{% endif %}>External Submitter</option>
+                    <option value="EMPLOYEE" {% if role_filter == 'EMPLOYEE' %}selected{% endif %}>Employee</option>
+                    <option value="NAVEEN" {% if role_filter == 'NAVEEN' %}selected{% endif %}>Accounts Operator</option>
+                    <option value="ADMIN" {% if role_filter == 'ADMIN' %}selected{% endif %}>Admin</option>
+                    <option value="MANAGEMENT" {% if role_filter == 'MANAGEMENT' %}selected{% endif %}>Management</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label small fw-semibold text-secondary">Status</label>
+                <select name="status" class="form-select">
+                    <option value="">All Statuses</option>
+                    <option value="ACTIVE" {% if status_filter == 'ACTIVE' %}selected{% endif %}>Active</option>
+                    <option value="SUSPENDED" {% if status_filter == 'SUSPENDED' %}selected{% endif %}>Suspended</option>
+                    <option value="DEACTIVATED" {% if status_filter == 'DEACTIVATED' %}selected{% endif %}>Deactivated</option>
+                </select>
+            </div>
+            <div class="col-md-2 d-flex gap-2">
+                <button type="submit" class="btn btn-dark w-100">Filter</button>
+                <a href="{% url 'accounts:user_list' %}" class="btn btn-outline-secondary">Reset</a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Users Table -->
+<div class="card border-0 shadow-sm overflow-hidden">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>User</th>
+                    <th>Role & Capabilities</th>
+                    <th>Status</th>
+                    <th class="text-center">Invoices</th>
+                    <th>Last Login</th>
+                    <th class="text-end">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for u in users_list %}
+                <tr>
+                    <td>
+                        <div class="fw-bold">{{ u.get_full_name|default:u.username }}</div>
+                        <div class="small text-secondary">@{{ u.username }}{% if u.email %} &middot; {{ u.email }}{% endif %}</div>
+                        {% if u.phone_number %}<div class="small text-muted">{{ u.phone_number }}</div>{% endif %}
+                    </td>
+                    <td>
+                        <span class="badge bg-primary-subtle text-primary border border-primary-subtle">{{ u.get_role_display }}</span>
+                        <div class="small text-secondary mt-1">
+                            {% if u.has_admin_access %}<span class="badge bg-dark-subtle text-dark">Admin</span>{% endif %}
+                            {% if u.has_accounts_access %}<span class="badge bg-info-subtle text-info">Accounts</span>{% endif %}
+                            {% if u.can_upload_invoices %}<span class="badge bg-light text-dark border">Upload</span>{% endif %}
+                            {% if u.can_resubmit_invoices %}<span class="badge bg-light text-dark border">Resubmit</span>{% endif %}
+                        </div>
+                    </td>
+                    <td>
+                        {% if u.is_operational_active %}
+                            <span class="badge bg-success-subtle text-success border border-success-subtle">Active</span>
+                        {% elif u.account_status == 'SUSPENDED' %}
+                            <span class="badge bg-warning-subtle text-warning border border-warning-subtle">Suspended</span>
+                        {% else %}
+                            <span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle">Deactivated</span>
+                        {% endif %}
+                        {% if u.must_change_password %}
+                            <div class="small text-warning mt-1"><i class="bi bi-key"></i> Password reset required</div>
+                        {% endif %}
+                    </td>
+                    <td class="text-center">
+                        <a href="{% url 'accounts:user_history' u.pk %}" class="fw-semibold text-decoration-none">
+                            {{ u.submission_count|default:0 }}
+                        </a>
+                    </td>
+                    <td class="small text-secondary">
+                        {% if u.last_login %}{{ u.last_login|date:"M d, Y H:i" }}{% else %}Never{% endif %}
+                    </td>
+                    <td class="text-end">
+                        <div class="btn-group btn-group-sm">
+                            <a href="{% url 'accounts:user_history' u.pk %}" class="btn btn-outline-secondary" title="Submission & Audit History">
+                                <i class="bi bi-clock-history"></i>
+                            </a>
+                            <a href="{% url 'accounts:user_edit' u.pk %}" class="btn btn-outline-primary" title="Edit User">
+                                <i class="bi bi-pencil"></i>
+                            </a>
+                            <a href="{% url 'accounts:user_reset_password' u.pk %}" class="btn btn-outline-dark" title="Reset Password">
+                                <i class="bi bi-key"></i>
+                            </a>
+                        </div>
+                        {% if u.pk != request.user.pk %}
+                        <div class="d-inline-flex gap-1 ms-1">
+                            {% if u.account_status == 'SUSPENDED' %}
+                            <form method="post" action="{% url 'accounts:user_suspend' u.pk %}" class="d-inline">
+                                {% csrf_token %}
+                                <input type="hidden" name="action" value="unsuspend">
+                                <button type="submit" class="btn btn-sm btn-outline-success" title="Lift Suspension">Unsuspend</button>
+                            </form>
+                            {% elif u.is_operational_active %}
+                            <form method="post" action="{% url 'accounts:user_suspend' u.pk %}" class="d-inline">
+                                {% csrf_token %}
+                                <input type="hidden" name="action" value="suspend">
+                                <input type="hidden" name="reason" value="Suspended by administrator">
+                                <button type="submit" class="btn btn-sm btn-outline-warning" title="Suspend User">Suspend</button>
+                            </form>
                             {% endif %}
-                        </td>
-                        <td>
-                            <small class="text-secondary">{{ u.date_joined|date:"d M Y" }}</small>
-                        </td>
-                        <td class="text-end pe-4">
-                            {% if u != request.user %}
-                            <form method="post" action="{% url 'accounts:user_toggle_active' u.id %}" class="d-inline">
+                            <form method="post" action="{% url 'accounts:user_toggle_active' u.pk %}" class="d-inline">
                                 {% csrf_token %}
                                 {% if u.is_active %}
-                                <button type="submit" class="btn btn-sm btn-outline-danger" title="Deactivate Employee Account">
-                                    <i class="bi bi-slash-circle me-1"></i>Deactivate
-                                </button>
+                                <button type="submit" class="btn btn-sm btn-outline-danger" title="Deactivate">Deactivate</button>
                                 {% else %}
-                                <button type="submit" class="btn btn-sm btn-outline-success" title="Activate Account">
-                                    <i class="bi bi-check-circle me-1"></i>Activate
-                                </button>
+                                <button type="submit" class="btn btn-sm btn-outline-success" title="Activate">Activate</button>
                                 {% endif %}
                             </form>
-                            {% else %}
-                            <span class="badge bg-light text-muted border">Active Session</span>
-                            {% endif %}
-                        </td>
-                    </tr>
-                    {% empty %}
-                    <tr>
-                        <td colspan="7" class="text-center py-5 text-muted">
-                            <i class="bi bi-people display-4 text-secondary opacity-50 mb-2 d-block"></i>
-                            No users registered yet.
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
+                        </div>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="6" class="text-center py-4 text-secondary">No users matched the selected filters.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
 </div>
 {% endblock %}

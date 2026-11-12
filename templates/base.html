@@ -58,15 +58,17 @@
         <nav class="sidebar-nav">
             <div class="nav-section-title">Operations Menu</div>
 
-            {% if user.is_employee %}
+            {% if user.is_submitter %}
             <a href="{% url 'core:employee_dashboard' %}" class="sidebar-link {% if request.resolver_match.url_name == 'employee_dashboard' %}active{% endif %}">
                 <i class="bi bi-speedometer"></i>
-                <span>Employee Portal</span>
+                <span>{% if user.is_external_submitter %}Submitter Portal{% else %}Employee Portal{% endif %}</span>
             </a>
+            {% if user.can_submit_invoices %}
             <a href="{% url 'invoices:upload' %}" class="sidebar-link {% if request.resolver_match.url_name == 'upload' %}active{% endif %}">
                 <i class="bi bi-camera-fill"></i>
                 <span>Upload Invoice</span>
             </a>
+            {% endif %}
             <a href="{% url 'invoices:my_submissions' %}" class="sidebar-link {% if request.resolver_match.url_name == 'my_submissions' %}active{% endif %}">
                 <i class="bi bi-folder2-open"></i>
                 <span>My Submissions</span>
@@ -93,21 +95,27 @@
                 <i class="bi bi-speedometer2"></i>
                 <span>Admin Console</span>
             </a>
+            {% if not user.is_naveen %}
             <a href="{% url 'invoices:analytics_dashboard' %}" class="sidebar-link {% if request.resolver_match.url_name == 'analytics_dashboard' %}active{% endif %}">
                 <i class="bi bi-graph-up-arrow"></i>
                 <span>Analytics & Reports</span>
+            </a>
+            {% endif %}
+            <a href="{% url 'accounts:user_list' %}" class="sidebar-link {% if request.resolver_match.url_name == 'user_list' %}active{% endif %}">
+                <i class="bi bi-people"></i>
+                <span>User Management</span>
+            </a>
+            <a href="{% url 'accounts:audit_logs' %}" class="sidebar-link {% if request.resolver_match.url_name == 'audit_logs' %}active{% endif %}">
+                <i class="bi bi-journal-check"></i>
+                <span>Audit Logs</span>
             </a>
             <a href="{% url 'backup:dashboard' %}" class="sidebar-link {% if request.resolver_match.app_name == 'backup' %}active{% endif %}">
                 <i class="bi bi-shield-shaded"></i>
                 <span>Backup & Recovery</span>
             </a>
-            <a href="{% url 'accounts:user_list' %}" class="sidebar-link {% if request.resolver_match.url_name == 'user_list' %}active{% endif %}">
-                <i class="bi bi-people"></i>
-                <span>User Management</span>
-            </a>
             {% endif %}
 
-            {% if user.is_management %}
+            {% if user.is_management and not user.is_naveen and not user.is_admin_role %}
             <a href="{% url 'core:management_dashboard' %}" class="sidebar-link {% if request.resolver_match.url_name == 'management_dashboard' %}active{% endif %}">
                 <i class="bi bi-graph-up-arrow"></i>
                 <span>Executive Overview</span>
@@ -166,15 +174,17 @@
 
             <!-- Mobile Links -->
             <nav class="sidebar-nav">
-                {% if user.is_employee %}
+                {% if user.is_submitter %}
                 <a href="{% url 'core:employee_dashboard' %}" class="sidebar-link {% if request.resolver_match.url_name == 'employee_dashboard' %}active{% endif %}">
                     <i class="bi bi-speedometer"></i>
-                    <span>Employee Portal</span>
+                    <span>{% if user.is_external_submitter %}Submitter Portal{% else %}Employee Portal{% endif %}</span>
                 </a>
+                {% if user.can_submit_invoices %}
                 <a href="{% url 'invoices:upload' %}" class="sidebar-link {% if request.resolver_match.url_name == 'upload' %}active{% endif %}">
                     <i class="bi bi-camera-fill"></i>
                     <span>Upload Invoice</span>
                 </a>
+                {% endif %}
                 <a href="{% url 'invoices:my_submissions' %}" class="sidebar-link {% if request.resolver_match.url_name == 'my_submissions' %}active{% endif %}">
                     <i class="bi bi-folder2-open"></i>
                     <span>My Submissions</span>
@@ -201,21 +211,27 @@
                     <i class="bi bi-speedometer2"></i>
                     <span>Admin Console</span>
                 </a>
+                {% if not user.is_naveen %}
                 <a href="{% url 'invoices:analytics_dashboard' %}" class="sidebar-link {% if request.resolver_match.url_name == 'analytics_dashboard' %}active{% endif %}">
                     <i class="bi bi-graph-up-arrow"></i>
                     <span>Analytics & Reports</span>
+                </a>
+                {% endif %}
+                <a href="{% url 'accounts:user_list' %}" class="sidebar-link {% if request.resolver_match.url_name == 'user_list' %}active{% endif %}">
+                    <i class="bi bi-people"></i>
+                    <span>User Management</span>
+                </a>
+                <a href="{% url 'accounts:audit_logs' %}" class="sidebar-link {% if request.resolver_match.url_name == 'audit_logs' %}active{% endif %}">
+                    <i class="bi bi-journal-check"></i>
+                    <span>Audit Logs</span>
                 </a>
                 <a href="{% url 'backup:dashboard' %}" class="sidebar-link {% if request.resolver_match.app_name == 'backup' %}active{% endif %}">
                     <i class="bi bi-shield-shaded"></i>
                     <span>Backup & Recovery</span>
                 </a>
-                <a href="{% url 'accounts:user_list' %}" class="sidebar-link {% if request.resolver_match.url_name == 'user_list' %}active{% endif %}">
-                    <i class="bi bi-people"></i>
-                    <span>User Management</span>
-                </a>
                 {% endif %}
 
-                {% if user.is_management %}
+                {% if user.is_management and not user.is_naveen and not user.is_admin_role %}
                 <a href="{% url 'core:management_dashboard' %}" class="sidebar-link {% if request.resolver_match.url_name == 'management_dashboard' %}active{% endif %}">
                     <i class="bi bi-graph-up-arrow"></i>
                     <span>Executive Overview</span>

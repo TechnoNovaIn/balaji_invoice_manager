@@ -142,17 +142,18 @@
 
                         <!-- E-Invoice & IRN -->
                         <div class="row g-2 mb-3">
-                            <div class="col-5">
+                            <div class="col-12 col-md-5">
                                 <label class="form-label small fw-bold text-dark mb-1">E-Invoice?</label>
-                                <select name="is_e_invoice" class="form-select">
-                                    <option value="" {% if submission.is_e_invoice is None %}selected{% endif %}>NEEDS VERIFICATION</option>
-                                    <option value="true" {% if submission.is_e_invoice is True %}selected{% endif %}>YES (E-Invoice)</option>
-                                    <option value="false" {% if submission.is_e_invoice is False %}selected{% endif %}>NO (Non E-Invoice)</option>
+                                <select name="e_invoice_status" class="form-select">
+                                    <option value="NEEDS_VERIFICATION" {% if submission.e_invoice_status == 'NEEDS_VERIFICATION' or not submission.e_invoice_status %}selected{% endif %}>NEEDS VERIFICATION</option>
+                                    <option value="HANDWRITTEN" {% if submission.e_invoice_status == 'HANDWRITTEN' %}selected{% endif %}>HANDWRITTEN</option>
+                                    <option value="YES" {% if submission.e_invoice_status == 'YES' or submission.is_e_invoice is True %}selected{% endif %}>YES (E-Invoice)</option>
+                                    <option value="NO" {% if submission.e_invoice_status == 'NO' or submission.is_e_invoice is False %}selected{% endif %}>NO (Non E-Invoice)</option>
                                 </select>
                             </div>
-                            <div class="col-7">
+                            <div class="col-12 col-md-7">
                                 <label class="form-label small fw-bold text-dark mb-1">IRN Number</label>
-                                <input type="text" name="irn_number" maxlength="64" class="form-control font-monospace text-uppercase" value="{{ submission.irn_number }}" placeholder="{% if submission.is_e_invoice is False %}N/A{% else %}64-char IRN{% endif %}">
+                                <input type="text" name="irn_number" maxlength="64" class="form-control font-monospace text-uppercase" value="{{ submission.irn_number }}" placeholder="{% if submission.e_invoice_status == 'NO' or submission.e_invoice_status == 'HANDWRITTEN' %}N/A{% else %}64-char hex IRN (0-9, A-F){% endif %}">
                             </div>
                         </div>
 

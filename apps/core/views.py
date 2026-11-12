@@ -26,7 +26,7 @@ def dashboard_router(request):
     Directs authenticated users to their designated role dashboard.
     """
     user = request.user
-    if user.is_employee:
+    if user.is_submitter:
         return redirect('core:employee_dashboard')
     elif user.is_naveen:
         return redirect('core:naveen_dashboard')
@@ -41,16 +41,29 @@ def dashboard_router(request):
 @employee_required
 def employee_dashboard(request):
     """
-    Employee Mobile-First Dashboard (Simple & Minimal).
+    Submitter Dashboard (External Submitters and Field Employees).
+    Strictly isolated to request.user's own invoice submissions.
     """
     user_submissions = InvoiceSubmission.objects.filter(employee=request.user)
     recent_submissions = user_submissions.prefetch_related('documents').order_by('-created_at')[:10]
     total_count = user_submissions.count()
+    pending_count = user_submissions.filter(
+        status__in=[InvoiceSubmission.STATUS_SUBMITTED, InvoiceSubmission.STATUS_RESUBMITTED]
+    ).count()
+    returned_count = user_submissions.filter(status=InvoiceSubmission.STATUS_RETURNED).count()
+    verified_count = user_submissions.filter(status=InvoiceSubmission.STATUS_VERIFIED).count()
+    rejected_count = user_submissions.filter(status=InvoiceSubmission.STATUS_REJECTED).count()
+
+    portal_title = 'External Submitter Portal' if request.user.is_external_submitter else 'Employee Invoice Portal'
 
     return render(request, 'core/employee_dashboard.html', {
-        'page_title': 'Employee Invoice Portal',
+        'page_title': portal_title,
         'recent_submissions': recent_submissions,
         'total_count': total_count,
+        'pending_count': pending_count,
+        'returned_count': returned_count,
+        'verified_count': verified_count,
+        'rejected_count': rejected_count,
     })
 
 
@@ -173,10 +186,37 @@ def naveen_dashboard(request):
 @admin_required
 def admin_dashboard(request):
     """
-    System Administration Dashboard (Phase 1 Baseline).
+    System Administration Dashboard with read-only security & user governance overview.
     """
+    from django.conf import settings
+    from apps.accounts.models import AccountStatus, AuditLog, User
+
+    external_users_count = User.objects.filter(
+        role__in=[UserRole.EXTERNAL_SUBMITTER, UserRole.EMPLOYEE]
+    ).count()
+    active_users_count = User.objects.filter(
+        is_active=True, account_status=AccountStatus.ACTIVE
+    ).count()
+    suspended_users_count = User.objects.filter(
+        account_status=AccountStatus.SUSPENDED
+    ).count()
+    recent_failed_logins = AuditLog.objects.filter(
+        action__in=['USER_LOGIN_FAILED', 'USER_LOGIN_RATE_LIMITED']
+    ).count()
+    recent_audits = AuditLog.objects.select_related('user').order_by('-timestamp')[:8]
+
     return render(request, 'core/admin_dashboard.html', {
         'page_title': 'Administration & System Config',
+        'external_users_count': external_users_count,
+        'active_users_count': active_users_count,
+        'suspended_users_count': suspended_users_count,
+        'recent_failed_logins': recent_failed_logins,
+        'recent_audits': recent_audits,
+        'debug_mode': settings.DEBUG,
+        'ssl_enabled': settings.ENABLE_SSL,
+        'privileged_session_hours': round(getattr(settings, 'PRIVILEGED_SESSION_AGE', 28800) / 3600, 1),
+        'submitter_session_days': round(getattr(settings, 'EXTERNAL_SUBMITTER_SESSION_AGE', 1209600) / 86400, 1),
+        'login_max_attempts': getattr(settings, 'LOGIN_MAX_ATTEMPTS', 5),
     })
 
 
