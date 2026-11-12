@@ -11,3 +11,4 @@ backups/*
 staticfiles/
 .pytest_cache/
 vendor_directory.py
+.env.example
