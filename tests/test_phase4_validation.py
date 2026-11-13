@@ -432,13 +432,21 @@ class Phase4ValidationSuite(TestCase):
             mock_client.models.generate_content.return_value = mock_resp
             mock_client_cls.return_value = mock_client
 
-            # Create dummy file
+            # Create valid printed invoice test fixture image
             sample_file = os.path.join(os.path.dirname(__file__), 'fixtures', 'sample_invoice.jpg')
+            created_sample = False
             if not os.path.exists(sample_file):
                 sample_file = "test_invoice.jpg"
-                with open(sample_file, "wb") as f:
-                    f.write(b"0" * 300)
+                import numpy as np
+                import cv2
+                img = np.full((700, 550, 3), 255, dtype=np.uint8)
+                for row in range(60, 620, 42):
+                    for col in range(40, 490, 18):
+                        cv2.rectangle(img, (col, row), (col + 10, row + 16), (0, 0, 0), -1)
+                cv2.imwrite(sample_file, img)
+                created_sample = True
 
+            # 1. Base response (omitting document_type defaults to NEEDS_REVIEW -> requires manual review)
             result = extract_with_gemini(sample_file)
             self.assertIsNotNone(result)
             self.assertEqual(result['party_name'], 'JK TYRE & INDUSTRIES LIMITED')
@@ -446,19 +454,43 @@ class Phase4ValidationSuite(TestCase):
             self.assertEqual(result['invoice_number'], 'JK-2026-9901')
             self.assertEqual(result['total_amount'], Decimal('23600.00'))
             self.assertEqual(result['vendor_match_status'], 'MATCHED_VERIFIED')
-            # Omitting document_type defaults to NEEDS_REVIEW, requiring manual review
             self.assertTrue(result['requires_manual_review'])
             self.assertTrue(result['is_financial_approval_eligible'])
 
-            # Explicit printed non-e-invoice response clears manual review gate
-            printed_data = dict(mock_gemini_data, document_type='PRINTED', is_e_invoice=False)
-            mock_resp.text = __import__('json').dumps(printed_data)
-            printed_result = extract_with_gemini(sample_file)
-            self.assertIsNotNone(printed_result)
-            self.assertFalse(printed_result['requires_manual_review'])
-            self.assertTrue(printed_result['is_financial_approval_eligible'])
+            # 2. Valid e-invoice with valid 64-char IRN -> passes manual review gate
+            valid_irn = "86F12C64F48122F0DF597785AA01248FE028D492D5CA3C83AA73D01D2602CCD9"
+            einv_valid_data = dict(mock_gemini_data, document_type='PRINTED', is_e_invoice=True, irn_number=valid_irn)
+            mock_resp.text = __import__('json').dumps(einv_valid_data)
+            einv_valid_result = extract_with_gemini(sample_file)
+            self.assertIsNotNone(einv_valid_result)
+            self.assertFalse(einv_valid_result['requires_manual_review'])
+            self.assertEqual(einv_valid_result['irn_number'], valid_irn)
 
-            if sample_file == "test_invoice.jpg" and os.path.exists(sample_file):
+            # 3. E-invoice identified as e-invoice without IRN -> requires manual review
+            einv_no_irn_data = dict(mock_gemini_data, document_type='PRINTED', is_e_invoice=True, irn_number="")
+            mock_resp.text = __import__('json').dumps(einv_no_irn_data)
+            einv_no_irn_result = extract_with_gemini(sample_file)
+            self.assertIsNotNone(einv_no_irn_result)
+            self.assertTrue(einv_no_irn_result['requires_manual_review'])
+            self.assertFalse(einv_no_irn_result['is_financial_approval_eligible'])
+
+            # 4. E-invoice with invalid / malformed IRN -> rejected IRN & requires manual review
+            einv_invalid_irn_data = dict(mock_gemini_data, document_type='PRINTED', is_e_invoice=True, irn_number="SHORT-IRN-123")
+            mock_resp.text = __import__('json').dumps(einv_invalid_irn_data)
+            einv_invalid_result = extract_with_gemini(sample_file)
+            self.assertIsNotNone(einv_invalid_result)
+            self.assertTrue(einv_invalid_result['requires_manual_review'])
+            self.assertEqual(einv_invalid_result['irn_number'], "")
+
+            # 5. Non-e-invoice explicitly -> passes manual review gate
+            non_einv_data = dict(mock_gemini_data, document_type='PRINTED', is_e_invoice=False)
+            mock_resp.text = __import__('json').dumps(non_einv_data)
+            non_einv_result = extract_with_gemini(sample_file)
+            self.assertIsNotNone(non_einv_result)
+            self.assertFalse(non_einv_result['requires_manual_review'])
+            self.assertTrue(non_einv_result['is_financial_approval_eligible'])
+
+            if created_sample and os.path.exists(sample_file):
                 os.remove(sample_file)
 
         self.gemini_patcher.start()
