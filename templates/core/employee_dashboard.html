@@ -99,6 +99,82 @@
         </div>
     </div>
 
+    <!-- Upload Processing Status -->
+    {% if recent_uploads %}
+    <div class="card card-enterprise shadow-sm mb-4">
+        <div class="card-enterprise-header">
+            <h6 class="fw-bold mb-0 text-dark"><i class="bi bi-cpu me-2 text-teal"></i>Upload Processing Status</h6>
+            <span class="small text-muted">Latest {{ recent_uploads|length }} uploads</span>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light small">
+                    <tr>
+                        <th class="ps-3">Filename</th>
+                        <th>Uploaded</th>
+                        <th>Status</th>
+                        <th style="min-width: 120px;">Progress</th>
+                        <th class="text-end pe-3">Action</th>
+                    </tr>
+                </thead>
+                <tbody class="small">
+                    {% for doc in recent_uploads %}
+                    <tr>
+                        <td class="ps-3 fw-semibold text-dark text-truncate" style="max-width: 220px;" title="{{ doc.file_name }}">
+                            {{ doc.file_name }}
+                            {% if doc.processing_status == 'FAILED' and doc.error_message %}
+                            <div class="text-danger fw-normal text-truncate" style="font-size: 0.72rem; max-width: 220px;" title="Processing failed">{{ doc.error_message|truncatechars:90 }}</div>
+                            {% endif %}
+                        </td>
+                        <td class="text-secondary text-nowrap">{{ doc.created_at|date:"d M, h:i A" }}</td>
+                        <td>
+                            {% if doc.processing_status == 'DETECTION_COMPLETED' or doc.processing_status == 'COMPLETED' %}
+                                <span class="badge bg-success-subtle text-success border border-success-subtle">Completed</span>
+                            {% elif doc.processing_status == 'FAILED' %}
+                                <span class="badge bg-danger-subtle text-danger border border-danger-subtle">Failed</span>
+                            {% elif doc.processing_status == 'PROCESSING' %}
+                                <span class="badge bg-primary-subtle text-primary border border-primary-subtle">Processing</span>
+                            {% elif doc.processing_status == 'QUEUED' %}
+                                <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle">Queued</span>
+                            {% else %}
+                                <span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle">Uploaded</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <div class="d-flex align-items-center gap-2">
+                                <div class="progress flex-grow-1" style="height: 6px;">
+                                    <div class="progress-bar {% if doc.processing_status == 'FAILED' %}bg-danger{% elif doc.processing_status == 'DETECTION_COMPLETED' or doc.processing_status == 'COMPLETED' %}bg-success{% else %}bg-teal{% endif %}" role="progressbar" style="width: {{ doc.progress_percent|default:0 }}%;"></div>
+                                </div>
+                                <span class="font-monospace text-muted" style="font-size: 0.72rem;">{{ doc.progress_percent|default:0 }}%</span>
+                            </div>
+                        </td>
+                        <td class="text-end pe-3 text-nowrap">
+                            {% if doc.processing_status == 'FAILED' %}
+                                {% if doc.retry_count < ocr_max_retries %}
+                                <form method="post" action="{% url 'invoices:retry_failed_upload' doc.id %}" class="d-inline">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="next" value="{% url 'core:employee_dashboard' %}">
+                                    <button type="submit" class="btn btn-sm btn-outline-danger py-0 px-2 fw-semibold">
+                                        <i class="bi bi-arrow-clockwise me-1"></i>Retry ({{ doc.retry_count }}/{{ ocr_max_retries }})
+                                    </button>
+                                </form>
+                                {% else %}
+                                <span class="badge bg-light text-muted border">Retry limit reached</span>
+                                {% endif %}
+                            {% elif doc.processing_status == 'QUEUED' or doc.processing_status == 'PROCESSING' %}
+                                <a href="{% url 'invoices:upload_progress' doc.id %}" class="btn btn-sm btn-outline-secondary py-0 px-2">Track</a>
+                            {% else %}
+                                <span class="text-muted">&mdash;</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
     <!-- Invoices Sent Log -->
     <div class="card card-enterprise shadow-sm">
         <div class="card-enterprise-header">

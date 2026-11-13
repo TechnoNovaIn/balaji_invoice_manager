@@ -334,6 +334,7 @@ def _reconcile_extracted_amounts(data: Dict[str, Any]) -> tuple[Dict[str, Decima
 def extract_with_gemini(
     image_path: str,
     original_pdf_text: str = '',
+    timer=None,
 ) -> Optional[Dict[str, Any]]:
     """
     Extracts invoice metadata using Google Gemini Vision API with Pydantic validation.
@@ -406,16 +407,26 @@ def extract_with_gemini(
 
         response = None
         used_model = None
+        last_error_type = None
+        gemini_start = time.perf_counter()
 
         # Controlled retry logic with backoff
         for m_name in candidate_models:
             for retry_idx in range(2):
                 try:
-                    response = _invoke_gemini(m_name)
+                    if timer is not None:
+                        timer.increment('gemini_requests_count')
+                        timer.start_timing('gemini_api_ms')
+                    try:
+                        response = _invoke_gemini(m_name)
+                    finally:
+                        if timer is not None:
+                            timer.stop_timing('gemini_api_ms')
                     if response and response.text:
                         used_model = m_name
                         break
                 except Exception as m_err:
+                    last_error_type = type(m_err).__name__
                     err_str = str(m_err).lower()
                     if '429' in err_str or 'quota' in err_str or 'rate' in err_str:
                         logger.warning("Gemini model %s rate limit (429), backing off...", m_name)
@@ -426,13 +437,13 @@ def extract_with_gemini(
                         time.sleep(0.5)
                         continue
                     else:
-                        logger.info("Gemini model %s exception: %s", m_name, type(m_err).__name__)
+                        logger.info("Gemini model %s exception: %s", m_name, last_error_type)
                         break
             if response and response.text:
                 break
 
         if not response or not response.text:
-            logger.warning("Gemini Extractor: All candidate models failed or returned empty response.")
+            logger.warning("Gemini Extractor: All candidate models failed or returned empty response (last_error=%s).", last_error_type)
             return None
 
         # Parse & Validate with Pydantic
@@ -550,6 +561,19 @@ def extract_with_gemini(
         # raw_text preserves original digital PDF or OCR text; gemini summary is stored alongside
         final_raw_text = original_pdf_text if original_pdf_text.strip() else (data.get('raw_summary') or '')
 
+        usage_meta = getattr(response, 'usage_metadata', None)
+        def _safe_int(val):
+            return val if isinstance(val, int) and not isinstance(val, bool) else None
+
+        gemini_usage = {
+            'model': used_model,
+            'latency_ms': round((time.perf_counter() - gemini_start) * 1000.0, 2),
+            'prompt_tokens': _safe_int(getattr(usage_meta, 'prompt_token_count', None)),
+            'candidates_tokens': _safe_int(getattr(usage_meta, 'candidates_token_count', None)),
+            'total_tokens': _safe_int(getattr(usage_meta, 'total_token_count', None)),
+            'error': last_error_type,
+        }
+
         result: Dict[str, Any] = {
             'party_name': backend_val['party_name'] or raw_party_name,
             'party_gstin': backend_val['party_gstin'] or raw_party_gstin,
@@ -575,6 +599,7 @@ def extract_with_gemini(
             'e_invoice_source': einv_val['e_invoice_source'],
             'raw_text': final_raw_text,
             'gemini_extracted_data': data,
+            'gemini_usage': gemini_usage,
             'ocr_extracted_text': original_pdf_text,
             'extraction_method': 'GEMINI_VISION_AI',
             'confidence': backend_val['confidence'],

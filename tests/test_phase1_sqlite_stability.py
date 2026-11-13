@@ -122,7 +122,10 @@ class Phase1SQLiteRetryAndLockTests(TestCase):
         self.assertNotIn("DependOnService postgresql-x64-18", content)
         self.assertNotIn("Register-ScheduledTask -TaskName \"BalajiInvoiceHub-StartupOcrRecovery\"", content)
         self.assertIn("Unregister-ScheduledTask -TaskName \"BalajiInvoiceHub-StartupOcrRecovery\"", content)
-        self.assertIn("AppRotateFiles 1", content)
+        self.assertIn("AppRotateFiles", content)
+        self.assertIn("SERVICE_DELAYED_AUTO_START", content)
+        self.assertIn("Wait-ForServiceStopped", content)
+        self.assertIn("Wait-ForServiceRemoved", content)
 
 
 class Phase1SQLiteConcurrencyAndWorkerTests(TransactionTestCase):

@@ -2,9 +2,14 @@ import re
 import os
 import io
 import time
+import tempfile
+import logging
 from typing import List, Dict, Any, Optional
 from decimal import Decimal
 import pymupdf as fitz  # PyMuPDF
+from django.conf import settings
+
+logger = logging.getLogger(__name__)
 from .reader import (
     extract_text_from_pdf_page,
     extract_metadata_from_text,
@@ -496,6 +501,37 @@ def segment_and_extract_pdf(file_path: str, timer=None, ocr_engine=None) -> List
         # Extract sub-PDF and page images
         sub_files = extract_sub_pdf_and_images(doc, seg['pages'], timer=timer, pages_data=pages_data)
 
+        # Intelligent AI fallback for multi-page / low-confidence / incomplete PDF segments
+        if should_invoke_gemini_fallback(meta=meta, doc_type_res=doc_type_res):
+            gemini_pdf_bytes = _build_gemini_pdf_subset(
+                doc=doc,
+                seg_pages=seg['pages'],
+                full_segment_pdf_bytes=sub_files.get('pdf_bytes'),
+                max_pages=getattr(settings, 'GEMINI_MAX_PAGES_PER_INVOICE', 3),
+            )
+            if gemini_pdf_bytes:
+                tmp_pdf_path = None
+                try:
+                    with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp_f:
+                        tmp_f.write(gemini_pdf_bytes)
+                        tmp_pdf_path = tmp_f.name
+                    from .gemini_extractor import extract_with_gemini
+                    gemini_res = extract_with_gemini(
+                        tmp_pdf_path,
+                        original_pdf_text=combined_text,
+                        timer=timer,
+                    )
+                    if gemini_res:
+                        meta = _merge_gemini_segment_metadata(meta, gemini_res, combined_text)
+                except Exception as exc:
+                    logger.warning("Gemini multi-page fallback failed softly (keeping RapidOCR/digital extraction): %s", type(exc).__name__)
+                finally:
+                    if tmp_pdf_path and os.path.exists(tmp_pdf_path):
+                        try:
+                            os.unlink(tmp_pdf_path)
+                        except OSError:
+                            pass
+
         detected_invoices.append({
             'invoice_index': seg_idx,
             'start_page': seg['start_page'],
@@ -509,3 +545,98 @@ def segment_and_extract_pdf(file_path: str, timer=None, ocr_engine=None) -> List
 
     doc.close()
     return detected_invoices
+
+
+def should_invoke_gemini_fallback(
+    meta: Dict[str, Any],
+    doc_type_res: Optional[Dict[str, Any]] = None,
+    policy: Optional[str] = None,
+) -> bool:
+    """
+    Decide whether to invoke Gemini Vision AI on a PDF invoice segment.
+    Avoids sending clean digital/printed invoices unless required by policy or missing fields.
+    """
+    if hasattr(settings, 'GEMINI_API_KEY'):
+        api_key = (getattr(settings, 'GEMINI_API_KEY') or '').strip()
+    else:
+        api_key = os.getenv('GEMINI_API_KEY', '').strip()
+    if not api_key:
+        return False
+
+    effective_policy = (policy or getattr(settings, 'GEMINI_FALLBACK_POLICY', 'auto') or 'auto').strip().lower()
+    if effective_policy == 'never':
+        return False
+    if effective_policy == 'always':
+        return True
+
+    # 'auto' policy: invoke only when extraction is incomplete or document is handwritten/unclear
+    if not (meta.get('party_name') or '').strip():
+        return True
+    if not (meta.get('invoice_number') or '').strip():
+        return True
+    if (meta.get('total_amount') or Decimal('0.00')) <= Decimal('0.00'):
+        return True
+    doc_type = (doc_type_res or {}).get('document_type', '')
+    if doc_type in ('HANDWRITTEN', 'MIXED', 'NEEDS_REVIEW'):
+        return True
+    if meta.get('e_invoice_status') == 'YES' and not (meta.get('irn_number') or '').strip():
+        return True
+    return False
+
+
+def _build_gemini_pdf_subset(
+    doc,
+    seg_pages: List[int],
+    full_segment_pdf_bytes: Optional[bytes],
+    max_pages: int = 3,
+) -> Optional[bytes]:
+    """
+    Return PDF bytes for Gemini capped at `max_pages` (first + last + middle key pages)
+    to avoid sending unnecessary continuation pages to the API.
+    """
+    if not seg_pages:
+        return None
+    if len(seg_pages) <= max_pages and full_segment_pdf_bytes:
+        return full_segment_pdf_bytes
+
+    selected = [seg_pages[0]]
+    if len(seg_pages) > 1 and max_pages >= 2:
+        # Include middle pages if budget > 2, then always include final page (totals/IRN)
+        middle_budget = max(0, max_pages - 2)
+        for p_idx in seg_pages[1:-1][:middle_budget]:
+            selected.append(p_idx)
+        selected.append(seg_pages[-1])
+
+    subset_doc = fitz.open()
+    try:
+        for p_idx in selected:
+            subset_doc.insert_pdf(doc, from_page=p_idx, to_page=p_idx)
+        return subset_doc.tobytes()
+    finally:
+        subset_doc.close()
+
+
+def _merge_gemini_segment_metadata(
+    base_meta: Dict[str, Any],
+    gemini_res: Dict[str, Any],
+    combined_text: str,
+) -> Dict[str, Any]:
+    """Merge Gemini-extracted structured fields into segment metadata while preserving OCR text."""
+    merged = dict(base_meta)
+    for field in (
+        'party_name', 'party_gstin', 'pan', 'invoice_number', 'invoice_date', 'due_date',
+        'taxable_amount', 'cgst_amount', 'sgst_amount', 'igst_amount', 'cess_amount',
+        'round_off_amount', 'total_amount', 'expense_ledger', 'expense_description',
+        'hsn_sac', 'payment_details', 'items', 'e_invoice_status', 'is_e_invoice',
+        'irn_number', 'e_invoice_source', 'gemini_extracted_data', 'gemini_usage',
+        'extraction_method', 'confidence', 'requires_manual_review',
+        'is_ambiguous_vendor', 'vendor_match_status', 'is_financial_approval_eligible',
+        'audit_notes',
+    ):
+        val = gemini_res.get(field)
+        if val is not None and val != '':
+            merged[field] = val
+
+    merged['raw_text'] = combined_text if combined_text.strip() else gemini_res.get('raw_text', '')
+    merged['ocr_extracted_text'] = combined_text
+    return merged

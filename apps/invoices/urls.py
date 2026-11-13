@@ -18,6 +18,7 @@ urlpatterns = [
     path('action/<str:submission_id>/split/', views.split_invoice_view, name='split_invoice'),
     path('action/<str:submission_id>/merge/', views.merge_invoices_view, name='merge_invoices'),
     path('source-document/<int:doc_id>/download/', views.download_source_document, name='download_source_document'),
+    path('source-document/<int:doc_id>/retry/', views.retry_failed_upload, name='retry_failed_upload'),
 
     # Tally Accounting & GST Portal Integration
     path('tally/<str:submission_id>/', views.tally_workspace, name='tally_workspace'),

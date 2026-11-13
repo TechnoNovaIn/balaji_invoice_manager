@@ -167,6 +167,15 @@ class UploadedDocument(models.Model):
         default='',
         help_text="Details of any processing error"
     )
+    retry_count = models.PositiveIntegerField(
+        default=0,
+        help_text="Number of manual retry attempts for failed processing"
+    )
+    last_error_history = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="History of previous processing errors before retry"
+    )
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)
 

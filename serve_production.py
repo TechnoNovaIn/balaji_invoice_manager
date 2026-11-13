@@ -24,7 +24,7 @@ django.setup()
 from django.core.wsgi import get_wsgi_application
 from waitress import serve
 
-from apps.invoices.tasks import recover_incomplete_documents, wait_for_active_jobs
+from apps.invoices.tasks import recover_incomplete_documents, shutdown_ocr_executor
 
 logger = logging.getLogger('waitress')
 
@@ -45,9 +45,9 @@ def run_startup_recovery() -> None:
 
 
 def _on_shutdown(*_args) -> None:
-    remaining = wait_for_active_jobs(timeout=15.0)
+    remaining = shutdown_ocr_executor(wait=True, timeout=15.0)
     if remaining:
-        logger.warning("Shutdown proceeding with %d active OCR background thread(s) still running.", remaining)
+        logger.warning("Shutdown proceeding with %d active OCR background job(s) still running.", remaining)
 
 
 def main() -> None:

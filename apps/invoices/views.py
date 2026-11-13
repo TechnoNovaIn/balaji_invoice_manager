@@ -750,6 +750,122 @@ def download_source_document(request, doc_id):
 
 
 @login_required
+def retry_failed_upload(request, doc_id):
+    """
+    Controlled retry endpoint for FAILED UploadedDocument background OCR jobs.
+    Enforces strict RBAC, retry limits, duplicate-submission prevention, and atomic claim.
+    """
+    from django.conf import settings
+    from django.db import transaction
+    from django.utils.http import url_has_allowed_host_and_scheme
+    from apps.accounts.models import AuditLog
+    from .db_utils import run_with_sqlite_retry
+
+    if request.method != 'POST':
+        return HttpResponseForbidden("POST required.")
+
+    source_doc = get_object_or_404(UploadedDocument, pk=doc_id)
+    user = request.user
+
+    if getattr(user, 'is_management', False):
+        raise PermissionDenied("Access Denied: Management accounts are strictly read-only.")
+    if not (user.is_naveen or user.is_admin_role):
+        if source_doc.uploader_id != user.id:
+            raise PermissionDenied("Access Denied: You can only retry your own failed uploads.")
+
+    max_retries = max(1, int(getattr(settings, 'OCR_MAX_RETRIES', 3) or 3))
+
+    def _claim_retry():
+        with transaction.atomic():
+            doc = UploadedDocument.objects.get(pk=doc_id)
+            if InvoiceSubmission.objects.filter(source_document=doc).exists():
+                return ('already_has_submissions', doc)
+            if doc.processing_status != UploadedDocument.STATUS_FAILED:
+                return ('not_failed', doc)
+            if doc.retry_count >= max_retries:
+                return ('limit_reached', doc)
+            if not doc.original_file or not doc.original_file.storage.exists(doc.original_file.name):
+                return ('missing_file', doc)
+
+            history = list(doc.last_error_history or [])
+            if doc.error_message:
+                history.append({
+                    'attempt': doc.retry_count,
+                    'error': doc.error_message[:500],
+                    'retried_at': timezone.now().isoformat(),
+                    'retried_by': user.username,
+                })
+
+            updated = UploadedDocument.objects.filter(
+                pk=doc_id,
+                processing_status=UploadedDocument.STATUS_FAILED,
+                retry_count__lt=max_retries,
+            ).update(
+                processing_status=UploadedDocument.STATUS_QUEUED,
+                retry_count=doc.retry_count + 1,
+                last_error_history=history,
+                error_message='',
+                progress_percent=0,
+                current_stage=f"Queued for retry (attempt {doc.retry_count + 1}/{max_retries})...",
+                updated_at=timezone.now(),
+            )
+            if not updated:
+                return ('race_lost', doc)
+
+            from apps.accounts.security import get_client_ip
+            AuditLog.objects.create(
+                user=user,
+                action='UPLOAD_RETRY_QUEUED',
+                ip_address=get_client_ip(request),
+                details={
+                    'target_type': 'UploadedDocument',
+                    'target_id': str(doc.id),
+                    'file_name': doc.file_name,
+                    'retry_count': doc.retry_count + 1,
+                    'max_retries': max_retries,
+                },
+            )
+            doc.refresh_from_db()
+            return ('queued', doc)
+
+    outcome, doc_obj = run_with_sqlite_retry(_claim_retry)
+
+    if outcome == 'queued':
+        dispatch_background_processing(uploaded_document_id=doc_obj.id)
+        messages.success(
+            request,
+            f"Retry #{doc_obj.retry_count}/{max_retries} queued for '{doc_obj.file_name}'."
+        )
+    elif outcome == 'limit_reached':
+        messages.error(
+            request,
+            f"Retry unavailable for '{doc_obj.file_name}': maximum retry limit ({max_retries}) reached."
+        )
+    elif outcome == 'already_has_submissions':
+        messages.warning(
+            request,
+            f"Retry unavailable: invoice submissions already exist for '{doc_obj.file_name}'."
+        )
+    elif outcome == 'missing_file':
+        messages.error(
+            request,
+            f"Retry unavailable: original file for '{doc_obj.file_name}' is missing from storage."
+        )
+    else:
+        messages.info(
+            request,
+            f"'{doc_obj.file_name}' is not in FAILED state (current status: {doc_obj.get_processing_status_display()})."
+        )
+
+    next_url = request.POST.get('next', '').strip()
+    if next_url and url_has_allowed_host_and_scheme(next_url, allowed_hosts={request.get_host()}):
+        return redirect(next_url)
+    if user.is_naveen or user.is_admin_role:
+        return redirect('core:naveen_dashboard')
+    return redirect('core:employee_dashboard')
+
+
+@login_required
 def split_invoice_view(request, submission_id):
     """
     Facility for Naveen to split an incorrectly grouped invoice record at a specified page.
