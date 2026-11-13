@@ -58,9 +58,16 @@ def employee_dashboard(request):
 
     portal_title = 'External Submitter Portal' if request.user.is_external_submitter else 'Employee Invoice Portal'
 
+    from django.conf import settings
+    from apps.invoices.models import UploadedDocument
+    recent_uploads = UploadedDocument.objects.filter(uploader=request.user).order_by('-created_at')[:15]
+    ocr_max_retries = max(1, int(getattr(settings, 'OCR_MAX_RETRIES', 3) or 3))
+
     return render(request, 'core/employee_dashboard.html', {
         'page_title': portal_title,
         'recent_submissions': recent_submissions,
+        'recent_uploads': recent_uploads,
+        'ocr_max_retries': ocr_max_retries,
         'total_count': total_count,
         'pending_count': pending_count,
         'returned_count': returned_count,
@@ -164,6 +171,21 @@ def naveen_dashboard(request):
 
     is_fresh_feed = (carryover_count == 0 and today_pending_count == 0)
 
+    from django.conf import settings
+    from apps.invoices.models import UploadedDocument
+    processing_uploads = (
+        UploadedDocument.objects
+        .filter(processing_status__in=[
+            UploadedDocument.STATUS_UPLOADED,
+            UploadedDocument.STATUS_QUEUED,
+            UploadedDocument.STATUS_PROCESSING,
+            UploadedDocument.STATUS_FAILED,
+        ])
+        .select_related('uploader')
+        .order_by('-created_at')[:20]
+    )
+    ocr_max_retries = max(1, int(getattr(settings, 'OCR_MAX_RETRIES', 3) or 3))
+
     return render(request, 'core/naveen_dashboard.html', {
         'page_title': "Naveen's Invoice Hub",
         'tab': tab,
@@ -182,6 +204,8 @@ def naveen_dashboard(request):
         'is_fresh_feed': is_fresh_feed,
         'frequent_vendors': frequent_vendors,
         'submitter_names': submitter_names,
+        'processing_uploads': processing_uploads,
+        'ocr_max_retries': ocr_max_retries,
     })
 
 

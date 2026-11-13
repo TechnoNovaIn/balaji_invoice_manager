@@ -272,6 +272,13 @@ BACKUP_RETENTION_DAYS = int(os.getenv('BACKUP_RETENTION_DAYS', 3650))
 # Gemini Vision AI for High-Accuracy Autonomous Invoice Extraction
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '').strip()
 GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash').strip()
+GEMINI_FALLBACK_POLICY = os.getenv('GEMINI_FALLBACK_POLICY', 'auto').strip().lower()  # auto | always | never
+GEMINI_MAX_PAGES_PER_INVOICE = max(1, int(os.getenv('GEMINI_MAX_PAGES_PER_INVOICE', '3') or '3'))
+
+# Bounded Background OCR Worker Configuration
+OCR_MAX_WORKERS = max(1, int(os.getenv('OCR_MAX_WORKERS', '2') or '2'))
+OCR_MAX_QUEUE_SIZE = max(1, int(os.getenv('OCR_MAX_QUEUE_SIZE', '50') or '50'))
+OCR_MAX_RETRIES = max(1, int(os.getenv('OCR_MAX_RETRIES', '3') or '3'))
 
 # Rotating Production Logging Configuration
 LOG_DIR = Path(os.getenv('LOG_DIR', str(BASE_DIR / 'logs')))

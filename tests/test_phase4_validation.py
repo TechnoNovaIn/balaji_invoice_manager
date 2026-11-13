@@ -446,8 +446,17 @@ class Phase4ValidationSuite(TestCase):
             self.assertEqual(result['invoice_number'], 'JK-2026-9901')
             self.assertEqual(result['total_amount'], Decimal('23600.00'))
             self.assertEqual(result['vendor_match_status'], 'MATCHED_VERIFIED')
-            self.assertFalse(result['requires_manual_review'])
+            # Omitting document_type defaults to NEEDS_REVIEW, requiring manual review
+            self.assertTrue(result['requires_manual_review'])
             self.assertTrue(result['is_financial_approval_eligible'])
+
+            # Explicit printed non-e-invoice response clears manual review gate
+            printed_data = dict(mock_gemini_data, document_type='PRINTED', is_e_invoice=False)
+            mock_resp.text = __import__('json').dumps(printed_data)
+            printed_result = extract_with_gemini(sample_file)
+            self.assertIsNotNone(printed_result)
+            self.assertFalse(printed_result['requires_manual_review'])
+            self.assertTrue(printed_result['is_financial_approval_eligible'])
 
             if sample_file == "test_invoice.jpg" and os.path.exists(sample_file):
                 os.remove(sample_file)
