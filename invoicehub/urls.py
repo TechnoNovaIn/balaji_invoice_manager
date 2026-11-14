@@ -2,8 +2,12 @@ from django.contrib import admin
 from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
+from django.http import HttpResponse
 
 urlpatterns = [
+    # Handlers to silence external browser dev-tools/extensions polling WebSocket on dev port
+    path('ws', lambda r: HttpResponse(status=204)),
+    path('ws/', lambda r: HttpResponse(status=204)),
     path('admin/', admin.site.urls),
     path('accounts/', include('apps.accounts.urls', namespace='accounts')),
     path('backup/', include('apps.backup.urls', namespace='backup')),

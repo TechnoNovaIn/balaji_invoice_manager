@@ -169,20 +169,27 @@
             </div>
         </div>
 
-        <!-- Top 10 Suppliers by Spend -->
+        <!-- Supplier Total Spends (All Vendors) -->
         <div class="col-12 col-xl-5">
             <div class="card card-enterprise shadow-sm h-100">
-                <div class="card-enterprise-header py-2 px-3 bg-white border-bottom d-flex align-items-center justify-content-between">
-                    <span class="fw-bold text-dark fs-6">
-                        <i class="bi bi-building text-primary me-2"></i>Top Suppliers by Total Spend
+                <div class="card-enterprise-header py-2 px-3 bg-white border-bottom d-flex align-items-center justify-content-between flex-wrap gap-2">
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="fw-bold text-dark fs-6">
+                            <i class="bi bi-building text-primary me-2"></i>Supplier Total Spends
+                        </span>
+                        <span class="badge bg-primary-subtle text-primary border small">{{ top_suppliers|length }} Vendors</span>
+                    </div>
+                    {% if total_supplier_spend %}
+                    <span class="badge bg-success-subtle text-success border px-2 py-1 fw-bold font-monospace" style="font-size: 0.82rem;">
+                        Total: &#8377;{{ total_supplier_spend|floatformat:2 }}
                     </span>
-                    <span class="badge bg-light text-secondary border small">Top 10 Vendors</span>
+                    {% endif %}
                 </div>
                 <div class="p-3">
                     {% if top_suppliers %}
-                    <div class="table-responsive">
+                    <div class="table-responsive" style="max-height: 480px; overflow-y: auto;">
                         <table class="table table-sm table-hover align-middle mb-0" style="font-size: 0.85rem;">
-                            <thead class="table-light text-secondary small">
+                            <thead class="table-light text-secondary small sticky-top bg-light" style="z-index: 1;">
                                 <tr>
                                     <th>Supplier Name</th>
                                     <th>Ledger</th>
@@ -209,6 +216,13 @@
                                 </tr>
                                 {% endfor %}
                             </tbody>
+                            <tfoot class="table-light fw-bold sticky-bottom border-top" style="font-size: 0.85rem; z-index: 1;">
+                                <tr>
+                                    <td colspan="2" class="text-dark">Total Spend (All Suppliers)</td>
+                                    <td class="text-center font-monospace text-dark">{{ total_supplier_bills }}</td>
+                                    <td class="text-end font-monospace text-success fw-bold">&#8377;{{ total_supplier_spend|floatformat:2 }}</td>
+                                </tr>
+                            </tfoot>
                         </table>
                     </div>
                     {% else %}

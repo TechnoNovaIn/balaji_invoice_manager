@@ -38,10 +38,9 @@ elif not DEBUG:
 else:
     ALLOWED_HOSTS = ['localhost', '127.0.0.1']
 
-if not DEBUG:
-    ALLOWED_HOSTS = [h for h in ALLOWED_HOSTS if h != '*']
-    if not ALLOWED_HOSTS:
-        ALLOWED_HOSTS = ['invoicehub.balajitransports.com', 'localhost', '127.0.0.1']
+if DEBUG:
+    if 'testserver' not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append('testserver')
 
 csrf_origins_env = os.getenv('DJANGO_CSRF_TRUSTED_ORIGINS', '')
 if csrf_origins_env:
@@ -233,20 +232,28 @@ X_FRAME_OPTIONS = 'DENY'
 SECURE_CONTENT_TYPE_NOSNIFF = True
 SECURE_REFERRER_POLICY = 'same-origin'
 
-# Environment-based Production SSL Controls (Enabled by default when DEBUG=False)
-ENABLE_SSL = os.getenv('DJANGO_ENABLE_SSL', 'False' if DEBUG else 'True').lower() in ('true', '1', 't')
-if ENABLE_SSL:
-    SECURE_SSL_REDIRECT = True
+# Environment-based Production SSL Controls
+ENABLE_SSL = os.getenv('DJANGO_ENABLE_SSL', 'False').lower() in ('true', '1', 't')
+SECURE_SSL_REDIRECT = (
+    os.getenv('SECURE_SSL_REDIRECT', 'False').lower() in ('true', '1', 't')
+    and not DEBUG
+)
+
+if ENABLE_SSL and not DEBUG:
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
-    SECURE_HSTS_SECONDS = int(os.getenv('SECURE_HSTS_SECONDS', 31536000))
-    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-    SECURE_HSTS_PRELOAD = True
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    if SECURE_SSL_REDIRECT:
+        SECURE_HSTS_SECONDS = int(os.getenv('SECURE_HSTS_SECONDS', 31536000))
+        SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+        SECURE_HSTS_PRELOAD = True
+    else:
+        SECURE_HSTS_SECONDS = 0
 else:
     SECURE_SSL_REDIRECT = False
     SESSION_COOKIE_SECURE = False
     CSRF_COOKIE_SECURE = False
+    SECURE_HSTS_SECONDS = 0
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'

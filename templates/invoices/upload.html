@@ -20,11 +20,16 @@
                 <h5 class="fw-bold mb-0" style="color: var(--primary-navy);">
                     <i class="bi bi-camera-fill me-2 text-teal"></i>Invoice Receipt Capture
                 </h5>
-                <p class="text-secondary small mb-0">Capture photos or upload PDF bills directly to Naveen.</p>
+                <p class="text-secondary small mb-0">Capture photos or upload PDF bills to submit your invoice.</p>
             </div>
-            <span class="badge bg-light text-dark border">
-                Up to 100 MB
-            </span>
+            <div>
+                <span class="badge bg-light text-dark border">
+                    Up to 100 MB
+                </span>
+                <span class="badge bg-info bg-opacity-10 text-primary border border-info border-opacity-25 small ms-1" title="Receipt photos are automatically deskewed and cropped for crisp paper printing">
+                    <i class="bi bi-crop me-1"></i>Auto-Crop
+                </span>
+            </div>
         </div>
 
         <div class="card-body p-4">
@@ -79,7 +84,7 @@
                 <!-- Submit Button -->
                 <div class="d-grid mt-4">
                     <button type="submit" id="btnSubmit" class="btn btn-teal py-3 fw-bold shadow-sm fs-6" disabled>
-                        <i class="bi bi-send-fill me-2"></i>Send Invoice to Naveen
+                        <i class="bi bi-send-fill me-2"></i>Send Invoice
                     </button>
                 </div>
             </form>
@@ -307,7 +312,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         btnSubmit.disabled = true;
-        btnSubmit.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Sending to Naveen...';
+        btnSubmit.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Sending Invoice...';
     });
 });
 </script>
