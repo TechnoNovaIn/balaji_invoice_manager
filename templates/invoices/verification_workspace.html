@@ -71,10 +71,78 @@
         border-radius: 3px;
         transition: width 0.3s ease;
     }
+    @media print {
+        .app-sidebar, .app-header, .btn, .btn-group, .doc-viewer-toolbar,
+        .col-lg-6:nth-child(2), nav, footer, form, .badge, .no-print,
+        .modal, .toast-container, .split-pane-container > .col-12:last-child {
+            display: none !important;
+        }
+        body, .app-main, .container-fluid, .doc-viewer-pane, .split-pane-container {
+            background: white !important;
+            color: black !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            border: none !important;
+            box-shadow: none !important;
+            height: auto !important;
+        }
+        .col-12.col-lg-6 {
+            width: 100% !important;
+            max-width: 100% !important;
+            flex: 0 0 100% !important;
+        }
+        .doc-viewport {
+            height: auto !important;
+            max-height: none !important;
+            overflow: visible !important;
+            background: transparent !important;
+        }
+        .doc-viewport img {
+            width: 100% !important;
+            max-width: 100% !important;
+            height: auto !important;
+            box-shadow: none !important;
+            border: 1px solid #ddd !important;
+        }
+        .print-voucher-header {
+            display: block !important;
+            border: 2px solid #000;
+            padding: 12px;
+            margin-bottom: 20px;
+            page-break-after: avoid;
+        }
+    }
+    @media screen {
+        .print-voucher-header {
+            display: none;
+        }
+    }
 </style>
 {% endblock %}
 
 {% block content %}
+<!-- Print Voucher Header: Visible ONLY when printed to paper -->
+<div class="print-voucher-header">
+    <div style="font-weight: bold; font-size: 16px; margin-bottom: 6px;">BALAJI TRANSPORTS — OFFICIAL INVOICE RECORD</div>
+    <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px;">
+        <span><strong>Tracking ID:</strong> {{ submission.submission_id }}</span>
+        <span><strong>Submitted:</strong> {{ submission.created_at|date:"d M Y, h:i A" }} by {{ submission.employee.get_full_name|default:submission.employee.username }}</span>
+    </div>
+    <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px;">
+        <span><strong>Vendor:</strong> {{ submission.party_name|default:"Not Specified" }}</span>
+        <span><strong>GSTIN:</strong> {{ submission.party_gstin|default:"N/A" }}</span>
+    </div>
+    <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px;">
+        <span><strong>Invoice No:</strong> {{ submission.invoice_number|default:"N/A" }}</span>
+        <span><strong>Invoice Date:</strong> {{ submission.invoice_date|date:"d M Y"|default:"N/A" }}</span>
+        <span><strong>Total:</strong> ₹{{ submission.total_amount|default:"0.00" }}</span>
+    </div>
+    <div style="font-size: 11px; color: #444; border-top: 1px solid #ccc; padding-top: 4px; margin-top: 4px;">
+        <span><strong>Ledger:</strong> {{ submission.expense_ledger }}</span> &bull;
+        <span><strong>Status:</strong> {{ submission.get_status_display }}</span> &bull;
+        <span><strong>Tally:</strong> {% if submission.is_entered_in_tally %}Entered in Tally{% else %}Pending Tally{% endif %}</span>
+    </div>
+</div>
 <div class="container-fluid px-3 px-lg-4 py-2">
 
     <!-- Top Navigation Header -->
@@ -118,6 +186,19 @@
                 Pending Tally
             </span>
             {% endif %}
+
+            <!-- Download & Print Actions -->
+            <div class="btn-group btn-group-sm ms-2">
+                <a href="{% url 'invoices:download_invoice' submission.submission_id %}" class="btn btn-outline-primary fw-semibold" title="Download High-Resolution Invoice Document">
+                    <i class="bi bi-download me-1"></i>Download
+                </a>
+                <a href="{% url 'invoices:download_invoice' submission.submission_id %}?format=pdf" class="btn btn-outline-danger fw-semibold" title="Download Print-Ready PDF Voucher">
+                    <i class="bi bi-file-earmark-pdf me-1"></i>PDF
+                </a>
+                <button type="button" onclick="window.print()" class="btn btn-outline-dark fw-semibold" title="Print Invoice directly to paper">
+                    <i class="bi bi-printer me-1"></i>Print
+                </button>
+            </div>
 
             <!-- Stream Navigation -->
             <div class="btn-group btn-group-sm ms-2">
@@ -197,6 +278,9 @@
                         {% if forloop.first %}
                         <a href="{% url 'invoices:serve_document' doc.id %}" target="_blank" class="btn btn-xs btn-outline-info py-1 px-2 ms-1" title="Open Page File in New Tab">
                             <i class="bi bi-box-arrow-up-right"></i>
+                        </a>
+                        <a href="{% url 'invoices:download_document' doc.id %}" class="btn btn-xs btn-outline-primary py-1 px-2 ms-1" title="Download Document Page">
+                            <i class="bi bi-download"></i>
                         </a>
                         {% endif %}
                         {% endfor %}

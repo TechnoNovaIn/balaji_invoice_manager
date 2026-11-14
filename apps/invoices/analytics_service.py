@@ -131,9 +131,10 @@ def get_monthly_trends():
     return results
 
 
-def get_top_suppliers(limit=10):
+def get_top_suppliers(limit=None):
     """
-    Returns the top suppliers ranked by total expenditure.
+    Returns suppliers ranked by total expenditure.
+    If limit is None, returns all suppliers without arbitrary truncation.
     """
     top = (
         InvoiceSubmission.objects
@@ -144,8 +145,10 @@ def get_top_suppliers(limit=10):
             total_spend=Sum('total_amount'),
             taxable_spend=Sum('taxable_amount'),
         )
-        .order_by('-total_spend')[:limit]
+        .order_by('-total_spend')
     )
+    if limit is not None:
+        top = top[:limit]
     return list(top)
 
 
@@ -234,7 +237,7 @@ def generate_executive_excel_report(report_type="monthly_summary", user=None):
             cell.alignment = Alignment(horizontal="center", vertical="center")
             cell.border = BORDER_THIN
 
-        suppliers = get_top_suppliers(limit=100)
+        suppliers = get_top_suppliers(limit=None)
         curr_row = 5
         for s in suppliers:
             ws.cell(row=curr_row, column=1, value=safe_xlsx_value(s['party_name'] or 'Unregistered')).alignment = Alignment(horizontal="left", vertical="center")

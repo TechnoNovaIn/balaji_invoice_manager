@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import os
 import re
 import uuid
@@ -10,6 +11,8 @@ from django.core.exceptions import ValidationError
 from django.core.files.base import ContentFile
 from django.db import transaction
 from django.utils import timezone
+
+logger = logging.getLogger('invoices.services')
 from .models import InvoiceSubmission, InvoiceDocument, InvoiceStatusHistory, InvoiceSequence, UploadedDocument
 from .segmentation import segment_and_extract_pdf
 from .reader import extract_invoice_metadata, extract_metadata_from_text
@@ -632,17 +635,40 @@ def create_invoice_submissions(
                 invoice_number='',
             )
 
+            # Auto-crop document boundary, deskew & preserve 300 DPI for paper printing
+            from apps.invoices.image_processing import auto_crop_invoice_image
+
+            doc_file = uploaded_doc.original_file
+            doc_sha256 = file_sha256
+            doc_size = file_size
+            doc_mime = mime_type
+
+            try:
+                if uploaded_doc.original_file and uploaded_doc.original_file.storage.exists(uploaded_doc.original_file.name):
+                    with uploaded_doc.original_file.open('rb') as raw_f:
+                        raw_bytes = raw_f.read()
+                    processed_bytes, was_cropped, crop_meta = auto_crop_invoice_image(raw_bytes)
+                    if was_cropped and processed_bytes:
+                        cropped_name = f"autocrop_{file_name}"
+                        doc_file = ContentFile(processed_bytes, name=cropped_name)
+                        doc_sha256 = hashlib.sha256(processed_bytes).hexdigest()
+                        doc_size = len(processed_bytes)
+                        doc_mime = 'image/jpeg'
+                        logger.info("Auto-cropped invoice image for submission %s: %s", sub_id, crop_meta.get('method'))
+            except Exception as crop_err:
+                logger.warning("Auto-crop processing skipped for %s: %s", file_name, crop_err)
+
             doc_rec = InvoiceDocument.objects.create(
                 submission=sub,
                 source_document=uploaded_doc,
                 start_page=1,
                 end_page=1,
                 page_number=1,
-                original_file=uploaded_doc.original_file,
+                original_file=doc_file,
                 original_filename=file_name,
-                file_sha256=file_sha256,
-                file_size_bytes=file_size,
-                content_type=mime_type,
+                file_sha256=doc_sha256,
+                file_size_bytes=doc_size,
+                content_type=doc_mime,
                 version=1,
                 is_active_version=True,
             )
@@ -935,15 +961,36 @@ def resubmit_returned_invoice(
         submission.documents.filter(is_active_version=True).update(is_active_version=False)
 
         # Add new active documents with incremented version
+        from apps.invoices.image_processing import auto_crop_invoice_image
+
         for item in validated_files:
+            item_file = item['file']
+            item_sha256 = item['sha256']
+            item_size = item['size']
+            item_mime = item['content_type']
+
+            if item_mime.startswith('image/'):
+                try:
+                    item_file.seek(0)
+                    raw_bytes = item_file.read()
+                    item_file.seek(0)
+                    processed_bytes, was_cropped, _ = auto_crop_invoice_image(raw_bytes)
+                    if was_cropped and processed_bytes:
+                        item_file = ContentFile(processed_bytes, name=f"autocrop_{item['filename']}")
+                        item_sha256 = hashlib.sha256(processed_bytes).hexdigest()
+                        item_size = len(processed_bytes)
+                        item_mime = 'image/jpeg'
+                except Exception as crop_err:
+                    logger.warning("Auto-crop resubmit skipped: %s", crop_err)
+
             InvoiceDocument.objects.create(
                 submission=submission,
                 page_number=item['page_number'],
-                original_file=item['file'],
+                original_file=item_file,
                 original_filename=item['filename'],
-                file_sha256=item['sha256'],
-                file_size_bytes=item['size'],
-                content_type=item['content_type'],
+                file_sha256=item_sha256,
+                file_size_bytes=item_size,
+                content_type=item_mime,
                 version=next_version,
                 is_active_version=True,
             )

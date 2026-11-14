@@ -264,9 +264,14 @@
                             </small>
                         </div>
                     </div>
-                    <button type="button" class="btn btn-sm btn-outline-danger fw-bold" id="btnSelectAllCarryover">
-                        Select All Missed ({{ carryover_count }})
-                    </button>
+                    <div class="d-flex align-items-center gap-2">
+                        <button type="button" class="btn btn-sm btn-outline-danger fw-bold" id="btnSelectAllCarryover">
+                            Select All Missed ({{ carryover_count }})
+                        </button>
+                        <a href="{% url 'invoices:batch_download_invoices' %}?scope=missed" class="btn btn-sm btn-danger fw-bold shadow-sm" id="btnDownloadAllMissed" title="Download all missed invoices as a print-ready ZIP archive">
+                            <i class="bi bi-cloud-arrow-down-fill me-1"></i>Download All ({{ carryover_count }})
+                        </a>
+                    </div>
                 </div>
 
                 <!-- Carry-over Table -->
@@ -488,11 +493,16 @@
                                     </div>
                                 </td>
 
-                                <!-- Action: View Bill -->
-                                <td class="text-center">
-                                    <a href="{% url 'invoices:submission_detail' sub.submission_id %}" class="btn btn-sm btn-teal fw-semibold shadow-sm">
-                                        <i class="bi bi-eye-fill me-1"></i>View
-                                    </a>
+                                <!-- Action: View & Download Bill -->
+                                <td class="text-center text-nowrap">
+                                    <div class="btn-group btn-group-sm">
+                                        <a href="{% url 'invoices:submission_detail' sub.submission_id %}" class="btn btn-teal fw-semibold shadow-sm" title="View Bill & Details">
+                                            <i class="bi bi-eye-fill me-1"></i>View
+                                        </a>
+                                        <a href="{% url 'invoices:download_invoice' sub.submission_id %}" class="btn btn-outline-secondary" title="Download High-Resolution Invoice Document">
+                                            <i class="bi bi-download"></i>
+                                        </a>
+                                    </div>
                                 </td>
 
                                 <!-- CHECKBOX AT RIGHT SIDE -->
@@ -531,9 +541,9 @@
                                 Select All ({{ total_pending_count }})
                             </label>
                         </div>
-                        <button type="button" class="btn btn-sm btn-outline-primary fw-semibold" id="btnSelectAllToday">
-                            <i class="bi bi-check-all me-1"></i>Select Today's ({{ today_pending_count }})
-                        </button>
+                        <a href="{% url 'invoices:batch_download_invoices' %}?scope=today" class="btn btn-sm btn-primary fw-bold shadow-sm" id="btnDownloadAllToday" title="Download all pending invoices as a print-ready ZIP archive">
+                            <i class="bi bi-cloud-arrow-down-fill me-1"></i>Download All ({{ today_pending_count }})
+                        </a>
                         {% else %}
                         <div class="d-none">
                             <input type="checkbox" id="selectAllMaster">
@@ -543,6 +553,10 @@
                         <span class="badge bg-secondary px-2 py-1 fw-semibold" id="selectedCounter" style="font-size: 0.8rem;">
                             0 selected
                         </span>
+
+                        <button type="button" id="btnDownloadSelected" class="btn btn-sm btn-primary fw-bold px-2 shadow-sm d-none" onclick="downloadSelectedInvoices()" title="Download selected invoices as a print-ready ZIP archive">
+                            <i class="bi bi-download me-1"></i>Download Selected (<span id="downloadSelectedCount">0</span>)
+                        </button>
 
                         <button type="submit" id="btnBatchComplete" class="btn btn-sm btn-success fw-bold px-3 shadow-sm btn-batch-trigger" disabled>
                             <i class="bi bi-check2-all me-1"></i>Save Day's Entries & Mark Completed
@@ -765,11 +779,16 @@
                                     </div>
                                 </td>
 
-                                <!-- Action: View Bill -->
-                                <td class="text-center">
-                                    <a href="{% url 'invoices:submission_detail' sub.submission_id %}" class="btn btn-sm btn-teal fw-semibold shadow-sm">
-                                        <i class="bi bi-eye-fill me-1"></i>View
-                                    </a>
+                                <!-- Action: View & Download Bill -->
+                                <td class="text-center text-nowrap">
+                                    <div class="btn-group btn-group-sm">
+                                        <a href="{% url 'invoices:submission_detail' sub.submission_id %}" class="btn btn-teal fw-semibold shadow-sm" title="View Bill & Details">
+                                            <i class="bi bi-eye-fill me-1"></i>View
+                                        </a>
+                                        <a href="{% url 'invoices:download_invoice' sub.submission_id %}" class="btn btn-outline-secondary" title="Download High-Resolution Invoice Document">
+                                            <i class="bi bi-download"></i>
+                                        </a>
+                                    </div>
                                 </td>
 
                                 <!-- CHECKBOX AT RIGHT SIDE -->
@@ -1003,6 +1022,9 @@
                                     <a href="{% url 'invoices:submission_detail' sub.submission_id %}" class="btn btn-sm btn-teal fw-semibold">
                                         <i class="bi bi-eye-fill me-1"></i>View
                                     </a>
+                                    <a href="{% url 'invoices:download_invoice' sub.submission_id %}" class="btn btn-sm btn-outline-secondary" title="Download High-Resolution Invoice Document">
+                                        <i class="bi bi-download"></i>
+                                    </a>
                                     <!-- 1-Click Move Back to Pending -->
                                     <button type="submit" name="selected_invoices" value="{{ sub.submission_id }}" class="btn btn-sm btn-outline-secondary" title="Move back to pending">
                                         Undo
@@ -1223,9 +1245,14 @@
                             {% endif %}
                         </td>
                         <td class="text-end pe-3">
-                            <a href="{% url 'invoices:submission_detail' sub.submission_id %}" class="btn btn-sm btn-teal fw-semibold">
-                                <i class="bi bi-eye-fill me-1"></i>View
-                            </a>
+                            <div class="d-flex justify-content-end align-items-center gap-1">
+                                <a href="{% url 'invoices:submission_detail' sub.submission_id %}" class="btn btn-sm btn-teal fw-semibold">
+                                    <i class="bi bi-eye-fill me-1"></i>View
+                                </a>
+                                <a href="{% url 'invoices:download_invoice' sub.submission_id %}" class="btn btn-sm btn-outline-secondary" title="Download High-Resolution Invoice Document">
+                                    <i class="bi bi-download"></i>
+                                </a>
+                            </div>
                         </td>
                     </tr>
                     {% endfor %}
@@ -1303,6 +1330,18 @@ document.addEventListener('DOMContentLoaded', function () {
             }
         }
 
+        // Update Download Selected button state
+        const btnDownloadSelected = document.getElementById('btnDownloadSelected');
+        const downloadSelectedCount = document.getElementById('downloadSelectedCount');
+        if (btnDownloadSelected && downloadSelectedCount) {
+            if (count > 0) {
+                btnDownloadSelected.classList.remove('d-none');
+                downloadSelectedCount.textContent = count;
+            } else {
+                btnDownloadSelected.classList.add('d-none');
+            }
+        }
+
         // Enable or disable submit buttons
         const isEnabled = count > 0;
         if (btnBatchComplete) btnBatchComplete.disabled = !isEnabled;
@@ -1374,6 +1413,20 @@ document.addEventListener('DOMContentLoaded', function () {
     // Initial check on load
     updateBatchState();
     window.updateBatchStateGlobal = updateBatchState;
+
+    window.downloadSelectedInvoices = function () {
+        const checkedBoxes = document.querySelectorAll('.invoice-checkbox:checked');
+        if (checkedBoxes.length === 0) {
+            alert('Please select at least one invoice to download.');
+            return;
+        }
+        const ids = Array.from(checkedBoxes).map(cb => cb.value).filter(Boolean).join(',');
+        if (!ids) {
+            alert('No valid invoice IDs selected.');
+            return;
+        }
+        window.location.href = "{% url 'invoices:batch_download_invoices' %}?ids=" + encodeURIComponent(ids);
+    };
 });
 
 // Dashboard Header Dropdown Filter & Sort Helpers

@@ -52,12 +52,22 @@
                         </div>
                         <div class="col-md-6">
                             <label class="form-label fw-semibold">Initial Password</label>
-                            {{ form.password1 }}
+                            <div class="input-group">
+                                {{ form.password1 }}
+                                <button class="btn btn-outline-secondary toggle-password" type="button" data-target="{{ form.password1.id_for_label }}" title="Show / Hide Password" tabindex="-1">
+                                    <i class="bi bi-eye"></i>
+                                </button>
+                            </div>
                             {% if form.password1.errors %}<div class="text-danger small mt-1">{{ form.password1.errors }}</div>{% endif %}
                         </div>
                         <div class="col-md-6">
                             <label class="form-label fw-semibold">Confirm Password</label>
-                            {{ form.password2 }}
+                            <div class="input-group">
+                                {{ form.password2 }}
+                                <button class="btn btn-outline-secondary toggle-password" type="button" data-target="{{ form.password2.id_for_label }}" title="Show / Hide Password" tabindex="-1">
+                                    <i class="bi bi-eye"></i>
+                                </button>
+                            </div>
                             {% if form.password2.errors %}<div class="text-danger small mt-1">{{ form.password2.errors }}</div>{% endif %}
                         </div>
                         <div class="col-12">
@@ -84,4 +94,29 @@
         </div>
     </div>
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('.toggle-password').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const targetId = this.getAttribute('data-target');
+            const input = (targetId ? document.getElementById(targetId) : null) || this.parentElement.querySelector('input');
+            const icon = this.querySelector('i');
+            if (input) {
+                if (input.type === 'password') {
+                    input.type = 'text';
+                    if (icon) {
+                        icon.className = 'bi bi-eye-slash';
+                    }
+                } else {
+                    input.type = 'password';
+                    if (icon) {
+                        icon.className = 'bi bi-eye';
+                    }
+                }
+            }
+        });
+    });
+});
+</script>
 {% endblock %}

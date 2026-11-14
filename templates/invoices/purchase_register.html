@@ -311,6 +311,9 @@
                                 <a href="{% url 'invoices:submission_detail' sub.submission_id %}" class="btn btn-xs btn-outline-secondary" title="View Full Bill Document">
                                     <i class="bi bi-eye"></i>
                                 </a>
+                                <a href="{% url 'invoices:download_invoice' sub.submission_id %}" class="btn btn-xs btn-outline-secondary" title="Download High-Resolution Invoice Document">
+                                    <i class="bi bi-download"></i>
+                                </a>
                             </div>
                         </td>
                     </tr>

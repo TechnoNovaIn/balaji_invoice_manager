@@ -1,4 +1,5 @@
 import os
+import re
 import csv
 from decimal import Decimal
 from django.shortcuts import render, redirect, get_object_or_404
@@ -249,7 +250,7 @@ def upload_invoice(request):
                 ids = [s.submission_id for s in submissions]
                 messages.success(
                     request,
-                    f"✓ Successfully submitted {count} separate invoices to Naveen! Tracking IDs: {', '.join(ids)}"
+                    f"✓ Successfully submitted {count} separate invoices! Tracking IDs: {', '.join(ids)}"
                 )
                 return redirect('invoices:submission_success', submission_id=submissions[0].submission_id)
         except ValidationError as e:
@@ -478,7 +479,7 @@ def resubmit_invoice(request, submission_id):
             )
             messages.success(
                 request,
-                f"Invoice {submission.submission_id} has been resubmitted to Naveen for review."
+                f"Invoice {submission.submission_id} has been resubmitted for review."
             )
             return redirect('invoices:submission_detail', submission_id=submission.submission_id)
         except ValidationError as e:
@@ -525,6 +526,217 @@ def serve_document(request, doc_id):
         doc.original_filename,
         doc.content_type,
         inline=True,
+    )
+
+
+@login_required
+def download_invoice(request, submission_id):
+    """
+    Direct download endpoint for an invoice submission.
+    Preserves print-ready fidelity for paper printing.
+    Enforces positive access control: Owner (submitter) OR privileged accounts (Naveen/Admin/Management).
+
+    Query Parameters:
+      - ?format=pdf : Compiles a high-resolution print-ready A4 PDF containing
+                      the official Balaji Transports voucher header and all pages.
+      - ?format=original : Downloads original unsegmented parent document (if present).
+      - default :
+          * If format=pdf is passed OR the submission has multiple active documents:
+            Generates & downloads the print-ready PDF.
+          * If single active document:
+            Downloads the primary active document directly as an attachment with a clean,
+            descriptive filename (e.g., "Invoice_BTI-202611-00001_JK_TYRE.jpg").
+    """
+    submission = get_object_or_404(
+        InvoiceSubmission.objects.select_related('employee', 'source_document'),
+        submission_id=submission_id
+    )
+
+    if not _can_view_all_invoices(request.user) and submission.employee_id != request.user.id:
+        raise PermissionDenied("Access Denied: You do not have permission to download this invoice.")
+
+    req_format = request.GET.get('format', '').strip().lower()
+
+    if req_format == 'original' and submission.source_document:
+        return download_source_document(request, submission.source_document_id)
+
+    active_docs = list(submission.documents.filter(is_active_version=True).order_by('page_number'))
+
+    safe_vendor = re.sub(r'[^a-zA-Z0-9_\-]', '_', submission.party_name or 'Invoice')[:30].strip('_')
+    safe_inv = re.sub(r'[^a-zA-Z0-9_\-]', '_', submission.invoice_number or '')[:20].strip('_')
+    base_name = f"Invoice_{submission.submission_id}"
+    if safe_vendor:
+        base_name += f"_{safe_vendor}"
+    if safe_inv:
+        base_name += f"_{safe_inv}"
+
+    if req_format == 'pdf' or len(active_docs) > 1 or not active_docs:
+        from apps.invoices.image_processing import generate_print_ready_pdf
+        pdf_bytes = generate_print_ready_pdf(submission)
+        response = HttpResponse(pdf_bytes, content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="{sanitize_filename(base_name + ".pdf")}"'
+        response['X-Content-Type-Options'] = 'nosniff'
+        response['Cache-Control'] = 'private, no-store'
+        return response
+
+    doc = active_docs[0]
+    if not doc.original_file or not doc.original_file.storage.exists(doc.original_file.name):
+        raise Http404("Document file not found on server storage.")
+
+    try:
+        fh = doc.original_file.open('rb')
+    except Exception as exc:
+        raise Http404(f"Could not open document file: {str(exc)}")
+
+    ext = os.path.splitext(doc.original_filename)[1] or ('.pdf' if doc.content_type == 'application/pdf' else '.jpg')
+    download_filename = f"{base_name}{ext}"
+
+    return _build_protected_document_response(
+        fh,
+        download_filename,
+        doc.content_type,
+        inline=False,
+    )
+
+
+@login_required
+def batch_download_invoices(request):
+    """
+    Download multiple invoices packaged into a single ZIP archive.
+    Preserves paper-print fidelity with official Balaji Transports voucher headers.
+
+    Query Parameters / POST parameters:
+      - scope: 'missed' (carryover before today), 'today' (today's pending), 'pending' (all pending)
+      - ids: comma-separated list of submission IDs
+      - format: 'pdf' (default, official voucher print layout) or 'original' (uploaded images)
+    """
+    import zipfile
+    import io
+    from apps.invoices.image_processing import generate_print_ready_pdf
+
+    can_view_all = _can_view_all_invoices(request.user)
+
+    scope = request.GET.get('scope', '').strip().lower()
+    ids_param = request.GET.get('ids', '').strip()
+    if not ids_param and request.method == 'POST':
+        ids_list = request.POST.getlist('submission_ids')
+    elif ids_param:
+        ids_list = [i.strip() for i in ids_param.split(',') if i.strip()]
+    else:
+        ids_list = request.GET.getlist('submission_ids')
+
+    today = timezone.localdate()
+    qs = InvoiceSubmission.objects.all().select_related('employee').prefetch_related('documents')
+
+    if not can_view_all:
+        qs = qs.filter(employee=request.user)
+
+    if ids_list:
+        qs = qs.filter(submission_id__in=ids_list)
+        archive_name_suffix = "selected"
+    elif scope == 'missed':
+        qs = qs.filter(is_entered_in_tally=False, created_at__date__lt=today).order_by('created_at')
+        archive_name_suffix = "missed_carried_over"
+    elif scope == 'today':
+        qs = qs.filter(is_entered_in_tally=False, created_at__date=today).order_by('created_at')
+        archive_name_suffix = f"today_{today.strftime('%Y%m%d')}"
+    elif scope == 'pending':
+        qs = qs.filter(is_entered_in_tally=False).order_by('created_at')
+        archive_name_suffix = f"all_pending_{today.strftime('%Y%m%d')}"
+    else:
+        qs = qs.filter(is_entered_in_tally=False).order_by('created_at')
+        archive_name_suffix = f"invoices_{today.strftime('%Y%m%d')}"
+
+    submissions = list(qs)
+    if not submissions:
+        messages.warning(request, "No matching invoices found to download.")
+        return redirect('core:naveen_dashboard')
+
+    req_format = request.GET.get('format', 'pdf').strip().lower()
+    zip_buffer = io.BytesIO()
+
+    with zipfile.ZipFile(zip_buffer, mode='w', compression=zipfile.ZIP_DEFLATED) as zf:
+        used_filenames = set()
+        for idx, sub in enumerate(submissions, 1):
+            safe_vendor = re.sub(r'[^a-zA-Z0-9_\-]', '_', sub.party_name or 'Invoice')[:30].strip('_')
+            safe_inv = re.sub(r'[^a-zA-Z0-9_\-]', '_', sub.invoice_number or '')[:20].strip('_')
+            prefix = f"{idx:02d}_{sub.submission_id}"
+            if safe_vendor:
+                prefix += f"_{safe_vendor}"
+            if safe_inv:
+                prefix += f"_{safe_inv}"
+
+            if req_format == 'original':
+                active_docs = list(sub.documents.filter(is_active_version=True).order_by('page_number'))
+                written_any = False
+                for doc_idx, doc in enumerate(active_docs, 1):
+                    if doc.original_file and doc.original_file.storage.exists(doc.original_file.name):
+                        ext = os.path.splitext(doc.original_file.name)[1] or '.jpg'
+                        fname = f"{prefix}_p{doc_idx}{ext}"
+                        dedup_fname = fname
+                        k = 1
+                        while dedup_fname in used_filenames:
+                            dedup_fname = f"{prefix}_p{doc_idx}_{k}{ext}"
+                            k += 1
+                        used_filenames.add(dedup_fname)
+                        with doc.original_file.open('rb') as f:
+                            zf.writestr(dedup_fname, f.read())
+                        written_any = True
+                if written_any:
+                    continue
+
+            # Default: Print-ready official A4 voucher PDF with auto-cropped image & metadata
+            try:
+                pdf_bytes = generate_print_ready_pdf(sub)
+                fname = f"{prefix}.pdf"
+                dedup_fname = fname
+                k = 1
+                while dedup_fname in used_filenames:
+                    dedup_fname = f"{prefix}_{k}.pdf"
+                    k += 1
+                used_filenames.add(dedup_fname)
+                zf.writestr(dedup_fname, pdf_bytes)
+            except Exception as e:
+                logger.warning("Could not generate PDF for submission %s in batch zip: %s", sub.submission_id, e)
+
+    zip_buffer.seek(0)
+    zip_filename = f"Balaji_Invoices_{archive_name_suffix}.zip"
+    response = HttpResponse(zip_buffer.getvalue(), content_type='application/zip')
+    response['Content-Disposition'] = f'attachment; filename="{sanitize_filename(zip_filename)}"'
+    response['X-Content-Type-Options'] = 'nosniff'
+    response['Cache-Control'] = 'private, no-store'
+    return response
+
+
+@login_required
+def download_document(request, doc_id):
+    """
+    Downloads an individual InvoiceDocument page file as an attachment.
+    Enforces positive access control and secure filename headers.
+    """
+    doc = get_object_or_404(
+        InvoiceDocument.objects.select_related('submission', 'submission__employee'),
+        pk=doc_id
+    )
+
+    if not _can_view_all_invoices(request.user) and doc.submission.employee_id != request.user.id:
+        raise PermissionDenied("Access Denied: You do not have permission to download this document.")
+
+    if not doc.original_file or not doc.original_file.storage.exists(doc.original_file.name):
+        raise Http404("Document file not found on server storage.")
+
+    try:
+        fh = doc.original_file.open('rb')
+    except Exception as exc:
+        raise Http404(f"Could not open document file: {str(exc)}")
+
+    clean_filename = f"{doc.submission.submission_id}_pg{doc.page_number}_{doc.original_filename}"
+
+    return _build_protected_document_response(
+        fh,
+        clean_filename,
+        doc.content_type,
+        inline=False,
     )
 
 
@@ -1777,7 +1989,9 @@ def analytics_dashboard(request):
 
     kpis = get_executive_kpis()
     monthly_trends = get_monthly_trends()
-    top_suppliers = get_top_suppliers(limit=10)
+    top_suppliers = get_top_suppliers(limit=None)
+    total_supplier_spend = sum((s.get('total_spend') or Decimal('0')) for s in top_suppliers)
+    total_supplier_bills = sum((s.get('invoice_count') or 0) for s in top_suppliers)
     ledger_dist = get_ledger_distribution()
     employee_stats = get_employee_upload_stats()
 
@@ -1785,6 +1999,8 @@ def analytics_dashboard(request):
         'kpis': kpis,
         'monthly_trends': monthly_trends,
         'top_suppliers': top_suppliers,
+        'total_supplier_spend': total_supplier_spend,
+        'total_supplier_bills': total_supplier_bills,
         'ledger_dist': ledger_dist,
         'employee_stats': employee_stats,
         'page_title': 'Executive Purchase Analytics & Insights',

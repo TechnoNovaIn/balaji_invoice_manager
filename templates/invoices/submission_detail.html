@@ -4,6 +4,73 @@
 {% block page_heading %}Invoice Document Viewer{% endblock %}
 
 {% block content %}
+<style>
+@media print {
+    .app-sidebar, .app-header, .btn, .btn-group, .doc-viewport-container .position-absolute,
+    .card-header, nav, footer, form, .badge, .status-history-card, .card-enterprise-header,
+    .no-print, .alert, .dropdown {
+        display: none !important;
+    }
+    body, .app-main, .container-fluid, .card, .card-body {
+        background: white !important;
+        color: black !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        border: none !important;
+        box-shadow: none !important;
+    }
+    .print-voucher-header {
+        display: block !important;
+        border: 2px solid #000;
+        padding: 14px;
+        margin-bottom: 20px;
+        page-break-after: avoid;
+    }
+    .doc-viewport-container {
+        height: auto !important;
+        min-height: 0 !important;
+        overflow: visible !important;
+        background: transparent !important;
+        page-break-inside: avoid;
+    }
+    .doc-viewport-container img {
+        width: 100% !important;
+        max-width: 100% !important;
+        height: auto !important;
+        box-shadow: none !important;
+        border: 1px solid #ddd !important;
+    }
+}
+@media screen {
+    .print-voucher-header {
+        display: none;
+    }
+}
+</style>
+
+<!-- Print Voucher Header (Paper Printing Preservation) -->
+<div class="print-voucher-header">
+    <div style="font-weight: bold; font-size: 16px; margin-bottom: 6px; letter-spacing: 0.5px;">BALAJI TRANSPORTS — OFFICIAL INVOICE RECORD</div>
+    <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px;">
+        <span><strong>Tracking ID:</strong> {{ submission.submission_id }}</span>
+        <span><strong>Submitted:</strong> {{ submission.created_at|date:"d M Y, h:i A" }} by {{ submission.employee.get_full_name|default:submission.employee.username }}</span>
+    </div>
+    <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px;">
+        <span><strong>Vendor:</strong> {{ submission.party_name|default:"Not Specified" }}</span>
+        <span><strong>GSTIN:</strong> {{ submission.party_gstin|default:"N/A" }}</span>
+    </div>
+    <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px;">
+        <span><strong>Invoice No:</strong> {{ submission.invoice_number|default:"N/A" }}</span>
+        <span><strong>Invoice Date:</strong> {{ submission.invoice_date|date:"d M Y"|default:"N/A" }}</span>
+        <span><strong>Total Amount:</strong> ₹{{ submission.total_amount|default:"0.00" }}</span>
+    </div>
+    <div style="font-size: 11px; color: #444; border-top: 1px solid #ccc; padding-top: 4px; margin-top: 4px;">
+        <span><strong>Expense Ledger:</strong> {{ submission.expense_ledger }}</span> &bull;
+        <span><strong>Taxable:</strong> ₹{{ submission.taxable_amount|default:"0.00" }}</span> &bull;
+        <span><strong>Tally Status:</strong> {% if submission.is_entered_in_tally %}Entered in Tally{% else %}Pending Tally{% endif %}</span>
+    </div>
+</div>
+
 <div class="mb-4">
     <!-- Top Action & Navigation Bar -->
     <div class="card card-enterprise shadow-sm mb-3">
@@ -58,6 +125,19 @@
                             </form>
                         {% endif %}
                     {% endif %}
+
+                    <!-- Download & Print Actions for Paper Preservation -->
+                    <div class="btn-group btn-group-sm ms-2">
+                        <a href="{% url 'invoices:download_invoice' submission.submission_id %}" class="btn btn-outline-primary fw-semibold" title="Download High-Resolution Invoice Document">
+                            <i class="bi bi-download me-1"></i>Download
+                        </a>
+                        <a href="{% url 'invoices:download_invoice' submission.submission_id %}?format=pdf" class="btn btn-outline-danger fw-semibold" title="Download Print-Ready PDF Voucher">
+                            <i class="bi bi-file-earmark-pdf me-1"></i>Print PDF
+                        </a>
+                        <button type="button" onclick="window.print()" class="btn btn-outline-dark fw-semibold" title="Print Invoice directly to paper">
+                            <i class="bi bi-printer me-1"></i>Print
+                        </button>
+                    </div>
 
                     <!-- Previous & Next Navigation -->
                     {% if user.is_naveen or user.is_admin_role %}
@@ -234,9 +314,12 @@
                 </button>
                 {% endif %}
 
-                <!-- Fullscreen Direct Window -->
+                <!-- Fullscreen Direct Window & Page Download -->
                 <a href="{% url 'invoices:serve_document' doc.id %}" target="_blank" class="btn btn-sm btn-outline-teal py-1 px-2" title="Open Original File">
                     <i class="bi bi-box-arrow-up-right me-1"></i>Raw File
+                </a>
+                <a href="{% url 'invoices:download_document' doc.id %}" class="btn btn-sm btn-outline-primary py-1 px-2" title="Download Document Page File">
+                    <i class="bi bi-download me-1"></i>Download Page
                 </a>
             </div>
         </div>
