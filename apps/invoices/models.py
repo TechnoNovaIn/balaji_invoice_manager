@@ -488,6 +488,32 @@ class InvoiceSubmission(models.Model):
             return 'IRN Not Found'
         return ''
 
+    @property
+    def gstin_details(self):
+        """Returns structured GSTIN validation details via official Mod-36 checksum validator."""
+        from .vendor_validator import verify_gstin_detailed
+        return verify_gstin_detailed(self.party_gstin)
+
+    @property
+    def gstin_display_status(self):
+        """
+        Statutory display status for UI:
+        - 'GSTIN Structure Verified'
+        - 'GSTIN Checksum Invalid'
+        - 'GSTIN Format Invalid'
+        - '' if empty
+        """
+        if not self.party_gstin:
+            return ''
+        return self.gstin_details.get('display_status', '')
+
+    @property
+    def gstin_portal_status(self):
+        """Portal status disclaimer (strictly distinguishes checksum from government portal registration)."""
+        if not self.party_gstin:
+            return ''
+        return self.gstin_details.get('portal_status', 'GSTIN Registration Not Verified')
+
 
 class InvoiceDocument(models.Model):
     """
@@ -754,6 +780,282 @@ class VendorMaster(models.Model):
         if self.name:
             self.normalized_name = re.sub(r'[^a-z0-9]', '', self.name.lower())
         super().save(*args, **kwargs)
+
+
+class VendorProposal(models.Model):
+    """
+    Controlled vendor onboarding workflow proposal.
+    Generated when invoices contain unregistered or new vendors.
+    Requires explicit review and approval by Naveen or Admin before insertion into VendorMaster.
+    """
+    STATUS_PENDING = 'PENDING'
+    STATUS_APPROVED = 'APPROVED'
+    STATUS_REJECTED = 'REJECTED'
+
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending Review'),
+        (STATUS_APPROVED, 'Approved & Registered'),
+        (STATUS_REJECTED, 'Rejected'),
+    ]
+
+    proposed_name = models.CharField(max_length=255, db_index=True, help_text="Proposed vendor trade or legal name")
+    proposed_gstin = models.CharField(max_length=15, blank=True, default='', db_index=True, help_text="Proposed statutory GSTIN (if applicable)")
+    pan = models.CharField(max_length=10, blank=True, default='', db_index=True, help_text="10-character PAN")
+    state = models.CharField(max_length=100, blank=True, default='')
+    state_code = models.CharField(max_length=2, blank=True, default='')
+    suggested_expense_ledger = models.CharField(
+        max_length=100,
+        default='Purchase Spares & Consumables',
+        help_text="Suggested Tally Expense Ledger"
+    )
+    assigned_expense_ledger = models.CharField(
+        max_length=100,
+        blank=True,
+        default='',
+        help_text="Explicit expense ledger assigned upon approval by Naveen/Admin"
+    )
+    source_submission = models.ForeignKey(
+        InvoiceSubmission,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='vendor_proposals',
+        help_text="Invoice submission where this vendor was first detected"
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default=STATUS_PENDING,
+        db_index=True
+    )
+    checksum_status = models.CharField(
+        max_length=50,
+        blank=True,
+        default='',
+        help_text="Status code from verify_gstin_detailed"
+    )
+    checksum_display = models.CharField(
+        max_length=100,
+        blank=True,
+        default='',
+        help_text="Human-readable statutory checksum verification display label"
+    )
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='reviewed_vendor_proposals',
+        help_text="Naveen or Admin user who reviewed this proposal"
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    approved_vendor = models.ForeignKey(
+        VendorMaster,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='originating_proposals',
+        help_text="Created or linked VendorMaster record upon approval"
+    )
+    rejection_reason = models.TextField(blank=True, default='')
+    notes = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'Vendor Proposal'
+        verbose_name_plural = 'Vendor Proposals'
+        indexes = [
+            models.Index(fields=['status', '-created_at']),
+            models.Index(fields=['proposed_gstin']),
+        ]
+
+    def __str__(self):
+        return f"Proposal: {self.proposed_name} ({self.proposed_gstin or 'No GSTIN'}) - {self.status}"
+
+
+class VendorAuditLog(models.Model):
+    """
+    Immutable audit history for VendorMaster lifecycle:
+    Records approver, timestamp, action, source submission, GSTIN, and assigned ledger.
+    """
+    ACTION_PROPOSAL_CREATED = 'PROPOSAL_CREATED'
+    ACTION_PROPOSAL_APPROVED = 'PROPOSAL_APPROVED'
+    ACTION_PROPOSAL_REJECTED = 'PROPOSAL_REJECTED'
+    ACTION_VENDOR_CREATED = 'VENDOR_CREATED'
+    ACTION_VENDOR_UPDATED = 'VENDOR_UPDATED'
+    ACTION_VENDOR_DEACTIVATED = 'VENDOR_DEACTIVATED'
+
+    ACTION_CHOICES = [
+        (ACTION_PROPOSAL_CREATED, 'Vendor Proposal Created'),
+        (ACTION_PROPOSAL_APPROVED, 'Vendor Proposal Approved'),
+        (ACTION_PROPOSAL_REJECTED, 'Vendor Proposal Rejected'),
+        (ACTION_VENDOR_CREATED, 'Vendor Master Created'),
+        (ACTION_VENDOR_UPDATED, 'Vendor Master Updated'),
+        (ACTION_VENDOR_DEACTIVATED, 'Vendor Master Deactivated'),
+    ]
+
+    vendor = models.ForeignKey(
+        VendorMaster,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='audit_logs'
+    )
+    proposal = models.ForeignKey(
+        VendorProposal,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='audit_logs'
+    )
+    action = models.CharField(max_length=30, choices=ACTION_CHOICES, db_index=True)
+    performer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='vendor_audit_actions'
+    )
+    source_submission = models.ForeignKey(
+        InvoiceSubmission,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='vendor_audit_entries'
+    )
+    vendor_name = models.CharField(max_length=255, blank=True, default='')
+    gstin = models.CharField(max_length=15, blank=True, default='')
+    assigned_ledger = models.CharField(max_length=100, blank=True, default='')
+    details = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'Vendor Audit Log'
+        verbose_name_plural = 'Vendor Audit Logs'
+        indexes = [
+            models.Index(fields=['action', '-created_at']),
+            models.Index(fields=['gstin']),
+        ]
+
+    def __str__(self):
+        return f"{self.action} on {self.vendor_name} ({self.gstin}) by {self.performer} at {self.created_at}"
+
+
+class OcrExtractionCache(models.Model):
+    """
+    Dedicated database-backed persistent OCR cache for Gemini extractions.
+    Cache key identity uniquely includes:
+    1. Document file SHA-256
+    2. Gemini model name
+    3. Prompt version
+    4. Extraction schema version
+
+    Features:
+    - Atomic job claiming with UUID lease tokens
+    - Processing lease expiration (e.g. 120s) and stale-job recovery
+    - Concurrent duplicate-request suppression
+    - Retry counting and terminal failure recording
+    - Non-blocking failsafe: corruption/errors fall back gracefully to direct execution
+    """
+    STATUS_PENDING = 'PENDING'
+    STATUS_PROCESSING = 'PROCESSING'
+    STATUS_COMPLETED = 'COMPLETED'
+    STATUS_FAILED = 'FAILED'
+
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending'),
+        (STATUS_PROCESSING, 'Processing Lease Active'),
+        (STATUS_COMPLETED, 'Completed'),
+        (STATUS_FAILED, 'Failed'),
+    ]
+
+    cache_key = models.CharField(
+        max_length=64,
+        unique=True,
+        db_index=True,
+        help_text="SHA-256 hash of (document_sha256 + model + prompt_ver + schema_ver)"
+    )
+    file_sha256 = models.CharField(
+        max_length=64,
+        db_index=True,
+        help_text="Source document binary SHA-256 hash"
+    )
+    model_name = models.CharField(
+        max_length=64,
+        default='gemini-2.5-flash',
+        help_text="Gemini model identifier used for extraction"
+    )
+    prompt_version = models.CharField(
+        max_length=32,
+        default='v1.2',
+        help_text="Version identifier of extraction prompt"
+    )
+    schema_version = models.CharField(
+        max_length=32,
+        default='v1.0',
+        help_text="Version identifier of structured extraction JSON schema"
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default=STATUS_PENDING,
+        db_index=True
+    )
+    lease_token = models.CharField(
+        max_length=64,
+        blank=True,
+        default='',
+        help_text="UUID lease token held by worker process actively extracting"
+    )
+    lease_expires_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Timestamp after which active processing lease is considered stale"
+    )
+    extraction_data = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Complete structured OCR extraction payload"
+    )
+    retry_count = models.PositiveIntegerField(
+        default=0,
+        help_text="Number of extraction attempts executed"
+    )
+    max_retries = models.PositiveIntegerField(
+        default=3,
+        help_text="Maximum retry limit before terminal failure"
+    )
+    last_error = models.TextField(
+        blank=True,
+        default='',
+        help_text="Recorded error message from failed attempt"
+    )
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'OCR Extraction Cache'
+        verbose_name_plural = 'OCR Extraction Caches'
+        indexes = [
+            models.Index(fields=['file_sha256', 'model_name']),
+            models.Index(fields=['status', 'lease_expires_at']),
+        ]
+
+    def __str__(self):
+        return f"OCR Cache: {self.file_sha256[:12]} ({self.model_name}:{self.prompt_version}) - {self.status}"
+
+    @classmethod
+    def compute_cache_key(cls, file_sha256: str, model_name: str, prompt_version: str, schema_version: str) -> str:
+        """Deterministically generates composite 64-character hex SHA-256 cache key."""
+        import hashlib
+        raw = f"{file_sha256.lower()}:{model_name.lower()}:{prompt_version}:{schema_version}".encode('utf-8')
+        return hashlib.sha256(raw).hexdigest()
 
 
 

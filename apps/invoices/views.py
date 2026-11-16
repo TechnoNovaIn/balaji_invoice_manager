@@ -399,150 +399,9 @@ def my_submissions(request):
 
 def get_document_highlight_boxes(submission):
     """
-    Computes visual book-style marker highlights for key financial and tax fields
-    (Vendor Name, GSTIN, Invoice Number, Base/Taxable, CGST, SGST, IGST, Total Amount, Items).
-    Provides spatial coordinates on document image (% of page width/height).
-    Acts strictly as a visual reading aid (like highlighter pens in physical books).
+    Highlight feature removed per user requirement. Returns empty list.
     """
-    boxes = []
-
-    # 1. Vendor Name (Classic Yellow Book Highlighter)
-    if submission.party_name:
-        boxes.append({
-            'field': 'vendor_name',
-            'label': 'Party / Vendor',
-            'value': submission.party_name,
-            'marker_bg': 'rgba(254, 240, 138, 0.48)',
-            'marker_border': '2px solid rgba(202, 138, 4, 0.75)',
-            'tag_bg': '#ca8a04',
-            'top': 4.0,
-            'left': 8.0,
-            'width': 58.0,
-            'height': 8.0,
-        })
-
-    # 2. GSTIN (Sky Blue Highlighter)
-    if submission.party_gstin:
-        boxes.append({
-            'field': 'gstin',
-            'label': 'Supplier GSTIN',
-            'value': submission.party_gstin,
-            'marker_bg': 'rgba(186, 230, 253, 0.45)',
-            'marker_border': '2px solid rgba(2, 132, 199, 0.75)',
-            'tag_bg': '#0284c7',
-            'top': 13.0,
-            'left': 8.0,
-            'width': 36.0,
-            'height': 4.5,
-        })
-
-    # 3. Invoice Number (Warm Amber Highlighter)
-    inv_no = submission.invoice_number or submission.submission_id
-    boxes.append({
-        'field': 'invoice_number',
-        'label': 'Invoice No.',
-        'value': inv_no,
-        'marker_bg': 'rgba(254, 215, 170, 0.48)',
-        'marker_border': '2px solid rgba(217, 119, 6, 0.75)',
-        'tag_bg': '#d97706',
-        'top': 7.5,
-        'left': 66.0,
-        'width': 26.0,
-        'height': 5.5,
-    })
-
-    # 4. Items / Description Table Region (Soft Green Highlighter Wash)
-    items_count = len(submission.line_items) if submission.line_items else 1
-    boxes.append({
-        'field': 'items',
-        'label': f'Billed Items ({items_count})',
-        'value': f'{items_count} Item(s)',
-        'marker_bg': 'rgba(187, 247, 208, 0.35)',
-        'marker_border': '1.5px dashed rgba(22, 163, 74, 0.6)',
-        'tag_bg': '#16a34a',
-        'top': 32.0,
-        'left': 6.0,
-        'width': 88.0,
-        'height': 36.0,
-    })
-
-    # 5. Base / Taxable Amount (Teal Highlighter)
-    if submission.taxable_amount > 0 or submission.total_amount > 0:
-        base_val = submission.taxable_amount if submission.taxable_amount > 0 else submission.total_amount
-        boxes.append({
-            'field': 'taxable_amount',
-            'label': 'Taxable Base',
-            'value': f"₹{base_val:,.2f}",
-            'marker_bg': 'rgba(153, 246, 228, 0.45)',
-            'marker_border': '2px solid rgba(13, 148, 136, 0.75)',
-            'tag_bg': '#0d9488',
-            'top': 71.0,
-            'left': 52.0,
-            'width': 42.0,
-            'height': 4.8,
-        })
-
-    # 6. CGST (Purple Highlighter)
-    if submission.cgst_amount > 0:
-        boxes.append({
-            'field': 'cgst_amount',
-            'label': 'CGST',
-            'value': f"₹{submission.cgst_amount:,.2f}",
-            'marker_bg': 'rgba(221, 214, 254, 0.45)',
-            'marker_border': '2px solid rgba(124, 58, 237, 0.75)',
-            'tag_bg': '#7c3aed',
-            'top': 76.2,
-            'left': 52.0,
-            'width': 42.0,
-            'height': 4.2,
-        })
-
-    # 7. SGST (Purple Highlighter)
-    if submission.sgst_amount > 0:
-        boxes.append({
-            'field': 'sgst_amount',
-            'label': 'SGST',
-            'value': f"₹{submission.sgst_amount:,.2f}",
-            'marker_bg': 'rgba(221, 214, 254, 0.45)',
-            'marker_border': '2px solid rgba(124, 58, 237, 0.75)',
-            'tag_bg': '#7c3aed',
-            'top': 80.8,
-            'left': 52.0,
-            'width': 42.0,
-            'height': 4.2,
-        })
-
-    # 8. IGST (Rose Pink Highlighter)
-    if submission.igst_amount > 0:
-        boxes.append({
-            'field': 'igst_amount',
-            'label': 'IGST',
-            'value': f"₹{submission.igst_amount:,.2f}",
-            'marker_bg': 'rgba(254, 205, 211, 0.45)',
-            'marker_border': '2px solid rgba(225, 29, 72, 0.75)',
-            'tag_bg': '#e11d48',
-            'top': 80.8,
-            'left': 52.0,
-            'width': 42.0,
-            'height': 4.2,
-        })
-
-    # 9. Total Gross Amount (Bright Fluorescent Yellow/Amber Highlighter)
-    if submission.total_amount > 0:
-        boxes.append({
-            'field': 'total_amount',
-            'label': 'Total Gross',
-            'value': f"₹{submission.total_amount:,.2f}",
-            'marker_bg': 'rgba(253, 224, 71, 0.55)',
-            'marker_border': '2.5px solid rgba(161, 98, 7, 0.85)',
-            'tag_bg': '#a16207',
-            'top': 85.5,
-            'left': 50.0,
-            'width': 44.0,
-            'height': 6.2,
-        })
-
-    return boxes
+    return []
 
 
 @login_required
@@ -2063,6 +1922,28 @@ def verification_workspace(request, submission_id):
     amount_in_words = (getattr(submission, 'gemini_extracted_data', None) or {}).get('amount_in_words') or ''
     highlight_boxes = get_document_highlight_boxes(submission)
 
+    # Check if registered vendor or if a pending proposal exists
+    from .models import VendorMaster, VendorProposal
+    from .vendor_service import create_or_get_vendor_proposal
+    from .vendor_validator import normalize_vendor_name
+    from .vendor_directory import TALLY_EXPENSE_LEDGERS
+
+    is_registered_vendor = False
+    if submission.party_gstin:
+        is_registered_vendor = VendorMaster.objects.filter(gstin=submission.party_gstin).exists()
+    elif submission.party_name:
+        is_registered_vendor = VendorMaster.objects.filter(normalized_name=normalize_vendor_name(submission.party_name)).exists()
+
+    pending_vendor_proposal = None
+    if not is_registered_vendor and submission.party_name:
+        pending_vendor_proposal, _ = create_or_get_vendor_proposal(
+            party_name=submission.party_name,
+            party_gstin=submission.party_gstin,
+            source_submission=submission,
+            suggested_ledger=submission.expense_ledger,
+            created_by_user=request.user
+        )
+
     return render(request, 'invoices/verification_workspace.html', {
         'submission': submission,
         'active_docs': active_docs,
@@ -2073,6 +1954,9 @@ def verification_workspace(request, submission_id):
         'highlight_boxes': highlight_boxes,
         'prev_sub': prev_sub,
         'next_sub': next_sub,
+        'is_registered_vendor': is_registered_vendor,
+        'pending_vendor_proposal': pending_vendor_proposal,
+        'tally_ledgers': TALLY_EXPENSE_LEDGERS,
         'page_title': f"Verify Purchase - {submission.submission_id}",
     })
 
@@ -2264,6 +2148,107 @@ def download_executive_report(request, report_type):
     )
     response['Content-Disposition'] = f'attachment; filename="Balaji_Executive_Report_{report_type}_{now_str}.xlsx"'
     return response
+
+
+# ==============================================================================
+# PHASE 2 — CONTROLLED VENDOR PROPOSAL & APPROVAL WORKFLOW
+# ==============================================================================
+
+@login_required
+def vendor_proposals_list(request):
+    """
+    Displays list of proposed vendors detected from invoices.
+    Allows Naveen / Admin to review checksum status, assign ledger, and explicitly approve/reject.
+    """
+    if not (request.user.is_naveen or request.user.is_admin_role or request.user.is_management):
+        raise PermissionDenied("Access Denied.")
+
+    from .models import VendorProposal, VendorAuditLog
+    from .vendor_directory import TALLY_EXPENSE_LEDGERS
+
+    status_filter = request.GET.get('status', VendorProposal.STATUS_PENDING)
+    qs = VendorProposal.objects.select_related('source_submission', 'reviewed_by', 'approved_vendor').all()
+    if status_filter != 'ALL':
+        qs = qs.filter(status=status_filter)
+
+    proposals = qs.order_by('-created_at')[:100]
+    audit_logs = VendorAuditLog.objects.select_related('performer', 'vendor', 'proposal').order_by('-created_at')[:30]
+
+    return render(request, 'invoices/vendor_proposals.html', {
+        'proposals': proposals,
+        'audit_logs': audit_logs,
+        'current_status': status_filter,
+        'tally_ledgers': TALLY_EXPENSE_LEDGERS,
+        'page_title': 'Vendor Proposal & Onboarding Desk',
+    })
+
+
+@login_required
+def approve_vendor_proposal_view(request, proposal_id):
+    """
+    POST endpoint to explicitly approve a VendorProposal and register into VendorMaster.
+    """
+    if not (request.user.is_naveen or request.user.is_admin_role):
+        raise PermissionDenied("Only Naveen or Administrator can approve new vendors.")
+
+    if request.method != 'POST':
+        messages.error(request, "Invalid request method.")
+        return redirect('invoices:vendor_proposals_list')
+
+    from .vendor_service import approve_vendor_proposal
+
+    assigned_ledger = request.POST.get('assigned_expense_ledger', '').strip()
+    final_name = request.POST.get('final_name', '').strip() or None
+    final_address = request.POST.get('final_address', '').strip() or None
+    redirect_to = request.POST.get('redirect_to', '')
+
+    try:
+        vendor = approve_vendor_proposal(
+            proposal_id=proposal_id,
+            approved_by_user=request.user,
+            assigned_ledger=assigned_ledger,
+            final_name=final_name,
+            final_address=final_address,
+        )
+        messages.success(request, f"✓ Vendor '{vendor.name}' successfully approved and registered into VendorMaster!")
+    except Exception as e:
+        messages.error(request, f"Failed to approve vendor proposal: {str(e)}")
+
+    if redirect_to:
+        return redirect(redirect_to)
+    return redirect('invoices:vendor_proposals_list')
+
+
+@login_required
+def reject_vendor_proposal_view(request, proposal_id):
+    """
+    POST endpoint to reject a VendorProposal.
+    """
+    if not (request.user.is_naveen or request.user.is_admin_role):
+        raise PermissionDenied("Only Naveen or Administrator can reject vendor proposals.")
+
+    if request.method != 'POST':
+        messages.error(request, "Invalid request method.")
+        return redirect('invoices:vendor_proposals_list')
+
+    from .vendor_service import reject_vendor_proposal
+
+    reason = request.POST.get('rejection_reason', 'Rejected during manual operator review').strip()
+    redirect_to = request.POST.get('redirect_to', '')
+
+    try:
+        proposal = reject_vendor_proposal(
+            proposal_id=proposal_id,
+            rejected_by_user=request.user,
+            reason=reason,
+        )
+        messages.warning(request, f"Vendor proposal '{proposal.proposed_name}' was rejected.")
+    except Exception as e:
+        messages.error(request, f"Failed to reject vendor proposal: {str(e)}")
+
+    if redirect_to:
+        return redirect(redirect_to)
+    return redirect('invoices:vendor_proposals_list')
 
 
 

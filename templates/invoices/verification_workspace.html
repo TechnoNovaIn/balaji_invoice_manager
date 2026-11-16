@@ -117,23 +117,6 @@
             display: none;
         }
     }
-    .book-marker-highlight {
-        mix-blend-mode: multiply;
-        border-radius: 3px;
-        pointer-events: none;
-        transition: opacity 0.15s ease-in-out;
-    }
-    .marker-label-tag {
-        font-size: 0.62rem;
-        font-weight: 700;
-        letter-spacing: 0.3px;
-        text-transform: uppercase;
-        padding: 1px 5px;
-        border-radius: 3px;
-        opacity: 0.92;
-        pointer-events: none;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.15);
-    }
 </style>
 {% endblock %}
 
@@ -291,12 +274,6 @@
                         <button type="button" class="btn btn-xs btn-outline-light py-1 px-2" id="btnEnhance" title="Enhance Contrast for Faded Receipts">
                             <i class="bi bi-magic"></i>
                         </button>
-                        {% if highlight_boxes %}
-                        <!-- Book-Style Marker Highlights Toggle -->
-                        <button type="button" class="btn btn-xs btn-warning text-dark py-1 px-2 ms-1 fw-bold" id="btnToggleBoxesDesk" onclick="toggleDeskHighlightBoxes()" title="Toggle book-style marker highlights on key accounting fields">
-                            <i class="bi bi-pen-fill me-1"></i>Highlights: <span id="boxDeskStateText">ON</span>
-                        </button>
-                        {% endif %}
                         {% for doc in active_docs %}
                         {% if forloop.first %}
                         <a href="{% url 'invoices:serve_document' doc.id %}" target="_blank" class="btn btn-xs btn-outline-info py-1 px-2 ms-1" title="Open Page File in New Tab">
@@ -322,23 +299,6 @@
                         {% if doc.is_image %}
                         <div class="position-relative d-inline-block shadow-lg bg-white rounded doc-wrapper {% if not forloop.first %}d-none{% endif %}" id="wrapper_{{ doc.id }}">
                             <img src="{% url 'invoices:serve_document' doc.id %}" id="docImage_{{ doc.id }}" class="doc-img" alt="Invoice Scan" data-docid="{{ doc.id }}" style="display: block; max-width: none; height: auto; transform-origin: center center; transition: width 0.12s ease-out, transform 0.12s ease-out; image-rendering: -webkit-optimize-contrast; pointer-events: none;" draggable="false">
-                            {% if forloop.first and highlight_boxes %}
-                            <!-- Marker Highlight Overlay (Book-Style Highlighter Pen on Paper - Pure Visual Aid, No Copying) -->
-                            <div class="position-absolute top-0 start-0 w-100 h-100 highlight-box-layer" id="deskBoxOverlay_{{ doc.id }}" style="pointer-events: none; z-index: 5;">
-                                {% for box in highlight_boxes %}
-                                <div class="book-marker-highlight position-absolute" 
-                                     id="desk_box_{{ box.field }}"
-                                     style="top: {{ box.top }}%; left: {{ box.left }}%; width: {{ box.width }}%; height: {{ box.height }}%; background-color: {{ box.marker_bg }}; border-bottom: {{ box.marker_border }}; border-radius: 3px; mix-blend-mode: multiply; pointer-events: none;"
-                                     title="{{ box.label }}: {{ box.value }}">
-                                    
-                                    <span class="marker-label-tag position-absolute top-0 start-0 translate-middle-y"
-                                          style="font-size: 0.62rem; font-weight: 700; background-color: {{ box.tag_bg }}; color: #ffffff; margin-left: 4px; padding: 1px 5px; border-radius: 3px; letter-spacing: 0.3px; font-family: system-ui, sans-serif; white-space: nowrap; pointer-events: none; box-shadow: 0 1px 3px rgba(0,0,0,0.15);">
-                                        {{ box.label }}
-                                    </span>
-                                </div>
-                                {% endfor %}
-                            </div>
-                            {% endif %}
                         </div>
                         {% elif doc.is_pdf %}
                         <div class="doc-wrapper {% if not forloop.first %}d-none{% endif %}" id="wrapper_{{ doc.id }}" style="width: 100%; height: 100%; min-height: 550px;">
@@ -424,6 +384,23 @@
                 <form method="POST" action="{% url 'invoices:verification_workspace' submission.submission_id %}" id="verificationForm" class="card card-enterprise shadow-sm p-3 mb-3">
                     {% csrf_token %}
 
+                    {% if not is_registered_vendor and submission.party_name %}
+                    <div class="alert alert-warning py-2 px-3 mb-2 small d-flex flex-wrap align-items-center justify-content-between gap-2 border">
+                        <div>
+                            <i class="bi bi-exclamation-triangle-fill text-warning me-1"></i>
+                            <strong>Unregistered Vendor Candidate:</strong> "<em>{{ submission.party_name }}</em>" is not yet in <strong>VendorMaster</strong>.
+                            {% if pending_vendor_proposal %}
+                                Proposal #{{ pending_vendor_proposal.id }} is pending authorized review.
+                            {% endif %}
+                        </div>
+                        {% if pending_vendor_proposal %}
+                        <button type="button" class="btn btn-xs btn-success fw-bold py-1 px-2 shadow-sm" data-bs-toggle="modal" data-bs-target="#modalApproveProposal">
+                            <i class="bi bi-shield-check me-1"></i>Authorize Vendor
+                        </button>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+
                     <div class="row g-2 mb-2">
                         <!-- Supplier / Party Name -->
                         <div class="col-12 col-md-8">
@@ -439,6 +416,28 @@
                                 Supplier GSTIN
                             </label>
                             <input type="text" name="party_gstin" id="fieldGstin" value="{{ submission.party_gstin }}" maxlength="15" class="form-control form-control-sm font-monospace text-uppercase" placeholder="29XXXXX0000X0ZX">
+                            <div id="gstinValidationContainer" class="mt-1">
+                                <div id="gstinBadge" {% if not submission.party_gstin %}style="display: none;"{% endif %}>
+                                    {% if submission.party_gstin %}
+                                        {% if submission.gstin_details.display_status == 'GSTIN Structure Verified' %}
+                                            <span class="badge bg-success-subtle text-success border border-success-subtle py-1 text-start d-block" style="font-size: 0.68rem; font-weight: 500;">
+                                                <i class="bi bi-shield-check me-1"></i>GSTIN Structure Verified
+                                            </span>
+                                        {% elif submission.gstin_details.display_status == 'GSTIN Checksum Invalid' %}
+                                            <span class="badge bg-danger-subtle text-danger border border-danger-subtle py-1 text-start d-block" style="font-size: 0.68rem; font-weight: 500;" title="Checksum mismatch (Expected: {{ submission.gstin_details.expected_checksum }}, Got: {{ submission.gstin_details.actual_checksum }})">
+                                                <i class="bi bi-exclamation-triangle-fill me-1"></i>GSTIN Checksum Invalid
+                                            </span>
+                                        {% elif submission.gstin_details.display_status == 'GSTIN Format Invalid' %}
+                                            <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle py-1 text-start d-block" style="font-size: 0.68rem; font-weight: 500;">
+                                                <i class="bi bi-exclamation-circle me-1"></i>GSTIN Format Invalid
+                                            </span>
+                                        {% endif %}
+                                    {% endif %}
+                                </div>
+                                <div class="text-muted small mt-1" style="font-size: 0.65rem; {% if not submission.party_gstin %}display: none;{% endif %}" id="gstinPortalNote" title="Algorithmic verification only; portal registration is not queried without official API credentials.">
+                                    <i class="bi bi-info-circle me-1"></i>GSTIN Registration Not Verified
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -456,7 +455,7 @@
                             <label class="form-label small fw-bold text-dark mb-1">
                                 Bill Date <span class="text-danger">*</span>
                             </label>
-                            <input type="date" name="invoice_date" id="fieldInvoiceDate" value="{{ submission.invoice_date|date:'Y-m-d'|default:submission.created_at|date:'Y-m-d' }}" class="form-control form-control-sm" required>
+                            <input type="date" name="invoice_date" id="fieldInvoiceDate" value="{{ submission.invoice_date|date:'Y-m-d'|default:'' }}" class="form-control form-control-sm">
                         </div>
 
                         <!-- HSN / SAC Code -->
@@ -715,6 +714,60 @@
         </form>
     </div>
 </div>
+
+{% if pending_vendor_proposal %}
+<!-- Modal: Authorize & Onboard Proposed Vendor -->
+<div class="modal fade" id="modalApproveProposal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <form method="POST" action="{% url 'invoices:approve_vendor_proposal' pending_vendor_proposal.id %}">
+                {% csrf_token %}
+                <input type="hidden" name="redirect_to" value="{% url 'invoices:verification_workspace' submission.submission_id %}">
+                <div class="modal-header bg-light">
+                    <h6 class="modal-title fw-bold text-dark">
+                        <i class="bi bi-shield-check text-success me-1"></i>Authorize Vendor Master Onboarding
+                    </h6>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="small text-muted mb-3">
+                        Authorizing this candidate will insert it into the permanent <strong>VendorMaster</strong> directory and assign its authoritative default Tally ledger.
+                    </p>
+                    <div class="mb-2">
+                        <label class="form-label small fw-bold mb-1">Vendor Legal / Trade Name</label>
+                        <input type="text" name="final_name" value="{{ pending_vendor_proposal.proposed_name }}" class="form-control form-control-sm" required>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label small fw-bold mb-1">Statutory GSTIN</label>
+                        <input type="text" value="{{ pending_vendor_proposal.proposed_gstin }}" class="form-control form-control-sm font-monospace text-uppercase" readonly>
+                        <div class="small text-muted mt-1" style="font-size: 0.72rem;">
+                            Status: <span class="fw-semibold">{{ pending_vendor_proposal.checksum_display|default:"Format Check Complete" }}</span>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold text-primary mb-1">Assign Authoritative Tally Expense Ledger <span class="text-danger">*</span></label>
+                        <select name="assigned_expense_ledger" class="form-select form-select-sm" required>
+                            {% for ledger in tally_ledgers %}
+                                <option value="{{ ledger }}" {% if ledger == pending_vendor_proposal.suggested_expense_ledger %}selected{% endif %}>{{ ledger }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label small fw-semibold text-secondary mb-1">Vendor Address / Notes (Optional)</label>
+                        <textarea name="final_address" class="form-control form-control-sm" rows="2" placeholder="e.g. Workshop address, contact details"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer bg-light p-2">
+                    <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-sm btn-success fw-bold">
+                        <i class="bi bi-shield-check me-1"></i>Confirm & Onboard Vendor
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endif %}
 {% endblock %}
 
 {% block extra_js %}
@@ -921,31 +974,6 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 
-    window.toggleDeskHighlightBoxes = function() {
-        const overlays = document.querySelectorAll('.highlight-box-layer');
-        const btn = document.getElementById('btnToggleBoxesDesk');
-        const txt = document.getElementById('boxDeskStateText');
-        let willShow = false;
-        overlays.forEach(layer => {
-            if (layer.classList.contains('d-none')) {
-                layer.classList.remove('d-none');
-                willShow = true;
-            } else {
-                layer.classList.add('d-none');
-            }
-        });
-        if (txt) txt.textContent = willShow ? 'ON' : 'OFF';
-        if (btn) {
-            if (willShow) {
-                btn.classList.add('btn-warning', 'text-dark', 'fw-bold');
-                btn.classList.remove('btn-outline-secondary');
-            } else {
-                btn.classList.remove('btn-warning', 'text-dark', 'fw-bold');
-                btn.classList.add('btn-outline-secondary');
-            }
-        }
-    };
-
     // 3. Auto-Calculate Tax Helper Button
     document.getElementById('btnAutoCalcTax')?.addEventListener('click', function() {
         const taxable = parseFloat(document.getElementById('valTaxable').value) || 0;
@@ -996,6 +1024,71 @@ document.addEventListener('DOMContentLoaded', function() {
         document.getElementById(id)?.addEventListener('input', checkLiveMathConsistency);
     });
     checkLiveMathConsistency();
+
+    // 5. Real-Time Statutory GSTIN Mod-36 Checksum Guard
+    const GST_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    const VALID_STATES = new Set([
+        "01","02","03","04","05","06","07","08","09","10","11","12","13","14","15","16",
+        "17","18","19","20","21","22","23","24","25","26","27","28","29","30","31","32",
+        "33","34","35","36","37","38","97","99"
+    ]);
+    const PAN_TYPES = new Set(["C","P","H","F","A","T","B","L","J","G"]);
+
+    function calcGstinChecksumClient(gstin14) {
+        let factor = 1;
+        let sum = 0;
+        for (let i = 0; i < 14; i++) {
+            const codePoint = GST_CHARS.indexOf(gstin14[i]);
+            if (codePoint === -1) return null;
+            let addend = factor * codePoint;
+            factor = (factor === 2) ? 1 : 2;
+            addend = Math.floor(addend / 36) + (addend % 36);
+            sum += addend;
+        }
+        const remainder = sum % 36;
+        const checkCodePoint = (36 - remainder) % 36;
+        return GST_CHARS[checkCodePoint];
+    }
+
+    function updateLiveGstinStatus() {
+        const input = document.getElementById('fieldGstin');
+        const badge = document.getElementById('gstinBadge');
+        const note = document.getElementById('gstinPortalNote');
+        if (!input || !badge || !note) return;
+        const val = input.value.replace(/[^0-9A-Za-z]/g, '').toUpperCase();
+        input.value = val;
+        if (!val) {
+            badge.style.display = 'none';
+            badge.innerHTML = '';
+            note.style.display = 'none';
+            return;
+        }
+        note.style.display = 'block';
+        badge.style.display = 'block';
+
+        if (val.length !== 15) {
+            badge.innerHTML = '<span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle py-1 text-start d-block" style="font-size: 0.68rem; font-weight: 500;"><i class="bi bi-exclamation-circle me-1"></i>GSTIN Format Invalid (' + val.length + '/15 chars)</span>';
+            return;
+        }
+        const state = val.substring(0, 2);
+        if (!VALID_STATES.has(state)) {
+            badge.innerHTML = '<span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle py-1 text-start d-block" style="font-size: 0.68rem; font-weight: 500;"><i class="bi bi-exclamation-circle me-1"></i>GSTIN Format Invalid (Invalid State Code ' + state + ')</span>';
+            return;
+        }
+        const pan = val.substring(2, 12);
+        if (!/^[A-Z]{5}[0-9]{4}[A-Z]$/.test(pan) || !PAN_TYPES.has(pan[3])) {
+            badge.innerHTML = '<span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle py-1 text-start d-block" style="font-size: 0.68rem; font-weight: 500;"><i class="bi bi-exclamation-circle me-1"></i>GSTIN Format Invalid (Invalid PAN ' + pan + ')</span>';
+            return;
+        }
+        const expectedCheck = calcGstinChecksumClient(val.substring(0, 14));
+        const actualCheck = val[14];
+        if (expectedCheck !== actualCheck) {
+            badge.innerHTML = '<span class="badge bg-danger-subtle text-danger border border-danger-subtle py-1 text-start d-block" style="font-size: 0.68rem; font-weight: 500;" title="Expected checksum ' + expectedCheck + ', found ' + actualCheck + '"><i class="bi bi-exclamation-triangle-fill me-1"></i>GSTIN Checksum Invalid (Expected ' + expectedCheck + ')</span>';
+            return;
+        }
+        badge.innerHTML = '<span class="badge bg-success-subtle text-success border border-success-subtle py-1 text-start d-block" style="font-size: 0.68rem; font-weight: 500;"><i class="bi bi-shield-check me-1"></i>GSTIN Structure Verified</span>';
+    }
+    document.getElementById('fieldGstin')?.addEventListener('input', updateLiveGstinStatus);
 });
 </script>
 {% endblock %}

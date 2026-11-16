@@ -46,23 +46,6 @@
         display: none;
     }
 }
-.book-marker-highlight {
-    mix-blend-mode: multiply;
-    border-radius: 3px;
-    pointer-events: none;
-    transition: opacity 0.15s ease-in-out;
-}
-.marker-label-tag {
-    font-size: 0.62rem;
-    font-weight: 700;
-    letter-spacing: 0.3px;
-    text-transform: uppercase;
-    padding: 1px 5px;
-    border-radius: 3px;
-    opacity: 0.92;
-    pointer-events: none;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.15);
-}
 </style>
 
 <!-- Print Voucher Header (Paper Printing Preservation) -->
@@ -271,6 +254,26 @@
                             </button>
                             {% endif %}
                         </div>
+                        {% if submission.party_gstin %}
+                        <div class="mt-1 d-flex flex-column gap-1">
+                            {% if submission.gstin_details.display_status == 'GSTIN Structure Verified' %}
+                                <span class="badge bg-success-subtle text-success border border-success-subtle py-1 text-start" style="font-size: 0.68rem; font-weight: 500;">
+                                    <i class="bi bi-shield-check me-1"></i>GSTIN Structure Verified
+                                </span>
+                            {% elif submission.gstin_details.display_status == 'GSTIN Checksum Invalid' %}
+                                <span class="badge bg-danger-subtle text-danger border border-danger-subtle py-1 text-start" style="font-size: 0.68rem; font-weight: 500;" title="Checksum mismatch (Expected: {{ submission.gstin_details.expected_checksum }}, Got: {{ submission.gstin_details.actual_checksum }})">
+                                    <i class="bi bi-exclamation-triangle-fill me-1"></i>GSTIN Checksum Invalid
+                                </span>
+                            {% elif submission.gstin_details.display_status == 'GSTIN Format Invalid' %}
+                                <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle py-1 text-start" style="font-size: 0.68rem; font-weight: 500;">
+                                    <i class="bi bi-exclamation-circle me-1"></i>GSTIN Format Invalid
+                                </span>
+                            {% endif %}
+                            <span class="text-muted" style="font-size: 0.64rem;" title="Algorithmic verification only; portal registration is not queried without official API credentials.">
+                                <i class="bi bi-info-circle me-1"></i>GSTIN Registration Not Verified
+                            </span>
+                        </div>
+                        {% endif %}
                     </div>
                 </div>
 
@@ -290,12 +293,16 @@
                 </div>
 
                 <!-- 4. Invoice Date -->
-                <div class="col-6 col-md-1">
+                <div class="col-6 col-md-2 col-lg-1">
                     <div class="p-2 rounded bg-light border h-100">
                         <span class="text-muted small text-uppercase fw-bold d-block mb-1" style="font-size: 0.72rem;">Bill Date</span>
-                        <span class="fw-bold text-dark small d-block">
-                            {{ submission.invoice_date|date:"d M Y"|default:submission.created_at|date:"d M Y" }}
+                        {% if submission.invoice_date %}
+                        <span class="fw-bold text-dark small d-block" id="copyInvoiceDate">
+                            <i class="bi bi-calendar-event text-primary me-1"></i>{{ submission.invoice_date|date:"d M Y" }}
                         </span>
+                        {% else %}
+                        <span class="badge bg-light text-secondary border font-monospace" style="font-size: 0.72rem;" title="Date not clearly legible on paper slip">N/A</span>
+                        {% endif %}
                     </div>
                 </div>
 
@@ -448,13 +455,6 @@
                 <button type="button" class="btn btn-sm btn-light border" id="btnEnhance_{{ doc.id }}" onclick="toggleEnhance('{{ doc.id }}')" title="Enhance Contrast / Readability for Faded Slips">
                     <i class="bi bi-magic"></i> Enhance
                 </button>
-
-                {% if forloop.first and highlight_boxes %}
-                <!-- Book-Style Marker Highlights Toggle for Naveen -->
-                <button type="button" class="btn btn-sm btn-outline-warning active fw-semibold" id="btnToggleBoxes_{{ doc.id }}" onclick="toggleHighlightBoxes('{{ doc.id }}')" title="Show or hide book-style marker highlights on key accounting fields">
-                    <i class="bi bi-pen-fill me-1 text-warning"></i>Highlights: <span id="boxStateText_{{ doc.id }}">ON</span>
-                </button>
-                {% endif %}
                 {% endif %}
 
                 <!-- Fullscreen Direct Window & Page Download -->
@@ -487,24 +487,6 @@
                          class="d-block" 
                          style="max-width: none; height: auto; transform-origin: center center; transition: width 0.12s ease-out, transform 0.12s ease-out; image-rendering: -webkit-optimize-contrast; image-rendering: high-quality; pointer-events: none;"
                          draggable="false">
-
-                    {% if forloop.first and highlight_boxes %}
-                    <!-- Marker Highlight Overlay (Book-Style Highlighter Pen on Paper - Pure Visual Aid, No Copying) -->
-                    <div class="position-absolute top-0 start-0 w-100 h-100 highlight-box-layer" id="boxOverlay_{{ doc.id }}" style="pointer-events: none; z-index: 5;">
-                        {% for box in highlight_boxes %}
-                        <div class="book-marker-highlight position-absolute" 
-                             id="box_{{ box.field }}"
-                             style="top: {{ box.top }}%; left: {{ box.left }}%; width: {{ box.width }}%; height: {{ box.height }}%; background-color: {{ box.marker_bg }}; border-bottom: {{ box.marker_border }}; border-radius: 3px; mix-blend-mode: multiply; pointer-events: none;"
-                             title="{{ box.label }}: {{ box.value }}">
-                            
-                            <span class="marker-label-tag position-absolute top-0 start-0 translate-middle-y"
-                                  style="font-size: 0.62rem; font-weight: 700; background-color: {{ box.tag_bg }}; color: #ffffff; margin-left: 4px; padding: 1px 5px; border-radius: 3px; letter-spacing: 0.3px; font-family: system-ui, sans-serif; white-space: nowrap; pointer-events: none; box-shadow: 0 1px 3px rgba(0,0,0,0.15);">
-                                {{ box.label }}
-                            </span>
-                        </div>
-                        {% endfor %}
-                    </div>
-                    {% endif %}
                 </div>
             </div>
 
@@ -740,28 +722,6 @@ function toggleEnhance(docId) {
         s.img.style.filter = 'none';
         if (btn) {
             btn.classList.remove('btn-primary-dark', 'text-white');
-            btn.classList.add('btn-light');
-        }
-    }
-}
-
-function toggleHighlightBoxes(docId) {
-    const layer = document.getElementById('boxOverlay_' + docId);
-    const btn = document.getElementById('btnToggleBoxes_' + docId);
-    const txt = document.getElementById('boxStateText_' + docId);
-    if (!layer) return;
-    if (layer.classList.contains('d-none')) {
-        layer.classList.remove('d-none');
-        if (txt) txt.textContent = 'ON';
-        if (btn) {
-            btn.classList.add('active', 'btn-outline-warning');
-            btn.classList.remove('btn-light');
-        }
-    } else {
-        layer.classList.add('d-none');
-        if (txt) txt.textContent = 'OFF';
-        if (btn) {
-            btn.classList.remove('active', 'btn-outline-warning');
             btn.classList.add('btn-light');
         }
     }

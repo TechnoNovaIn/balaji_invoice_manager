@@ -5,6 +5,9 @@ from .models import (
     InvoiceStatusHistory,
     InvoiceSequence,
     VendorMaster,
+    VendorProposal,
+    VendorAuditLog,
+    OcrExtractionCache,
     TallyLedgerMapping,
     ExportAuditLog,
 )
@@ -51,6 +54,30 @@ class VendorMasterAdmin(admin.ModelAdmin):
     list_display = ('name', 'gstin', 'pan', 'state', 'default_expense_ledger', 'is_verified', 'is_active')
     list_filter = ('state', 'is_verified', 'is_active', 'default_expense_ledger')
     search_fields = ('name', 'gstin', 'pan', 'normalized_name')
+    readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(VendorProposal)
+class VendorProposalAdmin(admin.ModelAdmin):
+    list_display = ('id', 'proposed_name', 'proposed_gstin', 'checksum_display', 'suggested_expense_ledger', 'status', 'created_at')
+    list_filter = ('status', 'checksum_status')
+    search_fields = ('proposed_name', 'proposed_gstin', 'pan')
+    readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(VendorAuditLog)
+class VendorAuditLogAdmin(admin.ModelAdmin):
+    list_display = ('id', 'action', 'vendor_name', 'gstin', 'assigned_ledger', 'performer', 'created_at')
+    list_filter = ('action',)
+    search_fields = ('vendor_name', 'gstin')
+    readonly_fields = ('created_at',)
+
+
+@admin.register(OcrExtractionCache)
+class OcrExtractionCacheAdmin(admin.ModelAdmin):
+    list_display = ('id', 'file_sha256', 'model_name', 'prompt_version', 'status', 'retry_count', 'lease_expires_at', 'created_at')
+    list_filter = ('status', 'model_name', 'prompt_version')
+    search_fields = ('file_sha256', 'cache_key')
     readonly_fields = ('created_at', 'updated_at')
 
 

@@ -26,7 +26,8 @@ def generate_tally_xml(submissions) -> str:
 
     static_vars = ET.SubElement(req_desc, 'STATICVARIABLES')
     sv_company = ET.SubElement(static_vars, 'SVCURRENTCOMPANY')
-    sv_company.text = 'Balaji Transports'
+    from django.conf import settings
+    sv_company.text = getattr(settings, 'TALLY_COMPANY_NAME', 'Balaji Transports') or 'Balaji Transports'
 
     req_data = ET.SubElement(import_data, 'REQUESTDATA')
 

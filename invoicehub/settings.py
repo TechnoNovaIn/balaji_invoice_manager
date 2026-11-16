@@ -354,3 +354,7 @@ LOGGING = {
         },
     },
 }
+
+# Tally Accounting Integration
+TALLY_COMPANY_NAME = os.getenv('TALLY_COMPANY_NAME', 'Balaji Transports')
+

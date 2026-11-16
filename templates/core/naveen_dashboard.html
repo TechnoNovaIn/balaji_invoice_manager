@@ -16,6 +16,10 @@
             </p>
         </div>
         <div class="d-flex gap-2 align-items-center flex-wrap">
+            <!-- Vendor Proposals Desk -->
+            <a href="{% url 'invoices:vendor_proposals_list' %}" class="btn btn-sm btn-outline-primary fw-semibold" title="Vendor Proposals & Onboarding Desk">
+                <i class="bi bi-person-check-fill me-1"></i> Vendor Proposals
+            </a>
             <!-- Tally Structured Excel Export -->
             <a href="{% url 'invoices:export_tally_excel' %}?filter=verified_only" class="btn btn-sm btn-outline-success fw-bold shadow-sm" title="Structured Tally purchase voucher export">
                 <i class="bi bi-file-earmark-excel-fill me-1"></i> Tally Excel
@@ -400,8 +404,13 @@
                                 
                                 <!-- Date and Time -->
                                 <td>
-                                    <div class="fw-bold text-danger">{{ sub.created_at|date:"d M Y" }}</div>
-                                    <small class="text-muted">{{ sub.created_at|date:"h:i A" }}</small>
+                                    {% if sub.invoice_date %}
+                                    <div class="fw-bold text-dark text-nowrap"><i class="bi bi-calendar-event text-primary me-1"></i>{{ sub.invoice_date|date:"d M Y" }}</div>
+                                    <small class="text-muted text-nowrap" style="font-size: 0.68rem;" title="Uploaded: {{ sub.created_at|date:'d M Y, h:i A' }}">Sent: {{ sub.created_at|date:"d M, h:i A" }}</small>
+                                    {% else %}
+                                    <div class="fw-bold text-muted text-nowrap"><span class="badge bg-light text-secondary border font-monospace">N/A</span></div>
+                                    <small class="text-muted text-nowrap" style="font-size: 0.68rem;" title="Uploaded: {{ sub.created_at|date:'d M Y, h:i A' }}">Sent: {{ sub.created_at|date:"d M, h:i A" }}</small>
+                                    {% endif %}
                                     <span class="badge bg-danger text-white d-block mt-1" style="font-size: 0.65rem;">
                                         Carried Over
                                     </span>
@@ -689,8 +698,13 @@
 
                                 <!-- Date and Time -->
                                 <td>
-                                    <div class="fw-bold text-dark">{{ sub.created_at|date:"d M Y" }}</div>
-                                    <small class="text-muted">{{ sub.created_at|date:"h:i A" }}</small>
+                                    {% if sub.invoice_date %}
+                                    <div class="fw-bold text-dark text-nowrap"><i class="bi bi-calendar-event text-primary me-1"></i>{{ sub.invoice_date|date:"d M Y" }}</div>
+                                    <small class="text-muted text-nowrap" style="font-size: 0.68rem;" title="Uploaded: {{ sub.created_at|date:'d M Y, h:i A' }}">Sent: {{ sub.created_at|date:"d M, h:i A" }}</small>
+                                    {% else %}
+                                    <div class="fw-bold text-muted text-nowrap"><span class="badge bg-light text-secondary border font-monospace">N/A</span></div>
+                                    <small class="text-muted text-nowrap" style="font-size: 0.68rem;" title="Uploaded: {{ sub.created_at|date:'d M Y, h:i A' }}">Sent: {{ sub.created_at|date:"d M, h:i A" }}</small>
+                                    {% endif %}
                                 </td>
 
                                 <!-- Sent By -->
@@ -940,8 +954,13 @@
                         <tr class="invoice-row completed-row" id="row-{{ sub.submission_id }}" data-timestamp="{{ sub.tally_entered_at|default:sub.created_at|date:'U' }}" data-submitter="{{ sub.employee.get_full_name|default:sub.employee.username|lower }}" data-vendor="{{ sub.party_name|lower }}" data-has-inv="{% if sub.invoice_number %}1{% else %}0{% endif %}" data-inv-num="{{ sub.invoice_number|lower }}" data-e-invoice="{% if sub.e_invoice_status == 'YES' or sub.is_e_invoice is True %}YES{% else %}NO{% endif %}">
                             <td class="ps-3 fw-bold text-muted">{{ forloop.counter }}</td>
                             <td>
-                                <div class="fw-bold text-success">{{ sub.tally_entered_at|date:"d M Y"|default:sub.created_at|date:"d M Y" }}</div>
-                                <small class="text-muted">{{ sub.tally_entered_at|date:"h:i A" }}</small>
+                                {% if sub.invoice_date %}
+                                <div class="fw-bold text-dark text-nowrap"><i class="bi bi-calendar-event text-primary me-1"></i>{{ sub.invoice_date|date:"d M Y" }}</div>
+                                <small class="text-success text-nowrap" style="font-size: 0.68rem;">Tally: {{ sub.tally_entered_at|date:"d M Y"|default:sub.created_at|date:"d M Y" }}</small>
+                                {% else %}
+                                <div class="fw-bold text-muted text-nowrap"><span class="badge bg-light text-secondary border font-monospace">N/A</span></div>
+                                <small class="text-success text-nowrap" style="font-size: 0.68rem;">Tally: {{ sub.tally_entered_at|date:"d M Y"|default:sub.created_at|date:"d M Y" }}</small>
+                                {% endif %}
                             </td>
                             <td>
                                 <div class="fw-bold text-dark">{{ sub.employee.get_full_name|default:sub.employee.username }}</div>
@@ -1161,8 +1180,13 @@
                     <tr class="invoice-row all-row" id="row-{{ sub.submission_id }}" data-timestamp="{{ sub.created_at|date:'U' }}" data-submitter="{{ sub.employee.get_full_name|default:sub.employee.username|lower }}" data-vendor="{{ sub.party_name|lower }}" data-has-inv="{% if sub.invoice_number %}1{% else %}0{% endif %}" data-inv-num="{{ sub.invoice_number|lower }}" data-e-invoice="{% if sub.e_invoice_status == 'YES' or sub.is_e_invoice is True %}YES{% else %}NO{% endif %}">
                         <td class="ps-3 fw-bold text-muted">{{ forloop.counter }}</td>
                         <td>
-                            <div class="fw-bold text-dark">{{ sub.created_at|date:"d M Y" }}</div>
-                            <small class="text-muted">{{ sub.created_at|date:"h:i A" }}</small>
+                            {% if sub.invoice_date %}
+                            <div class="fw-bold text-dark text-nowrap"><i class="bi bi-calendar-event text-primary me-1"></i>{{ sub.invoice_date|date:"d M Y" }}</div>
+                            <small class="text-muted text-nowrap" style="font-size: 0.68rem;" title="Uploaded: {{ sub.created_at|date:'d M Y, h:i A' }}">Sent: {{ sub.created_at|date:"d M, h:i A" }}</small>
+                            {% else %}
+                            <div class="fw-bold text-muted text-nowrap"><span class="badge bg-light text-secondary border font-monospace">N/A</span></div>
+                            <small class="text-muted text-nowrap" style="font-size: 0.68rem;" title="Uploaded: {{ sub.created_at|date:'d M Y, h:i A' }}">Sent: {{ sub.created_at|date:"d M, h:i A" }}</small>
+                            {% endif %}
                         </td>
                         <td>
                             <div class="fw-bold text-dark">{{ sub.employee.get_full_name|default:sub.employee.username }}</div>

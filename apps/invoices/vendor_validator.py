@@ -12,6 +12,177 @@ from decimal import Decimal
 GSTIN_REGEX = re.compile(r'^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$')
 PAN_REGEX = re.compile(r'^[A-Z]{5}[0-9]{4}[A-Z]{1}$')
 
+# Valid Indian GST State & Jurisdiction Codes (01-38, 97 Other Territory, 99 Centre)
+VALID_GST_STATE_CODES = {f"{i:02d}" for i in range(1, 39)} | {"97", "99"}
+
+# Statutory 4th character of Indian PAN indicating entity status
+PAN_ENTITY_TYPES = {'C', 'P', 'H', 'F', 'A', 'T', 'B', 'L', 'J', 'G'}
+
+# Character alphabet used in statutory Indian GSTIN Modulo 36 checksum
+GSTIN_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+GSTIN_CHAR_MAP = {c: i for i, c in enumerate(GSTIN_ALPHABET)}
+
+
+def calculate_gstin_checksum(gstin_14: str) -> Optional[str]:
+    """
+    Calculates the official statutory Indian GSTIN 15th character checksum
+    using the official weighted Modulo 36 algorithm.
+    Returns the single-character checksum (0-9 or A-Z), or None if input length is invalid.
+    """
+    cleaned = re.sub(r'[^0-9A-Za-z]', '', str(gstin_14 or '')).upper().strip()
+    if len(cleaned) < 14:
+        return None
+
+    total = 0
+    for idx, char in enumerate(cleaned[:14]):
+        val = GSTIN_CHAR_MAP.get(char)
+        if val is None:
+            return None
+        weight = 1 if (idx % 2 == 0) else 2
+        product = val * weight
+        quotient = product // 36
+        remainder = product % 36
+        total += quotient + remainder
+
+    check_val = (36 - (total % 36)) % 36
+    return GSTIN_ALPHABET[check_val]
+
+
+def verify_gstin_detailed(gstin: Optional[str]) -> Dict[str, Any]:
+    """
+    Performs exhaustive statutory validation on an Indian GSTIN:
+    1. Format & Structure (15 chars, alphanumeric pattern)
+    2. Valid State Jurisdiction Code (01-38, 97, 99)
+    3. Embedded PAN structure & entity classification (chars 3 to 12)
+    4. Official statutory Modulo 36 checksum calculation
+
+    Returns standardized dictionary with explicit display and portal status:
+    - display_status: 'GSTIN Structure Verified', 'GSTIN Checksum Invalid', 'GSTIN Format Invalid', or ''
+    - portal_status: 'GSTIN Registration Not Verified' (never claims portal verification without authorized GSP)
+    """
+    if not gstin or not str(gstin).strip():
+        return {
+            'is_valid': False,
+            'clean_gstin': '',
+            'status_code': 'EMPTY',
+            'display_status': '',
+            'portal_status': 'GSTIN Registration Not Verified',
+            'error_message': None,
+            'state_code': '',
+            'pan': '',
+            'is_valid_format': False,
+            'is_valid_state': False,
+            'is_valid_pan': False,
+            'is_valid_checksum': False,
+            'expected_checksum': None,
+            'actual_checksum': None,
+        }
+
+    cleaned = clean_gstin(gstin)
+
+    # 1. Structure length and alphanumeric check
+    if len(cleaned) != 15 or not GSTIN_REGEX.match(cleaned):
+        return {
+            'is_valid': False,
+            'clean_gstin': cleaned,
+            'status_code': 'FORMAT_INVALID',
+            'display_status': 'GSTIN Format Invalid',
+            'portal_status': 'GSTIN Registration Not Verified',
+            'error_message': 'GSTIN must be exactly 15 alphanumeric characters matching statutory format.',
+            'state_code': cleaned[:2] if len(cleaned) >= 2 else '',
+            'pan': cleaned[2:12] if len(cleaned) >= 12 else '',
+            'is_valid_format': False,
+            'is_valid_state': False,
+            'is_valid_pan': False,
+            'is_valid_checksum': False,
+            'expected_checksum': None,
+            'actual_checksum': cleaned[-1] if cleaned else None,
+        }
+
+    state_code = cleaned[:2]
+    pan = cleaned[2:12]
+    actual_checksum = cleaned[14]
+
+    # 2. State Code validity
+    is_valid_state = state_code in VALID_GST_STATE_CODES
+    if not is_valid_state:
+        return {
+            'is_valid': False,
+            'clean_gstin': cleaned,
+            'status_code': 'FORMAT_INVALID',
+            'display_status': 'GSTIN Format Invalid',
+            'portal_status': 'GSTIN Registration Not Verified',
+            'error_message': f"State code '{state_code}' is not a valid Indian GST jurisdiction code (01-38, 97, 99).",
+            'state_code': state_code,
+            'pan': pan,
+            'is_valid_format': True,
+            'is_valid_state': False,
+            'is_valid_pan': True,
+            'is_valid_checksum': False,
+            'expected_checksum': None,
+            'actual_checksum': actual_checksum,
+        }
+
+    # 3. PAN Entity validation
+    pan_entity = pan[3] if len(pan) >= 4 else ''
+    is_valid_pan = bool(PAN_REGEX.match(pan)) and (pan_entity in PAN_ENTITY_TYPES)
+    if not is_valid_pan:
+        return {
+            'is_valid': False,
+            'clean_gstin': cleaned,
+            'status_code': 'FORMAT_INVALID',
+            'display_status': 'GSTIN Format Invalid',
+            'portal_status': 'GSTIN Registration Not Verified',
+            'error_message': f"Embedded PAN '{pan}' has invalid entity type '{pan_entity}'. Expected one of {sorted(PAN_ENTITY_TYPES)}.",
+            'state_code': state_code,
+            'pan': pan,
+            'is_valid_format': False,
+            'is_valid_state': True,
+            'is_valid_pan': False,
+            'is_valid_checksum': False,
+            'expected_checksum': None,
+            'actual_checksum': actual_checksum,
+        }
+
+    # 4. Modulo 36 Checksum verification
+    expected_checksum = calculate_gstin_checksum(cleaned[:14])
+    is_checksum_valid = (actual_checksum == expected_checksum)
+
+    if not is_checksum_valid:
+        return {
+            'is_valid': False,
+            'clean_gstin': cleaned,
+            'status_code': 'CHECKSUM_INVALID',
+            'display_status': 'GSTIN Checksum Invalid',
+            'portal_status': 'GSTIN Registration Not Verified',
+            'error_message': f"Modulo 36 checksum mismatch: expected '{expected_checksum}', got '{actual_checksum}'. Optical OCR error suspected.",
+            'state_code': state_code,
+            'pan': pan,
+            'is_valid_format': True,
+            'is_valid_state': True,
+            'is_valid_pan': is_valid_pan,
+            'is_valid_checksum': False,
+            'expected_checksum': expected_checksum,
+            'actual_checksum': actual_checksum,
+        }
+
+    return {
+        'is_valid': True,
+        'clean_gstin': cleaned,
+        'status_code': 'STRUCTURE_VERIFIED',
+        'display_status': 'GSTIN Structure Verified',
+        'portal_status': 'GSTIN Registration Not Verified',
+        'error_message': None,
+        'state_code': state_code,
+        'pan': pan,
+        'is_valid_format': True,
+        'is_valid_state': True,
+        'is_valid_pan': is_valid_pan,
+        'is_valid_checksum': True,
+        'expected_checksum': expected_checksum,
+        'actual_checksum': actual_checksum,
+    }
+
 
 def clean_gstin(gstin: Optional[str]) -> str:
     """Sanitizes and normalizes GSTIN string."""
@@ -29,17 +200,24 @@ def clean_pan(pan: Optional[str]) -> str:
     return cleaned if len(cleaned) == 10 else cleaned
 
 
-def is_valid_gstin(gstin: str) -> bool:
-    """Validates statutory Indian GSTIN 15-character structure."""
+def is_valid_gstin(gstin: Optional[str], check_checksum: bool = True) -> bool:
+    """
+    Validates statutory Indian GSTIN.
+    If check_checksum is True (default), verifies format, state code, PAN, and Mod-36 checksum.
+    If check_checksum is False, verifies format and statutory pattern only.
+    """
     if not gstin:
         return False
-    return bool(GSTIN_REGEX.match(clean_gstin(gstin)))
+    details = verify_gstin_detailed(gstin)
+    if check_checksum:
+        return details['is_valid']
+    return details['is_valid_format'] and details['is_valid_state']
 
 
 def extract_pan_from_gstin(gstin: str) -> str:
     """Extracts 10-character PAN embedded within statutory GSTIN (chars 3 to 12)."""
     cleaned = clean_gstin(gstin)
-    if is_valid_gstin(cleaned):
+    if is_valid_gstin(cleaned, check_checksum=False):
         return cleaned[2:12]
     return ''
 
@@ -91,7 +269,8 @@ def validate_vendor_and_financials(
 
     cleaned_name = (party_name or '').strip()
     cleaned_gstin_str = clean_gstin(party_gstin)
-    gstin_valid = is_valid_gstin(cleaned_gstin_str)
+    gstin_details = verify_gstin_detailed(cleaned_gstin_str) if cleaned_gstin_str else None
+    gstin_valid = gstin_details['is_valid'] if gstin_details else False
     derived_pan = clean_pan(pan) or extract_pan_from_gstin(cleaned_gstin_str)
 
     # 1. Lookups against Balaji Authoritative VendorMaster DB
@@ -112,11 +291,14 @@ def validate_vendor_and_financials(
         'confidence': 0.80,
         'is_financial_approval_eligible': False,
         'is_valid_gstin': gstin_valid,
+        'gstin_details': gstin_details,
+        'gstin_status': gstin_details['display_status'] if gstin_details else '',
+        'gstin_portal_status': gstin_details['portal_status'] if gstin_details else '',
         'audit_notes': '',
     }
 
     # Case A: Known vendor with matching GSTIN
-    if vendor_by_gstin and gstin_valid:
+    if vendor_by_gstin:
         # Check if name also matches or if GSTIN is registered to this vendor
         if vendor_by_name:
             norm_gstin_vendor = normalize_vendor_name(vendor_by_gstin.get('name', ''))
@@ -136,16 +318,22 @@ def validate_vendor_and_financials(
                 )
                 return result
 
-        # Normal Case A
+        # Normal Case A (preserves existing VendorMaster records even if optical entry mismatch exists)
         result['vendor_match_status'] = 'MATCHED_VERIFIED'
         result['party_name'] = vendor_by_gstin.get('name', cleaned_name)
         result['party_gstin'] = cleaned_gstin_str
         result['expense_ledger'] = vendor_by_gstin.get('ledger', default_expense_ledger)
         result['is_ambiguous_vendor'] = False
         result['requires_manual_review'] = False
-        result['confidence'] = 0.98
+        result['confidence'] = 0.98 if gstin_valid else 0.95
         result['is_financial_approval_eligible'] = True
-        result['audit_notes'] = f"Verified: Matched registered vendor '{result['party_name']}' via GSTIN."
+        if gstin_valid:
+            result['audit_notes'] = f"Verified: Matched registered vendor '{result['party_name']}' via GSTIN."
+        else:
+            result['audit_notes'] = (
+                f"Verified: Matched registered vendor '{result['party_name']}' via GSTIN. "
+                f"Note: Master record GSTIN has checksum discrepancy ({gstin_details.get('error_message') if gstin_details else ''}); manual record review advised."
+            )
         return result
 
     # Case E check: Name matches a registered vendor, but voucher provides a different GSTIN
@@ -190,6 +378,16 @@ def validate_vendor_and_financials(
             result['audit_notes'] = (
                 f"New vendor with valid statutory GSTIN '{cleaned_gstin_str}' (State code {cleaned_gstin_str[:2]}). "
                 f"Requires accounts operator verification before ledger creation."
+            )
+        elif gstin_details and gstin_details.get('status_code') == 'CHECKSUM_INVALID':
+            result['vendor_match_status'] = 'UNREGISTERED_VENDOR_CHECKSUM_INVALID'
+            result['is_ambiguous_vendor'] = True
+            result['requires_manual_review'] = True
+            result['confidence'] = 0.65
+            result['is_financial_approval_eligible'] = False
+            result['audit_notes'] = (
+                f"Unregistered vendor GSTIN '{cleaned_gstin_str}' has invalid Mod-36 checksum "
+                f"(expected '{gstin_details.get('expected_checksum')}', got '{gstin_details.get('actual_checksum')}'). Flagged for manual review."
             )
         else:
             result['vendor_match_status'] = 'INVALID_GSTIN_FORMAT'
