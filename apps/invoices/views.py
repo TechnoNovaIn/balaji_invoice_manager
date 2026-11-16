@@ -397,6 +397,154 @@ def my_submissions(request):
     })
 
 
+def get_document_highlight_boxes(submission):
+    """
+    Computes visual book-style marker highlights for key financial and tax fields
+    (Vendor Name, GSTIN, Invoice Number, Base/Taxable, CGST, SGST, IGST, Total Amount, Items).
+    Provides spatial coordinates on document image (% of page width/height).
+    Acts strictly as a visual reading aid (like highlighter pens in physical books).
+    """
+    boxes = []
+
+    # 1. Vendor Name (Classic Yellow Book Highlighter)
+    if submission.party_name:
+        boxes.append({
+            'field': 'vendor_name',
+            'label': 'Party / Vendor',
+            'value': submission.party_name,
+            'marker_bg': 'rgba(254, 240, 138, 0.48)',
+            'marker_border': '2px solid rgba(202, 138, 4, 0.75)',
+            'tag_bg': '#ca8a04',
+            'top': 4.0,
+            'left': 8.0,
+            'width': 58.0,
+            'height': 8.0,
+        })
+
+    # 2. GSTIN (Sky Blue Highlighter)
+    if submission.party_gstin:
+        boxes.append({
+            'field': 'gstin',
+            'label': 'Supplier GSTIN',
+            'value': submission.party_gstin,
+            'marker_bg': 'rgba(186, 230, 253, 0.45)',
+            'marker_border': '2px solid rgba(2, 132, 199, 0.75)',
+            'tag_bg': '#0284c7',
+            'top': 13.0,
+            'left': 8.0,
+            'width': 36.0,
+            'height': 4.5,
+        })
+
+    # 3. Invoice Number (Warm Amber Highlighter)
+    inv_no = submission.invoice_number or submission.submission_id
+    boxes.append({
+        'field': 'invoice_number',
+        'label': 'Invoice No.',
+        'value': inv_no,
+        'marker_bg': 'rgba(254, 215, 170, 0.48)',
+        'marker_border': '2px solid rgba(217, 119, 6, 0.75)',
+        'tag_bg': '#d97706',
+        'top': 7.5,
+        'left': 66.0,
+        'width': 26.0,
+        'height': 5.5,
+    })
+
+    # 4. Items / Description Table Region (Soft Green Highlighter Wash)
+    items_count = len(submission.line_items) if submission.line_items else 1
+    boxes.append({
+        'field': 'items',
+        'label': f'Billed Items ({items_count})',
+        'value': f'{items_count} Item(s)',
+        'marker_bg': 'rgba(187, 247, 208, 0.35)',
+        'marker_border': '1.5px dashed rgba(22, 163, 74, 0.6)',
+        'tag_bg': '#16a34a',
+        'top': 32.0,
+        'left': 6.0,
+        'width': 88.0,
+        'height': 36.0,
+    })
+
+    # 5. Base / Taxable Amount (Teal Highlighter)
+    if submission.taxable_amount > 0 or submission.total_amount > 0:
+        base_val = submission.taxable_amount if submission.taxable_amount > 0 else submission.total_amount
+        boxes.append({
+            'field': 'taxable_amount',
+            'label': 'Taxable Base',
+            'value': f"₹{base_val:,.2f}",
+            'marker_bg': 'rgba(153, 246, 228, 0.45)',
+            'marker_border': '2px solid rgba(13, 148, 136, 0.75)',
+            'tag_bg': '#0d9488',
+            'top': 71.0,
+            'left': 52.0,
+            'width': 42.0,
+            'height': 4.8,
+        })
+
+    # 6. CGST (Purple Highlighter)
+    if submission.cgst_amount > 0:
+        boxes.append({
+            'field': 'cgst_amount',
+            'label': 'CGST',
+            'value': f"₹{submission.cgst_amount:,.2f}",
+            'marker_bg': 'rgba(221, 214, 254, 0.45)',
+            'marker_border': '2px solid rgba(124, 58, 237, 0.75)',
+            'tag_bg': '#7c3aed',
+            'top': 76.2,
+            'left': 52.0,
+            'width': 42.0,
+            'height': 4.2,
+        })
+
+    # 7. SGST (Purple Highlighter)
+    if submission.sgst_amount > 0:
+        boxes.append({
+            'field': 'sgst_amount',
+            'label': 'SGST',
+            'value': f"₹{submission.sgst_amount:,.2f}",
+            'marker_bg': 'rgba(221, 214, 254, 0.45)',
+            'marker_border': '2px solid rgba(124, 58, 237, 0.75)',
+            'tag_bg': '#7c3aed',
+            'top': 80.8,
+            'left': 52.0,
+            'width': 42.0,
+            'height': 4.2,
+        })
+
+    # 8. IGST (Rose Pink Highlighter)
+    if submission.igst_amount > 0:
+        boxes.append({
+            'field': 'igst_amount',
+            'label': 'IGST',
+            'value': f"₹{submission.igst_amount:,.2f}",
+            'marker_bg': 'rgba(254, 205, 211, 0.45)',
+            'marker_border': '2px solid rgba(225, 29, 72, 0.75)',
+            'tag_bg': '#e11d48',
+            'top': 80.8,
+            'left': 52.0,
+            'width': 42.0,
+            'height': 4.2,
+        })
+
+    # 9. Total Gross Amount (Bright Fluorescent Yellow/Amber Highlighter)
+    if submission.total_amount > 0:
+        boxes.append({
+            'field': 'total_amount',
+            'label': 'Total Gross',
+            'value': f"₹{submission.total_amount:,.2f}",
+            'marker_bg': 'rgba(253, 224, 71, 0.55)',
+            'marker_border': '2.5px solid rgba(161, 98, 7, 0.85)',
+            'tag_bg': '#a16207',
+            'top': 85.5,
+            'left': 50.0,
+            'width': 44.0,
+            'height': 6.2,
+        })
+
+    return boxes
+
+
 @login_required
 def submission_detail(request, submission_id):
     """
@@ -424,6 +572,8 @@ def submission_detail(request, submission_id):
         prev_sub = InvoiceSubmission.objects.filter(created_at__gt=submission.created_at).order_by('created_at').first()
         next_sub = InvoiceSubmission.objects.filter(created_at__lt=submission.created_at).order_by('-created_at').first()
 
+    highlight_boxes = get_document_highlight_boxes(submission)
+
     return render(request, 'invoices/submission_detail.html', {
         'submission': submission,
         'active_docs': active_docs,
@@ -431,6 +581,7 @@ def submission_detail(request, submission_id):
         'status_history': status_history,
         'prev_sub': prev_sub,
         'next_sub': next_sub,
+        'highlight_boxes': highlight_boxes,
         'can_edit': submission.can_be_edited and (
             (submission.employee_id == request.user.id and request.user.can_resubmit_own_invoices())
             or request.user.is_admin_role
@@ -552,8 +703,8 @@ def download_invoice(request, submission_id):
         submission_id=submission_id
     )
 
-    if not _can_view_all_invoices(request.user) and submission.employee_id != request.user.id:
-        raise PermissionDenied("Access Denied: You do not have permission to download this invoice.")
+    if not _can_view_all_invoices(request.user):
+        raise PermissionDenied("Access Denied: Employees do not have permission to download invoices.")
 
     req_format = request.GET.get('format', '').strip().lower()
 
@@ -562,13 +713,14 @@ def download_invoice(request, submission_id):
 
     active_docs = list(submission.documents.filter(is_active_version=True).order_by('page_number'))
 
-    safe_vendor = re.sub(r'[^a-zA-Z0-9_\-]', '_', submission.party_name or 'Invoice')[:30].strip('_')
-    safe_inv = re.sub(r'[^a-zA-Z0-9_\-]', '_', submission.invoice_number or '')[:20].strip('_')
-    base_name = f"Invoice_{submission.submission_id}"
+    safe_vendor = re.sub(r'[^a-zA-Z0-9_\-]', '_', submission.party_name or 'Vendor')[:30].strip('_')
+    safe_inv = re.sub(r'[^a-zA-Z0-9_\-]', '_', submission.invoice_number or '').strip('_')
+    if safe_inv:
+        base_name = f"INV_{safe_inv}_{submission.submission_id}"
+    else:
+        base_name = f"INV_PENDING_{submission.submission_id}"
     if safe_vendor:
         base_name += f"_{safe_vendor}"
-    if safe_inv:
-        base_name += f"_{safe_inv}"
 
     if req_format == 'pdf' or len(active_docs) > 1 or not active_docs:
         from apps.invoices.image_processing import generate_print_ready_pdf
@@ -629,7 +781,19 @@ def batch_download_invoices(request):
     qs = InvoiceSubmission.objects.all().select_related('employee').prefetch_related('documents')
 
     if not can_view_all:
-        qs = qs.filter(employee=request.user)
+        raise PermissionDenied("Access Denied: Employees do not have permission to download invoice archives.")
+
+    scope = request.GET.get('scope', '').strip().lower()
+    ids_param = request.GET.get('ids', '').strip()
+    if not ids_param and request.method == 'POST':
+        ids_list = request.POST.getlist('submission_ids')
+    elif ids_param:
+        ids_list = [i.strip() for i in ids_param.split(',') if i.strip()]
+    else:
+        ids_list = request.GET.getlist('submission_ids')
+
+    today = timezone.localdate()
+    qs = InvoiceSubmission.objects.all().select_related('employee').prefetch_related('documents')
 
     if ids_list:
         qs = qs.filter(submission_id__in=ids_list)
@@ -640,6 +804,9 @@ def batch_download_invoices(request):
     elif scope == 'today':
         qs = qs.filter(is_entered_in_tally=False, created_at__date=today).order_by('created_at')
         archive_name_suffix = f"today_{today.strftime('%Y%m%d')}"
+    elif scope == 'completed':
+        qs = qs.filter(is_entered_in_tally=True).order_by('-tally_entered_at', '-created_at')
+        archive_name_suffix = f"completed_tally_{today.strftime('%Y%m%d')}"
     elif scope == 'pending':
         qs = qs.filter(is_entered_in_tally=False).order_by('created_at')
         archive_name_suffix = f"all_pending_{today.strftime('%Y%m%d')}"
@@ -658,13 +825,16 @@ def batch_download_invoices(request):
     with zipfile.ZipFile(zip_buffer, mode='w', compression=zipfile.ZIP_DEFLATED) as zf:
         used_filenames = set()
         for idx, sub in enumerate(submissions, 1):
-            safe_vendor = re.sub(r'[^a-zA-Z0-9_\-]', '_', sub.party_name or 'Invoice')[:30].strip('_')
-            safe_inv = re.sub(r'[^a-zA-Z0-9_\-]', '_', sub.invoice_number or '')[:20].strip('_')
-            prefix = f"{idx:02d}_{sub.submission_id}"
-            if safe_vendor:
-                prefix += f"_{safe_vendor}"
+            safe_vendor = re.sub(r'[^a-zA-Z0-9_\-]', '_', sub.party_name or 'Vendor')[:30].strip('_')
+            safe_inv = re.sub(r'[^a-zA-Z0-9_\-]', '_', sub.invoice_number or '').strip('_')
+            
+            # Organize each invoice into a folder prefixed with the invoice number
             if safe_inv:
-                prefix += f"_{safe_inv}"
+                folder_name = f"INV_{safe_inv}_{sub.submission_id}"
+            else:
+                folder_name = f"INV_PENDING_{sub.submission_id}"
+            if safe_vendor:
+                folder_name += f"_{safe_vendor}"
 
             if req_format == 'original':
                 active_docs = list(sub.documents.filter(is_active_version=True).order_by('page_number'))
@@ -672,11 +842,12 @@ def batch_download_invoices(request):
                 for doc_idx, doc in enumerate(active_docs, 1):
                     if doc.original_file and doc.original_file.storage.exists(doc.original_file.name):
                         ext = os.path.splitext(doc.original_file.name)[1] or '.jpg'
-                        fname = f"{prefix}_p{doc_idx}{ext}"
+                        inv_tag = f"INV_{safe_inv}_" if safe_inv else ""
+                        fname = f"{folder_name}/{inv_tag}page_{doc_idx}{ext}"
                         dedup_fname = fname
                         k = 1
                         while dedup_fname in used_filenames:
-                            dedup_fname = f"{prefix}_p{doc_idx}_{k}{ext}"
+                            dedup_fname = f"{folder_name}/{inv_tag}page_{doc_idx}_{k}{ext}"
                             k += 1
                         used_filenames.add(dedup_fname)
                         with doc.original_file.open('rb') as f:
@@ -688,11 +859,12 @@ def batch_download_invoices(request):
             # Default: Print-ready official A4 voucher PDF with auto-cropped image & metadata
             try:
                 pdf_bytes = generate_print_ready_pdf(sub)
-                fname = f"{prefix}.pdf"
+                inv_tag = f"INV_{safe_inv}_" if safe_inv else ""
+                fname = f"{folder_name}/{inv_tag}{sub.submission_id}_voucher.pdf"
                 dedup_fname = fname
                 k = 1
                 while dedup_fname in used_filenames:
-                    dedup_fname = f"{prefix}_{k}.pdf"
+                    dedup_fname = f"{folder_name}/{inv_tag}{sub.submission_id}_voucher_{k}.pdf"
                     k += 1
                 used_filenames.add(dedup_fname)
                 zf.writestr(dedup_fname, pdf_bytes)
@@ -719,8 +891,8 @@ def download_document(request, doc_id):
         pk=doc_id
     )
 
-    if not _can_view_all_invoices(request.user) and doc.submission.employee_id != request.user.id:
-        raise PermissionDenied("Access Denied: You do not have permission to download this document.")
+    if not _can_view_all_invoices(request.user):
+        raise PermissionDenied("Access Denied: Employees do not have permission to download invoice documents.")
 
     if not doc.original_file or not doc.original_file.storage.exists(doc.original_file.name):
         raise Http404("Document file not found on server storage.")
@@ -934,6 +1106,71 @@ def naveen_verify_invoice(request, submission_id):
 
 
 @login_required
+def delete_invoice_submission(request, submission_id):
+    """
+    Permanently deletes a faulty invoice submission, its attached files,
+    and associated audit history records.
+    Available to employees for deleting their own faulty submissions.
+    Explicitly forbidden for Naveen (accounts operators).
+    """
+    # Naveen is explicitly forbidden from deleting invoice submissions
+    if getattr(request.user, 'is_naveen', False):
+        raise PermissionDenied("Access Denied: Accounts operators (Naveen) do not have permission to delete invoice submissions.")
+
+    submission = get_object_or_404(
+        InvoiceSubmission.objects.select_related('employee'),
+        submission_id=submission_id
+    )
+
+    # Employees can only delete their own submissions
+    if submission.employee_id != request.user.id and not (request.user.is_superuser or getattr(request.user, 'is_admin_role', False)):
+        raise PermissionDenied("Access Denied: You can only delete your own invoice submissions.")
+
+    if request.method == 'POST':
+        sub_id = submission.submission_id
+        vendor = submission.party_name or 'Unknown Vendor'
+        inv_no = submission.invoice_number or 'No Invoice #'
+        amount = submission.total_amount
+        submitter_name = submission.employee.get_full_name() or submission.employee.username
+
+        # Delete physical document files
+        for doc in submission.documents.all():
+            try:
+                if doc.original_file and doc.original_file.storage.exists(doc.original_file.name):
+                    doc.original_file.delete(save=False)
+            except Exception as err:
+                logger.warning("Could not remove document file %s during deletion: %s", doc.id, err)
+
+        # Record audit log
+        try:
+            record_audit_log(
+                request.user,
+                "INVOICE_DELETED",
+                request=request,
+                details={
+                    "submission_id": sub_id,
+                    "vendor": vendor,
+                    "invoice_number": inv_no,
+                    "amount": str(amount),
+                    "submitter": submitter_name,
+                    "deleted_by": request.user.username,
+                },
+            )
+        except Exception as audit_err:
+            logger.warning("Failed to record AuditLog for deleted invoice: %s", audit_err)
+
+        submission.delete()
+        messages.success(request, f"Faulty invoice {sub_id} ({vendor}) has been permanently deleted.")
+
+        next_url = request.POST.get('next') or request.GET.get('next')
+        if next_url:
+            return redirect(next_url)
+        return redirect('core:employee_dashboard')
+
+    return redirect('invoices:submission_detail', submission_id=submission_id)
+
+
+@login_required
 def download_source_document(request, doc_id):
     """
     Direct download endpoint for the original unsegmented source document (e.g. multi-invoice PDF).
@@ -941,9 +1178,9 @@ def download_source_document(request, doc_id):
     """
     source_doc = get_object_or_404(UploadedDocument, pk=doc_id)
 
-    # Positive Access Control: Owner OR privileged accounts/admin/management
-    if not _can_view_all_invoices(request.user) and source_doc.uploader_id != request.user.id:
-        raise PermissionDenied("Access Denied: You cannot download another user's source document.")
+    # Positive Access Control: privileged accounts/admin/management only (employees cannot download source docs)
+    if not _can_view_all_invoices(request.user):
+        raise PermissionDenied("Access Denied: Employees do not have permission to download source documents.")
 
     if not source_doc.original_file or not source_doc.original_file.storage.exists(source_doc.original_file.name):
         raise Http404("Original source file not found on storage.")
@@ -1824,6 +2061,7 @@ def verification_workspace(request, submission_id):
 
     financial_warnings = audit_submission_financials(submission)
     amount_in_words = (getattr(submission, 'gemini_extracted_data', None) or {}).get('amount_in_words') or ''
+    highlight_boxes = get_document_highlight_boxes(submission)
 
     return render(request, 'invoices/verification_workspace.html', {
         'submission': submission,
@@ -1832,6 +2070,7 @@ def verification_workspace(request, submission_id):
         'ledger_mappings': ledger_mappings,
         'financial_warnings': financial_warnings,
         'amount_in_words': amount_in_words,
+        'highlight_boxes': highlight_boxes,
         'prev_sub': prev_sub,
         'next_sub': next_sub,
         'page_title': f"Verify Purchase - {submission.submission_id}",

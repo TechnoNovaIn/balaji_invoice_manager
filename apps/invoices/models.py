@@ -404,6 +404,11 @@ class InvoiceSubmission(models.Model):
         db_index=True,
         help_text="64-character Invoice Reference Number (IRN) when invoice is an e-invoice"
     )
+    line_items = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Itemized goods or services extracted from invoice."
+    )
 
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)

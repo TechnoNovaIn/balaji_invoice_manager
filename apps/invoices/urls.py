@@ -18,6 +18,7 @@ urlpatterns = [
     path('action/<str:submission_id>/return/', views.naveen_return_invoice, name='naveen_return'),
     path('action/<str:submission_id>/reject/', views.naveen_reject_invoice, name='naveen_reject'),
     path('action/<str:submission_id>/verify/', views.naveen_verify_invoice, name='naveen_verify'),
+    path('delete/<str:submission_id>/', views.delete_invoice_submission, name='delete_invoice'),
     path('action/<str:submission_id>/split/', views.split_invoice_view, name='split_invoice'),
     path('action/<str:submission_id>/merge/', views.merge_invoices_view, name='merge_invoices'),
     path('source-document/<int:doc_id>/download/', views.download_source_document, name='download_source_document'),

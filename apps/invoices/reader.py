@@ -287,6 +287,7 @@ def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
         'e_invoice_source': '',
         'raw_text': raw_text.strip() if raw_text else '',
         'confidence': 0.0,
+        'items': [],
         'requires_manual_review': True,
         'is_ambiguous_vendor': True,
     }

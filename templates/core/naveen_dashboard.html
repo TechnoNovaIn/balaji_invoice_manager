@@ -828,12 +828,19 @@
     <!-- ================================================================= -->
     {% elif tab == 'completed' %}
     <div class="card card-enterprise shadow-sm">
-        <div class="card-enterprise-header d-flex justify-content-between align-items-center">
+        <div class="card-enterprise-header d-flex justify-content-between align-items-center flex-wrap gap-2">
             <h6 class="fw-bold mb-0 text-dark">
                 <i class="bi bi-check2-circle me-2 text-success"></i>
                 Invoices Entered in Tally (Completed Archive)
             </h6>
-            <span class="badge bg-success text-white">{{ completed_count }} Invoices Completed</span>
+            <div class="d-flex align-items-center gap-2">
+                {% if completed_count > 0 %}
+                <a href="{% url 'invoices:batch_download_invoices' %}?scope=completed" class="btn btn-sm btn-outline-success fw-bold" title="Download all vouchers entered in Tally as a ZIP file organized by invoice number">
+                    <i class="bi bi-download me-1"></i>Download All Completed ({{ completed_count }})
+                </a>
+                {% endif %}
+                <span class="badge bg-success text-white">{{ completed_count }} Invoices Completed</span>
+            </div>
         </div>
 
         {% if completed_invoices %}

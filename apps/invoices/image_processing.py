@@ -77,7 +77,7 @@ def four_point_transform(image: np.ndarray, pts: np.ndarray) -> np.ndarray:
 
 def auto_crop_invoice_image(
     image_bytes: bytes,
-    min_coverage: float = 0.10,
+    min_coverage: float = 0.35,
     max_coverage: float = 0.98,
     target_dpi: int = 300,
 ) -> Tuple[bytes, bool, Dict[str, Any]]:
@@ -86,11 +86,16 @@ def auto_crop_invoice_image(
     automatically crops and deskews the invoice to print-ready format.
 
     Guarantees:
+    - Conservative Document Detection: Requires at least 35% frame coverage
+      and realistic invoice aspect ratios (0.40 to 2.5) to avoid false-cropping
+      into internal tables, signatures, or permit boxes.
+    - Safety Margins: Applies 3% margin padding around detected contours so
+      vital header vendor names and footer grand totals are never clipped.
     - Zero resolution loss: detection is calculated on an optimized preview,
       but the transformation is applied to the full-resolution original image.
     - Preserves rich color (RGB) and sets high print DPI metadata (300 DPI).
-    - Failsafe: if the image cannot be decoded or is not a photo, returns the
-      original bytes untouched without crashing.
+    - Failsafe: if document boundary confidence is low or already closely framed,
+      returns the full orientation-corrected original bytes untouched without clipping.
 
     Returns:
         (processed_bytes, was_cropped, metadata_dict)
@@ -150,13 +155,29 @@ def auto_crop_invoice_image(
             peri = cv2.arcLength(c, True)
             approx = cv2.approxPolyDP(c, 0.02 * peri, True)
             if len(approx) == 4 and cv2.isContourConvex(approx):
-                best_quad = approx.reshape(4, 2)
-                break
+                bx, by, bw, bh = cv2.boundingRect(approx)
+                aspect_ratio = float(bh) / float(bw) if bw > 0 else 0
+                # Real invoices / vouchers have aspect ratio between 0.40 and 2.5
+                if 0.40 <= aspect_ratio <= 2.5:
+                    best_quad = approx.reshape(4, 2)
+                    break
 
-        # Strategy 1: Four-Point Perspective Warp on original full-resolution image
+        # Strategy 1: Four-Point Perspective Warp on original full-resolution image with safety margin
         if best_quad is not None:
+            # Map quadrilateral to original coordinates
             quad_orig = (best_quad / scale).astype("float32")
-            warped = four_point_transform(orig_bgr, quad_orig)
+
+            # Expand quadrilateral slightly outward (3% margin from centroid) to prevent text clipping
+            centroid = np.mean(quad_orig, axis=0)
+            expanded_quad = np.zeros_like(quad_orig)
+            for i, pt in enumerate(quad_orig):
+                vec = pt - centroid
+                expanded_pt = centroid + vec * 1.04  # 4% outward expansion
+                expanded_pt[0] = np.clip(expanded_pt[0], 0, orig_w - 1)
+                expanded_pt[1] = np.clip(expanded_pt[1], 0, orig_h - 1)
+                expanded_quad[i] = expanded_pt
+
+            warped = four_point_transform(orig_bgr, expanded_quad)
 
             res_rgb = cv2.cvtColor(warped, cv2.COLOR_BGR2RGB)
             out_pil = Image.fromarray(res_rgb)
@@ -166,10 +187,10 @@ def auto_crop_invoice_image(
                 "method": "perspective_quad",
                 "original_dims": [orig_w, orig_h],
                 "cropped_dims": [out_pil.width, out_pil.height],
-                "corners": quad_orig.tolist(),
+                "corners": expanded_quad.tolist(),
             }
 
-        # Strategy 2: Adaptive Otsu thresholding / Bounding-box crop
+        # Strategy 2: Adaptive Otsu thresholding / Bounding-box crop with strict coverage
         _, thresh = cv2.threshold(filtered, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         contours_otsu, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         contours_otsu = sorted(contours_otsu, key=cv2.contourArea, reverse=True)
@@ -177,31 +198,34 @@ def auto_crop_invoice_image(
         for c in contours_otsu[:3]:
             area = cv2.contourArea(c)
             ratio = area / total_work_area
-            if 0.15 <= ratio <= 0.95:
+            # Must occupy at least 35% of the frame to avoid cutting into inner tables
+            if 0.35 <= ratio <= 0.95:
                 x, y, w, h = cv2.boundingRect(c)
-                # Map back to full resolution with 1.5% margin padding
-                margin_x = int(0.015 * orig_w)
-                margin_y = int(0.015 * orig_h)
-                ox = max(0, int(x / scale) - margin_x)
-                oy = max(0, int(y / scale) - margin_y)
-                ow = min(orig_w - ox, int(w / scale) + 2 * margin_x)
-                oh = min(orig_h - oy, int(h / scale) + 2 * margin_y)
+                aspect_ratio = float(h) / float(w) if w > 0 else 0
+                if 0.45 <= aspect_ratio <= 2.2:
+                    # Map back to full resolution with 3% margin padding
+                    margin_x = int(0.03 * orig_w)
+                    margin_y = int(0.03 * orig_h)
+                    ox = max(0, int(x / scale) - margin_x)
+                    oy = max(0, int(y / scale) - margin_y)
+                    ow = min(orig_w - ox, int(w / scale) + 2 * margin_x)
+                    oh = min(orig_h - oy, int(h / scale) + 2 * margin_y)
 
-                if ow > 100 and oh > 100:
-                    cropped = orig_bgr[oy:oy + oh, ox:ox + ow]
-                    res_rgb = cv2.cvtColor(cropped, cv2.COLOR_BGR2RGB)
-                    out_pil = Image.fromarray(res_rgb)
-                    buf = io.BytesIO()
-                    out_pil.save(buf, format='JPEG', quality=95, optimize=True, dpi=(target_dpi, target_dpi))
-                    return buf.getvalue(), True, {
-                        "method": "bounding_box",
-                        "original_dims": [orig_w, orig_h],
-                        "cropped_dims": [out_pil.width, out_pil.height],
-                        "box": [ox, oy, ow, oh],
-                    }
+                    if ow > 200 and oh > 200:
+                        cropped = orig_bgr[oy:oy + oh, ox:ox + ow]
+                        res_rgb = cv2.cvtColor(cropped, cv2.COLOR_BGR2RGB)
+                        out_pil = Image.fromarray(res_rgb)
+                        buf = io.BytesIO()
+                        out_pil.save(buf, format='JPEG', quality=95, optimize=True, dpi=(target_dpi, target_dpi))
+                        return buf.getvalue(), True, {
+                            "method": "bounding_box",
+                            "original_dims": [orig_w, orig_h],
+                            "cropped_dims": [out_pil.width, out_pil.height],
+                            "box": [ox, oy, ow, oh],
+                        }
 
         # Strategy 3: Document already closely framed (>95% coverage) or unsegmented
-        # Still normalize orientation and ensure 300 DPI metadata
+        # Preserve full photograph with EXIF rotation and 300 DPI metadata without clipping
         buf = io.BytesIO()
         pil_img.save(buf, format='JPEG', quality=95, optimize=True, dpi=(target_dpi, target_dpi))
         return buf.getvalue(), False, {"method": "already_full_coverage", "dims": [orig_w, orig_h]}

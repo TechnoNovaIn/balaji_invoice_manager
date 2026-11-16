@@ -120,29 +120,28 @@ class TestPaperPreservationAndDownload(TestCase):
         uploaded_file = SimpleUploadedFile("bill_receipt.jpg", self.simulated_receipt_bytes, content_type="image/jpeg")
         sub = create_invoice_submission(user=self.employee, files=[uploaded_file])
 
-        # 1. Owner (emp_rahul) can download the invoice
+        # 1. Employees (emp_rahul and emp_vikram) are strictly blocked from downloading invoices (403 Forbidden)
         self.client.login(username="emp_rahul", password="TestPassword@2026")
         dl_resp = self.client.get(reverse('invoices:download_invoice', kwargs={'submission_id': sub.submission_id}))
-        self.assertEqual(dl_resp.status_code, 200)
-        self.assertIn('attachment', dl_resp.headers.get('Content-Disposition', ''))
-        self.assertIn(sub.submission_id, dl_resp.headers.get('Content-Disposition', ''))
+        self.assertEqual(dl_resp.status_code, 403)
 
-        # 2. Another employee (emp_vikram) is strictly blocked (403 Forbidden)
         self.client.login(username="emp_vikram", password="TestPassword@2026")
         dl_blocked = self.client.get(reverse('invoices:download_invoice', kwargs={'submission_id': sub.submission_id}))
         self.assertEqual(dl_blocked.status_code, 403)
 
-        # 3. Naveen (Accounts) can download any invoice
+        # 2. Naveen (Accounts) and privileged users can download any invoice
         self.client.login(username="naveen_accounts", password="TestPassword@2026")
         dl_naveen = self.client.get(reverse('invoices:download_invoice', kwargs={'submission_id': sub.submission_id}))
         self.assertEqual(dl_naveen.status_code, 200)
+        self.assertIn('attachment', dl_naveen.headers.get('Content-Disposition', ''))
+        self.assertIn(sub.submission_id, dl_naveen.headers.get('Content-Disposition', ''))
 
     def test_05_download_invoice_as_print_ready_pdf(self):
-        """Verify ?format=pdf compiles an official A4 print-ready PDF with voucher header."""
+        """Verify ?format=pdf compiles an official A4 print-ready PDF with voucher header for Naveen."""
         uploaded_file = SimpleUploadedFile("test_receipt.jpg", self.simulated_receipt_bytes, content_type="image/jpeg")
         sub = create_invoice_submission(user=self.employee, files=[uploaded_file])
 
-        self.client.login(username="emp_rahul", password="TestPassword@2026")
+        self.client.login(username="naveen_accounts", password="TestPassword@2026")
         # Download with ?format=pdf
         pdf_resp = self.client.get(reverse('invoices:download_invoice', kwargs={'submission_id': sub.submission_id}) + "?format=pdf")
         self.assertEqual(pdf_resp.status_code, 200)
@@ -291,3 +290,36 @@ class TestPaperPreservationAndDownload(TestCase):
         self.assertEqual(dash_resp.status_code, 200)
         self.assertContains(dash_resp, reverse('invoices:batch_download_invoices'))
         self.assertContains(dash_resp, "btnDownloadSelected")
+
+    def test_10_delete_faulty_invoice_submission(self):
+        """Verify employee can delete their own faulty invoice submission, while Naveen is blocked."""
+        sub = InvoiceSubmission.objects.create(
+            submission_id="BTI-202611-FAULTY1",
+            employee=self.employee,
+            party_name="FAULTY VENDOR",
+            invoice_number="ERR999",
+            total_amount=500.00,
+        )
+
+        # 1. Naveen is explicitly blocked from deleting invoices (403 Forbidden) and cannot see the delete button in UI
+        self.client.login(username="naveen_accounts", password="TestPassword@2026")
+        resp_detail_naveen = self.client.get(reverse('invoices:submission_detail', kwargs={'submission_id': sub.submission_id}))
+        self.assertNotContains(resp_detail_naveen, "Delete Faulty Invoice")
+        self.assertNotContains(resp_detail_naveen, "deleteFaultyModal")
+        resp_del_naveen = self.client.post(reverse('invoices:delete_invoice', kwargs={'submission_id': sub.submission_id}))
+        self.assertEqual(resp_del_naveen.status_code, 403)
+        self.assertTrue(InvoiceSubmission.objects.filter(submission_id="BTI-202611-FAULTY1").exists())
+
+        # 2. Another employee (emp_vikram) cannot delete emp_rahul's invoice (403 Forbidden)
+        self.client.login(username="emp_vikram", password="TestPassword@2026")
+        resp_del_vikram = self.client.post(reverse('invoices:delete_invoice', kwargs={'submission_id': sub.submission_id}))
+        self.assertEqual(resp_del_vikram.status_code, 403)
+        self.assertTrue(InvoiceSubmission.objects.filter(submission_id="BTI-202611-FAULTY1").exists())
+
+        # 3. Submitting employee (emp_rahul) CAN see and delete their own faulty submission
+        self.client.login(username="emp_rahul", password="TestPassword@2026")
+        resp_detail_emp = self.client.get(reverse('invoices:submission_detail', kwargs={'submission_id': sub.submission_id}))
+        self.assertContains(resp_detail_emp, "Delete Faulty Invoice")
+        resp_del_emp = self.client.post(reverse('invoices:delete_invoice', kwargs={'submission_id': sub.submission_id}))
+        self.assertEqual(resp_del_emp.status_code, 302)
+        self.assertFalse(InvoiceSubmission.objects.filter(submission_id="BTI-202611-FAULTY1").exists())

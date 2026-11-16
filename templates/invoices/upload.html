@@ -92,6 +92,59 @@
     </div>
 </div>
 
+<!-- Kaagaz Document Scanner & Perspective Alignment Modal -->
+<div class="modal fade" id="kaagazScannerModal" tabindex="-1" aria-labelledby="kaagazScannerModalLabel" aria-hidden="true" data-bs-backdrop="static">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content shadow-lg border-0 bg-dark text-white">
+            <div class="modal-header py-2 border-secondary border-opacity-50">
+                <div class="d-flex align-items-center gap-2">
+                    <span class="badge bg-teal text-white p-2"><i class="bi bi-crop fs-6"></i></span>
+                    <div>
+                        <h6 class="modal-title fw-bold text-white mb-0" id="kaagazScannerModalLabel">
+                            Kaagaz Document Scanner &amp; Alignment
+                        </h6>
+                        <small class="text-white-50" style="font-size: 0.72rem;">Drag the 4 corner handles to align invoice borders</small>
+                    </div>
+                </div>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            
+            <div class="modal-body p-0 position-relative bg-black d-flex align-items-center justify-content-center" style="min-height: 480px; max-height: 70vh; overflow: hidden; touch-action: none; user-select: none;" id="scannerContainer">
+                <canvas id="scannerCanvas" style="display: block; max-width: 100%; max-height: 68vh; cursor: crosshair;"></canvas>
+                
+                <!-- Corner Loupe (Magnifier for pixel-perfect corner alignment) -->
+                <canvas id="loupeCanvas" width="110" height="110" class="position-absolute rounded-circle shadow-lg d-none border border-2 border-white" style="pointer-events: none; z-index: 50;"></canvas>
+
+                <!-- Status Overlay Banner -->
+                <div id="scannerHelpText" class="position-absolute bottom-0 start-50 translate-middle-x mb-2 px-3 py-1 bg-dark bg-opacity-75 rounded-pill small text-white text-center shadow-sm" style="font-size: 0.75rem; pointer-events: none; z-index: 10;">
+                    <i class="bi bi-hand-index-thumb me-1 text-info"></i>Drag any corner circle &bull; Tap "Crop &amp; Apply" when ready
+                </div>
+            </div>
+
+            <div class="modal-footer py-2 px-3 border-secondary border-opacity-50 bg-dark d-flex flex-wrap justify-content-between align-items-center gap-2">
+                <div class="d-flex align-items-center gap-1 flex-wrap">
+                    <button type="button" class="btn btn-sm btn-outline-light" id="btnScannerRotate" title="Rotate image 90° clockwise">
+                        <i class="bi bi-arrow-clockwise me-1"></i>Rotate 90°
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-light" id="btnScannerFull" title="Reset corners to full photo margins">
+                        <i class="bi bi-aspect-ratio me-1"></i>Full Photo
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-light" id="btnScannerAutoFit" title="Smart auto-margin fit">
+                        <i class="bi bi-bounding-box me-1"></i>Auto-Fit
+                    </button>
+                </div>
+
+                <div class="d-flex align-items-center gap-2">
+                    <button type="button" class="btn btn-sm btn-outline-secondary text-white" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-sm btn-teal fw-bold px-3 shadow-sm" id="btnScannerApply">
+                        <i class="bi bi-check2-circle me-1"></i>Crop &amp; Apply
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     const cameraInput = document.getElementById('cameraInput');
@@ -106,20 +159,43 @@ document.addEventListener('DOMContentLoaded', function() {
     const finalFilesInput = document.getElementById('finalFilesInput');
     const uploadForm = document.getElementById('invoiceUploadForm');
 
+    // Kaagaz Scanner Modal Elements
+    const scannerModalEl = document.getElementById('kaagazScannerModal');
+    const scannerModal = scannerModalEl ? new bootstrap.Modal(scannerModalEl) : null;
+    const scannerCanvas = document.getElementById('scannerCanvas');
+    const loupeCanvas = document.getElementById('loupeCanvas');
+    const btnScannerRotate = document.getElementById('btnScannerRotate');
+    const btnScannerFull = document.getElementById('btnScannerFull');
+    const btnScannerAutoFit = document.getElementById('btnScannerAutoFit');
+    const btnScannerApply = document.getElementById('btnScannerApply');
+
     const MAX_FILES = 10;
     const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
     const MAX_TOTAL_SIZE = 100 * 1024 * 1024; // 100 MB
 
     let selectedFiles = [];
 
+    // Kaagaz Scanner State
+    let currentScanningItem = null;
+    let scannerImg = null;
+    let scannerScale = 1.0;
+    let canvasWidth = 0;
+    let canvasHeight = 0;
+    let scannerCorners = []; // [TL, TR, BR, BL] in canvas coordinates
+    let activeCornerIndex = -1;
+    const HANDLE_RADIUS = 16;
+    const HIT_RADIUS = 36;
+
     btnCamera.addEventListener('click', () => cameraInput.click());
     btnGallery.addEventListener('click', () => galleryInput.click());
 
-    cameraInput.addEventListener('change', (e) => handleFileSelection(e.target.files));
-    galleryInput.addEventListener('change', (e) => handleFileSelection(e.target.files));
+    cameraInput.addEventListener('change', (e) => handleFileSelection(e.target.files, true));
+    galleryInput.addEventListener('change', (e) => handleFileSelection(e.target.files, false));
 
-    function handleFileSelection(newFiles) {
+    function handleFileSelection(newFiles, isCamera) {
         if (!newFiles || newFiles.length === 0) return;
+
+        let firstNewItem = null;
 
         for (let i = 0; i < newFiles.length; i++) {
             const file = newFiles[i];
@@ -139,16 +215,29 @@ document.addEventListener('DOMContentLoaded', function() {
                 continue;
             }
 
-            selectedFiles.push({
+            const item = {
                 file: file,
                 rotation: 0,
                 id: 'file_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7)
-            });
+            };
+            selectedFiles.push(item);
+            if (!firstNewItem) firstNewItem = item;
         }
 
         cameraInput.value = '';
         galleryInput.value = '';
         renderPreviews();
+
+        // If captured from camera, automatically open Kaagaz Scanner to crop & align cleanly
+        if (isCamera && firstNewItem && isImageFile(firstNewItem.file)) {
+            setTimeout(() => {
+                openKaagazScanner(firstNewItem);
+            }, 300);
+        }
+    }
+
+    function isImageFile(file) {
+        return file && (file.type.startsWith('image/') || /\.(jpe?g|png|webp|bmp)$/i.test(file.name));
     }
 
     function renderPreviews() {
@@ -211,6 +300,10 @@ document.addEventListener('DOMContentLoaded', function() {
                     </div>
                 `;
             } else {
+                previewBox.style.cursor = 'pointer';
+                previewBox.title = 'Click to open Kaagaz 4-corner crop & align';
+                previewBox.addEventListener('click', () => openKaagazScanner(item));
+
                 const img = document.createElement('img');
                 img.style.maxHeight = '100px';
                 img.style.maxWidth = '100%';
@@ -248,6 +341,21 @@ document.addEventListener('DOMContentLoaded', function() {
                 previewBox.appendChild(rotateBtn);
             }
             card.appendChild(previewBox);
+
+            // 1-Click Kaagaz Crop & Align Button for photos
+            if (!isPdf) {
+                const cropBtn = document.createElement('button');
+                cropBtn.type = 'button';
+                cropBtn.className = 'btn btn-xs btn-teal w-100 fw-bold mb-2 py-1 shadow-sm';
+                cropBtn.style.fontSize = '0.75rem';
+                cropBtn.innerHTML = '<i class="bi bi-crop me-1"></i>Kaagaz Crop &amp; Align';
+                cropBtn.title = 'Open Kaagaz 4-corner document scanner to crop & align';
+                cropBtn.addEventListener('click', (ev) => {
+                    ev.stopPropagation();
+                    openKaagazScanner(item);
+                });
+                card.appendChild(cropBtn);
+            }
 
             const info = document.createElement('div');
             info.className = 'mt-auto small text-truncate';
@@ -295,6 +403,419 @@ document.addEventListener('DOMContentLoaded', function() {
         });
         finalFilesInput.files = dt.files;
     }
+
+    // =========================================================================
+    // KAAGAZ SCANNER INTERACTIVE 4-CORNER PERSPECTIVE CROP & FLATTEN ENGINE
+    // =========================================================================
+    function openKaagazScanner(item) {
+        if (!isImageFile(item.file)) return;
+        currentScanningItem = item;
+
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const img = new Image();
+            img.onload = () => {
+                scannerImg = img;
+                if (!scannerModal) return;
+                scannerModal.show();
+                // Wait for modal display to calculate dimensions
+                setTimeout(initScannerCanvas, 200);
+            };
+            img.src = e.target.result;
+        };
+        reader.readAsDataURL(item.file);
+    }
+
+    function initScannerCanvas() {
+        if (!scannerImg || !scannerCanvas) return;
+        const container = document.getElementById('scannerContainer');
+        const maxW = Math.max(container.clientWidth - 20, 300);
+        const maxH = Math.max(container.clientHeight - 20, 400);
+
+        const imgAspect = scannerImg.naturalWidth / scannerImg.naturalHeight;
+        const contAspect = maxW / maxH;
+
+        if (imgAspect > contAspect) {
+            canvasWidth = maxW;
+            canvasHeight = Math.round(maxW / imgAspect);
+        } else {
+            canvasHeight = maxH;
+            canvasWidth = Math.round(maxH * imgAspect);
+        }
+
+        scannerCanvas.width = canvasWidth;
+        scannerCanvas.height = canvasHeight;
+        scannerScale = canvasWidth / scannerImg.naturalWidth;
+
+        // Default 4 corners with clean 5% margin
+        resetCornersAutoFit();
+        drawScanner();
+    }
+
+    function resetCornersAutoFit() {
+        const mx = canvasWidth * 0.05;
+        const my = canvasHeight * 0.05;
+        scannerCorners = [
+            { x: mx, y: my, name: 'TL' },
+            { x: canvasWidth - mx, y: my, name: 'TR' },
+            { x: canvasWidth - mx, y: canvasHeight - my, name: 'BR' },
+            { x: mx, y: canvasHeight - my, name: 'BL' }
+        ];
+    }
+
+    function resetCornersFull() {
+        scannerCorners = [
+            { x: 0, y: 0, name: 'TL' },
+            { x: canvasWidth, y: 0, name: 'TR' },
+            { x: canvasWidth, y: canvasHeight, name: 'BR' },
+            { x: 0, y: canvasHeight, name: 'BL' }
+        ];
+    }
+
+    function drawScanner() {
+        if (!scannerCanvas || !scannerImg) return;
+        const ctx = scannerCanvas.getContext('2d');
+        ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+
+        // 1. Draw base image
+        ctx.drawImage(scannerImg, 0, 0, canvasWidth, canvasHeight);
+
+        if (scannerCorners.length < 4) return;
+
+        // 2. Semi-transparent dark mask outside the quadrilateral
+        ctx.save();
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.52)';
+        ctx.beginPath();
+        // Outer rectangle
+        ctx.rect(0, 0, canvasWidth, canvasHeight);
+        // Cut out the inner quad using evenodd fill rule
+        ctx.moveTo(scannerCorners[0].x, scannerCorners[0].y);
+        ctx.lineTo(scannerCorners[1].x, scannerCorners[1].y);
+        ctx.lineTo(scannerCorners[2].x, scannerCorners[2].y);
+        ctx.lineTo(scannerCorners[3].x, scannerCorners[3].y);
+        ctx.closePath();
+        ctx.fill('evenodd');
+        ctx.restore();
+
+        // 3. Draw quadrilateral neon cyan perimeter
+        ctx.save();
+        ctx.strokeStyle = '#06b6d4';
+        ctx.lineWidth = 2.5;
+        ctx.setLineDash([6, 3]);
+        ctx.beginPath();
+        ctx.moveTo(scannerCorners[0].x, scannerCorners[0].y);
+        ctx.lineTo(scannerCorners[1].x, scannerCorners[1].y);
+        ctx.lineTo(scannerCorners[2].x, scannerCorners[2].y);
+        ctx.lineTo(scannerCorners[3].x, scannerCorners[3].y);
+        ctx.closePath();
+        ctx.stroke();
+        ctx.restore();
+
+        // 4. Draw 4 Corner Handles with glowing outer ring and crosshairs
+        scannerCorners.forEach((c, idx) => {
+            const isHover = (activeCornerIndex === idx);
+            ctx.save();
+
+            // Outer glowing ring
+            ctx.beginPath();
+            ctx.arc(c.x, c.y, isHover ? (HANDLE_RADIUS + 4) : HANDLE_RADIUS, 0, Math.PI * 2);
+            ctx.fillStyle = isHover ? 'rgba(6, 182, 212, 0.45)' : 'rgba(6, 182, 212, 0.25)';
+            ctx.fill();
+            ctx.strokeStyle = isHover ? '#38bdf8' : '#06b6d4';
+            ctx.lineWidth = 2.5;
+            ctx.stroke();
+
+            // Inner white bullseye
+            ctx.beginPath();
+            ctx.arc(c.x, c.y, 6, 0, Math.PI * 2);
+            ctx.fillStyle = '#ffffff';
+            ctx.fill();
+            ctx.strokeStyle = '#0f172a';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+
+            // Crosshair dot
+            ctx.beginPath();
+            ctx.arc(c.x, c.y, 1.5, 0, Math.PI * 2);
+            ctx.fillStyle = '#06b6d4';
+            ctx.fill();
+
+            ctx.restore();
+        });
+    }
+
+    // Pointer Event Handlers for Touch & Mouse Corner Dragging
+    function getPointerPos(e) {
+        const rect = scannerCanvas.getBoundingClientRect();
+        return {
+            x: (e.clientX - rect.left) * (scannerCanvas.width / rect.width),
+            y: (e.clientY - rect.top) * (scannerCanvas.height / rect.height),
+            clientX: e.clientX,
+            clientY: e.clientY
+        };
+    }
+
+    scannerCanvas.addEventListener('pointerdown', (e) => {
+        const pos = getPointerPos(e);
+        activeCornerIndex = -1;
+        let minDist = HIT_RADIUS;
+
+        scannerCorners.forEach((c, idx) => {
+            const dist = Math.hypot(c.x - pos.x, c.y - pos.y);
+            if (dist < minDist) {
+                minDist = dist;
+                activeCornerIndex = idx;
+            }
+        });
+
+        if (activeCornerIndex !== -1) {
+            scannerCanvas.setPointerCapture(e.pointerId);
+            showLoupe(scannerCorners[activeCornerIndex], pos);
+            drawScanner();
+        }
+    });
+
+    scannerCanvas.addEventListener('pointermove', (e) => {
+        if (activeCornerIndex === -1) return;
+        const pos = getPointerPos(e);
+        // Clamp to canvas borders
+        const clampedX = Math.max(0, Math.min(canvasWidth, pos.x));
+        const clampedY = Math.max(0, Math.min(canvasHeight, pos.y));
+        scannerCorners[activeCornerIndex].x = clampedX;
+        scannerCorners[activeCornerIndex].y = clampedY;
+
+        showLoupe(scannerCorners[activeCornerIndex], pos);
+        drawScanner();
+    });
+
+    function endDrag(e) {
+        if (activeCornerIndex !== -1) {
+            try { scannerCanvas.releasePointerCapture(e.pointerId); } catch(err){}
+            activeCornerIndex = -1;
+            hideLoupe();
+            drawScanner();
+        }
+    }
+
+    scannerCanvas.addEventListener('pointerup', endDrag);
+    scannerCanvas.addEventListener('pointercancel', endDrag);
+
+    // Magnifying Loupe helper for pixel-perfect edge positioning
+    function showLoupe(corner, screenPos) {
+        if (!loupeCanvas || !scannerImg) return;
+        loupeCanvas.classList.remove('d-none');
+        const lctx = loupeCanvas.getContext('2d');
+        const lw = loupeCanvas.width;
+        const lh = loupeCanvas.height;
+
+        lctx.clearRect(0, 0, lw, lh);
+
+        // Source natural image coordinates
+        const natX = corner.x / scannerScale;
+        const natY = corner.y / scannerScale;
+
+        const zoom = 2.0;
+        const cropW = lw / zoom;
+        const cropH = lh / zoom;
+
+        lctx.drawImage(
+            scannerImg,
+            natX - cropW / 2, natY - cropH / 2, cropW, cropH,
+            0, 0, lw, lh
+        );
+
+        // Loupe crosshairs
+        lctx.strokeStyle = '#06b6d4';
+        lctx.lineWidth = 1.5;
+        lctx.beginPath();
+        lctx.moveTo(lw / 2, 0);
+        lctx.lineTo(lw / 2, lh);
+        lctx.moveTo(0, lh / 2);
+        lctx.lineTo(lw, lh / 2);
+        lctx.stroke();
+
+        // Position loupe offset from finger/pointer
+        const container = document.getElementById('scannerContainer');
+        const crect = container.getBoundingClientRect();
+        let left = (screenPos.clientX - crect.left) - lw / 2;
+        let top = (screenPos.clientY - crect.top) - lh - 25;
+        if (top < 10) top = (screenPos.clientY - crect.top) + 25;
+        left = Math.max(10, Math.min(crect.width - lw - 10, left));
+
+        loupeCanvas.style.left = left + 'px';
+        loupeCanvas.style.top = top + 'px';
+    }
+
+    function hideLoupe() {
+        if (loupeCanvas) loupeCanvas.classList.add('d-none');
+    }
+
+    // Rotate working image 90° clockwise
+    btnScannerRotate?.addEventListener('click', () => {
+        if (!scannerImg) return;
+        const rotCanvas = document.createElement('canvas');
+        rotCanvas.width = scannerImg.naturalHeight;
+        rotCanvas.height = scannerImg.naturalWidth;
+        const rctx = rotCanvas.getContext('2d');
+        rctx.translate(rotCanvas.width / 2, rotCanvas.height / 2);
+        rctx.rotate((90 * Math.PI) / 180);
+        rctx.drawImage(scannerImg, -scannerImg.naturalWidth / 2, -scannerImg.naturalHeight / 2);
+
+        const rotatedImg = new Image();
+        rotatedImg.onload = () => {
+            scannerImg = rotatedImg;
+            initScannerCanvas();
+        };
+        rotatedImg.src = rotCanvas.toDataURL('image/jpeg', 0.95);
+    });
+
+    btnScannerFull?.addEventListener('click', () => {
+        resetCornersFull();
+        drawScanner();
+    });
+
+    btnScannerAutoFit?.addEventListener('click', () => {
+        resetCornersAutoFit();
+        drawScanner();
+    });
+
+    // Mesh-based perspective warp (Homography deskewing)
+    function warpQuadrilateral(sourceImg, srcQuad, destW, destH) {
+        const outCanvas = document.createElement('canvas');
+        outCanvas.width = destW;
+        outCanvas.height = destH;
+        const ctx = outCanvas.getContext('2d');
+
+        // Subdivide into 8x8 grid cells for smooth perspective unwarping
+        const SUBDIV = 8;
+        for (let row = 0; row < SUBDIV; row++) {
+            for (let col = 0; col < SUBDIV; col++) {
+                const u0 = col / SUBDIV;
+                const u1 = (col + 1) / SUBDIV;
+                const v0 = row / SUBDIV;
+                const v1 = (row + 1) / SUBDIV;
+
+                const dx0 = u0 * destW, dy0 = v0 * destH;
+                const dx1 = u1 * destW, dy1 = v0 * destH;
+                const dx2 = u1 * destW, dy2 = v1 * destH;
+                const dx3 = u0 * destW, dy3 = v1 * destH;
+
+                function getSrcPt(u, v) {
+                    const topX = srcQuad[0].x + u * (srcQuad[1].x - srcQuad[0].x);
+                    const topY = srcQuad[0].y + u * (srcQuad[1].y - srcQuad[0].y);
+                    const botX = srcQuad[3].x + u * (srcQuad[2].x - srcQuad[3].x);
+                    const botY = srcQuad[3].y + u * (srcQuad[2].y - srcQuad[3].y);
+                    return {
+                        x: topX + v * (botX - topX),
+                        y: topY + v * (botY - topY)
+                    };
+                }
+
+                const s0 = getSrcPt(u0, v0);
+                const s1 = getSrcPt(u1, v0);
+                const s2 = getSrcPt(u1, v1);
+                const s3 = getSrcPt(u0, v1);
+
+                renderTriangle(ctx, sourceImg, [s0, s1, s3], [{x: dx0, y: dy0}, {x: dx1, y: dy1}, {x: dx3, y: dy3}]);
+                renderTriangle(ctx, sourceImg, [s1, s2, s3], [{x: dx1, y: dy1}, {x: dx2, y: dy2}, {x: dx3, y: dy3}]);
+            }
+        }
+        return outCanvas;
+    }
+
+    function renderTriangle(ctx, img, srcPts, dstPts) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(dstPts[0].x, dstPts[0].y);
+        ctx.lineTo(dstPts[1].x, dstPts[1].y);
+        ctx.lineTo(dstPts[2].x, dstPts[2].y);
+        ctx.closePath();
+        ctx.clip();
+
+        const x0 = srcPts[0].x, y0 = srcPts[0].y;
+        const x1 = srcPts[1].x, y1 = srcPts[1].y;
+        const x2 = srcPts[2].x, y2 = srcPts[2].y;
+
+        const u0 = dstPts[0].x, v0 = dstPts[0].y;
+        const u1 = dstPts[1].x, v1 = dstPts[1].y;
+        const u2 = dstPts[2].x, v2 = dstPts[2].y;
+
+        const denom = (x0 * (y1 - y2) - y0 * (x1 - x2) + (x1 * y2 - x2 * y1));
+        if (Math.abs(denom) < 1e-6) {
+            ctx.restore();
+            return;
+        }
+
+        const a = (u0 * (y1 - y2) - y0 * (u1 - u2) + (u1 * y2 - u2 * y1)) / denom;
+        const b = (v0 * (y1 - y2) - y0 * (v1 - v2) + (v1 * y2 - v2 * y1)) / denom;
+        const c = (x0 * (u1 - u2) - u0 * (x1 - x2) + (x1 * u2 - x2 * u1)) / denom;
+        const d = (x0 * (v1 - v2) - v0 * (x1 - x2) + (x1 * v2 - x2 * v1)) / denom;
+        const e = (x0 * (y1 * u2 - y2 * u1) - y0 * (x1 * u2 - x2 * u1) + u0 * (x1 * y2 - x2 * y1)) / denom;
+        const f = (x0 * (y1 * v2 - y2 * v1) - y0 * (x1 * v2 - x2 * v1) + v0 * (x1 * y2 - x2 * y1)) / denom;
+
+        ctx.transform(a, b, c, d, e, f);
+        ctx.drawImage(img, 0, 0);
+        ctx.restore();
+    }
+
+    // Apply Crop, Flatten, Deskew and Save
+    btnScannerApply?.addEventListener('click', () => {
+        if (!currentScanningItem || !scannerImg || scannerCorners.length < 4) return;
+
+        btnScannerApply.disabled = true;
+        btnScannerApply.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Deskewing...';
+
+        setTimeout(() => {
+            try {
+                // Map corners to full native image resolution
+                const natCorners = scannerCorners.map(c => ({
+                    x: c.x / scannerScale,
+                    y: c.y / scannerScale
+                }));
+
+                // Calculate output dimensions
+                const topW = Math.hypot(natCorners[1].x - natCorners[0].x, natCorners[1].y - natCorners[0].y);
+                const botW = Math.hypot(natCorners[2].x - natCorners[3].x, natCorners[2].y - natCorners[3].y);
+                const leftH = Math.hypot(natCorners[3].x - natCorners[0].x, natCorners[3].y - natCorners[0].y);
+                const rightH = Math.hypot(natCorners[2].x - natCorners[1].x, natCorners[2].y - natCorners[1].y);
+
+                const destW = Math.round(Math.max(topW, botW));
+                const destH = Math.round(Math.max(leftH, rightH));
+
+                // Perform unwarping
+                const flattenedCanvas = warpQuadrilateral(scannerImg, natCorners, destW, destH);
+
+                flattenedCanvas.toBlob((blob) => {
+                    if (!blob) {
+                        alert('Could not export cropped image.');
+                        btnScannerApply.disabled = false;
+                        btnScannerApply.innerHTML = '<i class="bi bi-check2-circle me-1"></i>Crop &amp; Apply';
+                        return;
+                    }
+
+                    // Create new clean JPEG file replacing the old unaligned file
+                    const origName = currentScanningItem.file.name;
+                    const cleanName = origName.replace(/\.[^/.]+$/, "") + "_cropped.jpg";
+                    const newFile = new File([blob], cleanName, { type: 'image/jpeg', lastModified: Date.now() });
+
+                    currentScanningItem.file = newFile;
+                    currentScanningItem.rotation = 0; // rotation is now baked into deskewed image
+
+                    if (scannerModal) scannerModal.hide();
+                    renderPreviews();
+
+                    btnScannerApply.disabled = false;
+                    btnScannerApply.innerHTML = '<i class="bi bi-check2-circle me-1"></i>Crop &amp; Apply';
+                }, 'image/jpeg', 0.95);
+
+            } catch (err) {
+                console.error('Kaagaz Crop error:', err);
+                alert('Crop failed: ' + err.message);
+                btnScannerApply.disabled = false;
+                btnScannerApply.innerHTML = '<i class="bi bi-check2-circle me-1"></i>Crop &amp; Apply';
+            }
+        }, 50);
+    });
 
     uploadForm.addEventListener('submit', function(e) {
         if (selectedFiles.length === 0) {

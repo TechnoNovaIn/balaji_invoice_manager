@@ -595,6 +595,8 @@ def create_invoice_submissions(
                     sub.igst_amount = meta['igst_amount']
                 if meta.get('total_amount'):
                     sub.total_amount = meta['total_amount']
+                if meta.get('items'):
+                    sub.line_items = meta['items']
                 if meta.get('expense_ledger'):
                     sub.expense_ledger = meta['expense_ledger']
                 if meta.get('confidence'):
@@ -692,6 +694,8 @@ def create_invoice_submissions(
                 sub.igst_amount = meta['igst_amount']
             if meta.get('total_amount'):
                 sub.total_amount = meta['total_amount']
+            if meta.get('items'):
+                sub.line_items = meta['items']
             if meta.get('expense_ledger'):
                 sub.expense_ledger = meta['expense_ledger']
             if meta.get('confidence'):

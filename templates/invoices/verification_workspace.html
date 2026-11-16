@@ -117,6 +117,23 @@
             display: none;
         }
     }
+    .book-marker-highlight {
+        mix-blend-mode: multiply;
+        border-radius: 3px;
+        pointer-events: none;
+        transition: opacity 0.15s ease-in-out;
+    }
+    .marker-label-tag {
+        font-size: 0.62rem;
+        font-weight: 700;
+        letter-spacing: 0.3px;
+        text-transform: uppercase;
+        padding: 1px 5px;
+        border-radius: 3px;
+        opacity: 0.92;
+        pointer-events: none;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+    }
 </style>
 {% endblock %}
 
@@ -274,6 +291,12 @@
                         <button type="button" class="btn btn-xs btn-outline-light py-1 px-2" id="btnEnhance" title="Enhance Contrast for Faded Receipts">
                             <i class="bi bi-magic"></i>
                         </button>
+                        {% if highlight_boxes %}
+                        <!-- Book-Style Marker Highlights Toggle -->
+                        <button type="button" class="btn btn-xs btn-warning text-dark py-1 px-2 ms-1 fw-bold" id="btnToggleBoxesDesk" onclick="toggleDeskHighlightBoxes()" title="Toggle book-style marker highlights on key accounting fields">
+                            <i class="bi bi-pen-fill me-1"></i>Highlights: <span id="boxDeskStateText">ON</span>
+                        </button>
+                        {% endif %}
                         {% for doc in active_docs %}
                         {% if forloop.first %}
                         <a href="{% url 'invoices:serve_document' doc.id %}" target="_blank" class="btn btn-xs btn-outline-info py-1 px-2 ms-1" title="Open Page File in New Tab">
@@ -297,9 +320,30 @@
                     <div id="panSurface" class="d-flex align-items-center justify-content-center p-3" style="min-width: 100%; min-height: 100%; width: max-content; height: max-content; margin: auto;">
                         {% for doc in active_docs %}
                         {% if doc.is_image %}
-                        <img src="{% url 'invoices:serve_document' doc.id %}" id="docImage_{{ doc.id }}" class="doc-img {% if not forloop.first %}d-none{% endif %}" alt="Invoice Scan" data-docid="{{ doc.id }}" style="display: block; max-width: none; height: auto; transform-origin: center center; transition: width 0.12s ease-out, transform 0.12s ease-out; image-rendering: -webkit-optimize-contrast; pointer-events: none;" draggable="false">
+                        <div class="position-relative d-inline-block shadow-lg bg-white rounded doc-wrapper {% if not forloop.first %}d-none{% endif %}" id="wrapper_{{ doc.id }}">
+                            <img src="{% url 'invoices:serve_document' doc.id %}" id="docImage_{{ doc.id }}" class="doc-img" alt="Invoice Scan" data-docid="{{ doc.id }}" style="display: block; max-width: none; height: auto; transform-origin: center center; transition: width 0.12s ease-out, transform 0.12s ease-out; image-rendering: -webkit-optimize-contrast; pointer-events: none;" draggable="false">
+                            {% if forloop.first and highlight_boxes %}
+                            <!-- Marker Highlight Overlay (Book-Style Highlighter Pen on Paper - Pure Visual Aid, No Copying) -->
+                            <div class="position-absolute top-0 start-0 w-100 h-100 highlight-box-layer" id="deskBoxOverlay_{{ doc.id }}" style="pointer-events: none; z-index: 5;">
+                                {% for box in highlight_boxes %}
+                                <div class="book-marker-highlight position-absolute" 
+                                     id="desk_box_{{ box.field }}"
+                                     style="top: {{ box.top }}%; left: {{ box.left }}%; width: {{ box.width }}%; height: {{ box.height }}%; background-color: {{ box.marker_bg }}; border-bottom: {{ box.marker_border }}; border-radius: 3px; mix-blend-mode: multiply; pointer-events: none;"
+                                     title="{{ box.label }}: {{ box.value }}">
+                                    
+                                    <span class="marker-label-tag position-absolute top-0 start-0 translate-middle-y"
+                                          style="font-size: 0.62rem; font-weight: 700; background-color: {{ box.tag_bg }}; color: #ffffff; margin-left: 4px; padding: 1px 5px; border-radius: 3px; letter-spacing: 0.3px; font-family: system-ui, sans-serif; white-space: nowrap; pointer-events: none; box-shadow: 0 1px 3px rgba(0,0,0,0.15);">
+                                        {{ box.label }}
+                                    </span>
+                                </div>
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
                         {% elif doc.is_pdf %}
-                        <iframe src="{% url 'invoices:serve_document' doc.id %}#toolbar=0" style="width: 100%; height: 100%; min-height: 550px; border: none;" class="doc-pdf {% if not forloop.first %}d-none{% endif %}"></iframe>
+                        <div class="doc-wrapper {% if not forloop.first %}d-none{% endif %}" id="wrapper_{{ doc.id }}" style="width: 100%; height: 100%; min-height: 550px;">
+                            <iframe src="{% url 'invoices:serve_document' doc.id %}#toolbar=0" style="width: 100%; height: 100%; min-height: 550px; border: none;" class="doc-pdf"></iframe>
+                        </div>
                         {% endif %}
                         {% endfor %}
                     </div>
@@ -685,7 +729,7 @@ document.addEventListener('DOMContentLoaded', function() {
     let isEnhanced = false;
 
     function getActiveImg() {
-        return document.querySelector('.doc-viewport img:not(.d-none)') || images[0];
+        return document.querySelector('.doc-viewport .doc-wrapper:not(.d-none) img') || images[0];
     }
 
     function applyTransforms() {
@@ -866,16 +910,41 @@ document.addEventListener('DOMContentLoaded', function() {
             const fileEl = document.getElementById('docFilename');
             if (fileEl) fileEl.textContent = filename;
 
-            images.forEach(img => {
-                if (img.dataset.docid === targetId) {
-                    img.classList.remove('d-none');
+            document.querySelectorAll('.doc-wrapper').forEach(w => {
+                if (w.id === 'wrapper_' + targetId) {
+                    w.classList.remove('d-none');
                 } else {
-                    img.classList.add('d-none');
+                    w.classList.add('d-none');
                 }
             });
             fitWidth();
         });
     });
+
+    window.toggleDeskHighlightBoxes = function() {
+        const overlays = document.querySelectorAll('.highlight-box-layer');
+        const btn = document.getElementById('btnToggleBoxesDesk');
+        const txt = document.getElementById('boxDeskStateText');
+        let willShow = false;
+        overlays.forEach(layer => {
+            if (layer.classList.contains('d-none')) {
+                layer.classList.remove('d-none');
+                willShow = true;
+            } else {
+                layer.classList.add('d-none');
+            }
+        });
+        if (txt) txt.textContent = willShow ? 'ON' : 'OFF';
+        if (btn) {
+            if (willShow) {
+                btn.classList.add('btn-warning', 'text-dark', 'fw-bold');
+                btn.classList.remove('btn-outline-secondary');
+            } else {
+                btn.classList.remove('btn-warning', 'text-dark', 'fw-bold');
+                btn.classList.add('btn-outline-secondary');
+            }
+        }
+    };
 
     // 3. Auto-Calculate Tax Helper Button
     document.getElementById('btnAutoCalcTax')?.addEventListener('click', function() {
