@@ -112,6 +112,7 @@ class TallyGstWorkflowTests(TestCase):
         self.submission.sgst_amount = Decimal('450.00')
         self.submission.total_amount = Decimal('5900.00')
         self.submission.expense_ledger = 'Purchase Spares & Consumables'
+        self.submission.status = InvoiceSubmission.STATUS_VERIFIED
         self.submission.save()
 
         xml_output = generate_tally_xml([self.submission])
@@ -283,5 +284,67 @@ class TallyGstWorkflowTests(TestCase):
         self.assertEqual(split_inter['cgst'], 0.0)
         self.assertEqual(split_inter['sgst'], 0.0)
         self.assertEqual(split_inter['igst'], 1800.0)
+
+    def test_tally_xml_blocks_unverified_and_duplicate_export(self):
+        """Exporting Tally XML strictly requires VERIFIED status and blocks unforced duplicate exports."""
+        from apps.invoices.models import ExportAuditLog
+
+        self.client.login(username="naveen_acc", password="TestPassword@123")
+
+        # Unverified invoice must not be exported
+        self.submission.status = InvoiceSubmission.STATUS_SUBMITTED
+        self.submission.tally_export_batch = ''
+        self.submission.is_entered_in_tally = False
+        self.submission.save()
+
+        resp = self.client.get(reverse('invoices:export_tally_xml'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotIn(self.submission.submission_id, resp.content.decode('utf-8'))
+
+        # Once verified and review cleared, it is included in export batch
+        self.submission.status = InvoiceSubmission.STATUS_VERIFIED
+        self.submission.requires_manual_review = False
+        self.submission.save()
+
+        resp = self.client.get(reverse('invoices:export_tally_xml'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn(self.submission.submission_id, resp.content.decode('utf-8'))
+
+        # Reload submission to verify batch ID and audit log
+        self.submission.refresh_from_db()
+        self.assertTrue(self.submission.tally_export_batch.startswith('TALLY-'))
+        self.assertTrue(self.submission.is_entered_in_tally)
+        self.assertIsNotNone(self.submission.exported_at)
+        self.assertTrue(ExportAuditLog.objects.filter(export_type='TALLY_XML').exists())
+
+        # Second export without force=1 must NOT re-export the same voucher
+        resp2 = self.client.get(reverse('invoices:export_tally_xml'))
+        self.assertEqual(resp2.status_code, 200)
+        self.assertNotIn(self.submission.submission_id, resp2.content.decode('utf-8'))
+
+        # Force re-export allows it
+        resp3 = self.client.get(reverse('invoices:export_tally_xml') + '?force=1&filter=in_tally')
+        self.assertEqual(resp3.status_code, 200)
+        self.assertIn(self.submission.submission_id, resp3.content.decode('utf-8'))
+
+    def test_tally_xml_round_off_and_imbalance_rejection(self):
+        """Tally XML adds Round Off ledger for minor rounding and rejects imbalance > 1.00."""
+        # Case 1: Imbalance within 1.00 (e.g., 0.10) adds Round Off ledger
+        self.submission.total_amount = Decimal('100.00')
+        self.submission.taxable_amount = Decimal('84.70')
+        self.submission.cgst_amount = Decimal('7.60')
+        self.submission.sgst_amount = Decimal('7.60')  # debits = 84.70 + 7.60 + 7.60 = 99.90 (diff = +0.10)
+        self.submission.save()
+
+        xml = generate_tally_xml([self.submission])
+        self.assertIn('Round Off', xml)
+        self.assertIn('-0.10', xml)
+
+        # Case 2: Imbalance > 1.00 raises ValueError
+        self.submission.total_amount = Decimal('200.00')  # debits still 99.90, diff = 100.10 > 1.00
+        self.submission.save()
+
+        with self.assertRaises(ValueError):
+            generate_tally_xml([self.submission])
 
 

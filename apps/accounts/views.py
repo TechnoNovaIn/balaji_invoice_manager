@@ -114,18 +114,18 @@ class UserLoginView(LoginView):
 
     def form_invalid(self, form):
         username = form.data.get('username', 'unknown').strip()
-        cooldown_triggered, retry_after = record_login_failure(self.request, username)
+        is_blocked, retry_after = check_login_rate_limit(self.request, username)
         record_audit_log(
             None,
             "USER_LOGIN_FAILED",
             request=self.request,
             details={
                 "attempted_username": username,
-                "cooldown_triggered": cooldown_triggered,
+                "cooldown_triggered": is_blocked,
                 "retry_after_seconds": retry_after,
             },
         )
-        if cooldown_triggered:
+        if is_blocked:
             wait_mins = max(1, math.ceil(retry_after / 60))
             form.add_error(
                 None,

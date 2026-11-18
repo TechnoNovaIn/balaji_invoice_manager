@@ -108,7 +108,7 @@ class AuthenticationTest(TestCase):
 
     def test_remember_me_persistent_session(self):
         """
-        When 'Keep me signed in on this phone' is selected, session expiry is set to 1 year.
+        When 'Keep me signed in on this phone' is selected, session expiry is bounded to 30 days max.
         """
         url = reverse('accounts:login')
         response = self.client.post(url, {
@@ -117,5 +117,33 @@ class AuthenticationTest(TestCase):
             'remember_me': 'on',
         })
         self.assertEqual(response.status_code, 302)
-        # Session expiry should be 31536000 (1 year)
-        self.assertEqual(self.client.session.get_expiry_age(), 31536000)
+        # Session expiry should be 2592000 (30 days max)
+        self.assertEqual(self.client.session.get_expiry_age(), 2592000)
+
+    def test_authentication_backend_throttling_and_lockout(self):
+        """Authentication backend enforces account and IP cooldowns against brute-force attacks."""
+        from django.contrib.auth import authenticate
+        from django.test import RequestFactory
+        from apps.accounts.security import clear_login_rate_limit, check_login_rate_limit
+
+        rf = RequestFactory()
+        req = rf.post('/admin/login/', {'username': 'test_emp', 'password': 'BadPassword'})
+        req.META['REMOTE_ADDR'] = '198.51.100.42'
+
+        clear_login_rate_limit(req, 'test_emp')
+
+        # Trigger repeated failures
+        for _ in range(5):
+            u = authenticate(req, username='test_emp', password='BadPassword')
+            self.assertIsNone(u)
+
+        # 6th attempt: account is locked out in cache, check_login_rate_limit returns True
+        is_blocked, retry_after = check_login_rate_limit(req, 'test_emp')
+        self.assertTrue(is_blocked)
+        self.assertGreater(retry_after, 0)
+
+        # authenticate returns None immediately due to rate limit lockout
+        u6 = authenticate(req, username='test_emp', password='BadPassword')
+        self.assertIsNone(u6)
+
+        clear_login_rate_limit(req, 'test_emp')

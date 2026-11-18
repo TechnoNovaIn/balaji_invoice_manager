@@ -236,7 +236,7 @@
                         <td>
                             <span class="font-monospace fw-semibold text-dark">{{ sub.invoice_number|default:"-" }}</span>
                             <div class="text-muted small" style="font-size: 0.72rem;">
-                                {% if sub.invoice_date %}{{ sub.invoice_date|date:"d-M-Y" }}{% else %}<span class="badge bg-light text-muted border font-monospace">N/A</span>{% endif %}
+                                {{ sub.invoice_date|date:"d-M-Y"|default:sub.created_at|date:"d-M-Y" }}
                             </div>
                         </td>
 

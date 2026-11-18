@@ -207,7 +207,7 @@ CSRF_COOKIE_SAMESITE = 'Lax'
 SESSION_COOKIE_AGE = int(os.getenv('SESSION_COOKIE_AGE', 1209600))  # 14 days default
 PRIVILEGED_SESSION_AGE = int(os.getenv('PRIVILEGED_SESSION_AGE', 28800))  # 8 hours for Admin/Accounts/Mgmt
 EXTERNAL_SUBMITTER_SESSION_AGE = int(os.getenv('EXTERNAL_SUBMITTER_SESSION_AGE', 1209600))  # 14 days
-EMPLOYEE_SESSION_AGE = int(os.getenv('EMPLOYEE_SESSION_AGE', 31536000))  # 365 days mobile convenience
+EMPLOYEE_SESSION_AGE = int(os.getenv('EMPLOYEE_SESSION_AGE', 2592000))  # 30 days max (cut from 365 days)
 SESSION_EXPIRE_AT_BROWSER_CLOSE = False
 SESSION_SAVE_EVERY_REQUEST = True
 
@@ -233,9 +233,9 @@ SECURE_CONTENT_TYPE_NOSNIFF = True
 SECURE_REFERRER_POLICY = 'same-origin'
 
 # Environment-based Production SSL Controls
-ENABLE_SSL = os.getenv('DJANGO_ENABLE_SSL', 'False').lower() in ('true', '1', 't')
+ENABLE_SSL = os.getenv('DJANGO_ENABLE_SSL', 'True').lower() in ('true', '1', 't')
 SECURE_SSL_REDIRECT = (
-    os.getenv('SECURE_SSL_REDIRECT', 'False').lower() in ('true', '1', 't')
+    os.getenv('SECURE_SSL_REDIRECT', 'True').lower() in ('true', '1', 't')
     and not DEBUG
 )
 
@@ -243,12 +243,9 @@ if ENABLE_SSL and not DEBUG:
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
-    if SECURE_SSL_REDIRECT:
-        SECURE_HSTS_SECONDS = int(os.getenv('SECURE_HSTS_SECONDS', 31536000))
-        SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-        SECURE_HSTS_PRELOAD = True
-    else:
-        SECURE_HSTS_SECONDS = 0
+    SECURE_HSTS_SECONDS = int(os.getenv('SECURE_HSTS_SECONDS', 31536000))
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
 else:
     SECURE_SSL_REDIRECT = False
     SESSION_COOKIE_SECURE = False
@@ -278,7 +275,7 @@ BACKUP_RETENTION_DAYS = int(os.getenv('BACKUP_RETENTION_DAYS', 3650))
 
 # Gemini Vision AI for High-Accuracy Autonomous Invoice Extraction
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '').strip()
-GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash').strip()
+GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-3.5-flash').strip()
 GEMINI_FALLBACK_POLICY = os.getenv('GEMINI_FALLBACK_POLICY', 'auto').strip().lower()  # auto | always | never
 GEMINI_MAX_PAGES_PER_INVOICE = max(1, int(os.getenv('GEMINI_MAX_PAGES_PER_INVOICE', '3') or '3'))
 
@@ -354,7 +351,3 @@ LOGGING = {
         },
     },
 }
-
-# Tally Accounting Integration
-TALLY_COMPANY_NAME = os.getenv('TALLY_COMPANY_NAME', 'Balaji Transports')
-

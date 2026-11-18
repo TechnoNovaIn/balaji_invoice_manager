@@ -646,22 +646,22 @@ def process_uploaded_document_task(
                                 p_bytes = p_img['image_bytes']
                                 p_num = p_img['page_number_in_src']
                                 img_name = f"{os.path.splitext(file_name)[0]}_pg{p_num}.jpg"
-                            doc_img = InvoiceDocument.objects.create(
-                                submission=sub,
-                                source_document=uploaded_doc,
-                                start_page=seg['start_page'],
-                                end_page=seg['end_page'],
-                                page_number=p_idx,
-                                original_file=ContentFile(p_bytes, name=img_name),
-                                original_filename=img_name,
-                                file_sha256=hashlib.sha256(p_bytes).hexdigest(),
-                                file_size_bytes=len(p_bytes),
-                                content_type='image/jpeg',
-                                version=1,
-                                is_active_version=True,
-                            )
-                            if doc_img.original_file and doc_img.original_file.name:
-                                created_files.append((doc_img.original_file.storage, doc_img.original_file.name))
+                                doc_img = InvoiceDocument.objects.create(
+                                    submission=sub,
+                                    source_document=uploaded_doc,
+                                    start_page=seg['start_page'],
+                                    end_page=seg['end_page'],
+                                    page_number=p_idx,
+                                    original_file=ContentFile(p_bytes, name=img_name),
+                                    original_filename=img_name,
+                                    file_sha256=hashlib.sha256(p_bytes).hexdigest(),
+                                    file_size_bytes=len(p_bytes),
+                                    content_type='image/jpeg',
+                                    version=1,
+                                    is_active_version=True,
+                                )
+                                if doc_img.original_file and doc_img.original_file.name:
+                                    created_files.append((doc_img.original_file.storage, doc_img.original_file.name))
 
                         pdf_bytes = sub_files.get('pdf_bytes')
                         if pdf_bytes:

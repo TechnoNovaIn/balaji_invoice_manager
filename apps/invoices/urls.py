@@ -46,10 +46,5 @@ urlpatterns = [
     # Phase 7: Executive Analytics & Reports
     path('analytics/', views.analytics_dashboard, name='analytics_dashboard'),
     path('reports/<str:report_type>/', views.download_executive_report, name='download_executive_report'),
-
-    # Phase 2: Vendor Proposal & Approval Workflow
-    path('vendor-proposals/', views.vendor_proposals_list, name='vendor_proposals_list'),
-    path('vendor-proposals/<int:proposal_id>/approve/', views.approve_vendor_proposal_view, name='approve_vendor_proposal'),
-    path('vendor-proposals/<int:proposal_id>/reject/', views.reject_vendor_proposal_view, name='reject_vendor_proposal'),
 ]
 

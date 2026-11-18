@@ -1,4 +1,6 @@
-from django.core.management.base import BaseCommand
+import secrets
+from django.conf import settings
+from django.core.management.base import BaseCommand, CommandError
 from django.contrib.auth import get_user_model
 from apps.accounts.models import Department, UserRole
 
@@ -6,10 +8,16 @@ User = get_user_model()
 
 
 class Command(BaseCommand):
-    help = "Seeds development-only test accounts for Employee, Naveen, Admin, and Management."
+    help = "Seeds development-only test accounts with randomized secure passwords. Forbidden in production."
 
     def handle(self, *args, **options):
-        self.stdout.write("Seeding development departments and test accounts...")
+        if not getattr(settings, 'DEBUG', False):
+            raise CommandError(
+                "Refusing to execute: seed_dev_users is strictly forbidden in production environments (DEBUG=False). "
+                "Production accounts must be provisioned individually via 'createsuperuser' or the Admin portal."
+            )
+
+        self.stdout.write(self.style.WARNING("Seeding development departments and randomized test accounts..."))
 
         # 1. Departments
         fleet_dept, _ = Department.objects.get_or_create(
@@ -25,11 +33,10 @@ class Command(BaseCommand):
             defaults={"name": "General Transport & Logistics", "description": "Trip operations, loading, toll bills"}
         )
 
-        # 2. Test User Accounts
+        # 2. Test User Accounts (Random cryptographically generated passwords, must_change_password=True)
         test_accounts = [
             {
                 "username": "admin",
-                "password": "BalajiAdmin@2026",
                 "role": UserRole.ADMIN,
                 "first_name": "System",
                 "last_name": "Administrator",
@@ -40,7 +47,6 @@ class Command(BaseCommand):
             },
             {
                 "username": "naveen",
-                "password": "BalajiNaveen@2026",
                 "role": UserRole.NAVEEN,
                 "first_name": "Naveen",
                 "last_name": "Accounts",
@@ -53,7 +59,6 @@ class Command(BaseCommand):
             },
             {
                 "username": "employee",
-                "password": "BalajiEmp@2026",
                 "role": UserRole.EMPLOYEE,
                 "first_name": "S.",
                 "last_name": "Murugan",
@@ -64,7 +69,6 @@ class Command(BaseCommand):
             },
             {
                 "username": "management",
-                "password": "BalajiMgmt@2026",
                 "role": UserRole.MANAGEMENT,
                 "first_name": "Director",
                 "last_name": "Balaji",
@@ -74,6 +78,8 @@ class Command(BaseCommand):
                 "is_superuser": False
             }
         ]
+
+        generated_credentials = []
 
         for acc in test_accounts:
             user, created = User.objects.get_or_create(
@@ -88,8 +94,10 @@ class Command(BaseCommand):
                     "is_superuser": acc["is_superuser"]
                 }
             )
-            # Ensure password is set correctly
-            user.set_password(acc["password"])
+            # Generate one-time random password and force password change on first login
+            temp_password = f"Balaji!{secrets.token_urlsafe(12)}#"
+            user.set_password(temp_password)
+            user.must_change_password = True
             user.role = acc["role"]
             user.first_name = acc["first_name"]
             user.last_name = acc["last_name"]
@@ -101,10 +109,13 @@ class Command(BaseCommand):
             user.has_accounts_access = acc.get("has_accounts_access", False)
             user.save()
 
-            action_label = "Created" if created else "Updated password for"
+            action_label = "Created" if created else "Reset credentials for"
+            generated_credentials.append((user.username, user.get_role_display(), temp_password))
             self.stdout.write(self.style.SUCCESS(
-                f" - {action_label} [{user.get_role_display()}]: Username='{user.username}' / Password='{acc['password']}'"
+                f" - {action_label} [{user.get_role_display()}]: Username='{user.username}' (must_change_password=True)"
             ))
 
-        self.stdout.write(self.style.SUCCESS("Seeding complete. All 4 development accounts are active."))
+        self.stdout.write(self.style.SUCCESS("\nSeeding complete. One-time credentials generated (change on first login):"))
+        for uname, rname, pwd in generated_credentials:
+            self.stdout.write(f"  * {uname} ({rname}): {pwd}")
 

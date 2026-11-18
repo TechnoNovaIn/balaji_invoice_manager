@@ -20,7 +20,8 @@ from pydantic import BaseModel, Field
 
 from .vendor_validator import validate_vendor_and_financials, is_valid_gstin, clean_gstin
 from .e_invoice_utils import evaluate_e_invoice_status, extract_qr_e_invoice_data
-from .reader import parse_invoice_date_from_text
+
+os.environ.setdefault('GOOGLE_GENAI_HTTP_CLIENT', 'httpx')
 
 logger = logging.getLogger(__name__)
 
@@ -359,56 +360,6 @@ def extract_with_gemini(
     try:
         from google import genai
         from google.genai import types
-        from django.core.cache import cache
-        import hashlib
-
-        with open(path_obj, 'rb') as f:
-            file_bytes = f.read()
-
-        file_sha256 = hashlib.sha256(file_bytes).hexdigest()
-        mem_cache_key = f"gemini_ocr_sha256_{file_sha256}"
-        cached_result = cache.get(mem_cache_key)
-        if cached_result is not None:
-            logger.info("Gemini Extractor: Using memory-cached extraction for %s (0 API calls)", file_sha256[:12])
-            return cached_result
-
-        # Persistent DB-backed OCR cache with model, prompt and schema versioning
-        from .ocr_cache_service import (
-            claim_or_get_cached_ocr,
-            record_ocr_cache_success,
-            record_ocr_cache_failure,
-            PROMPT_VERSION,
-            SCHEMA_VERSION,
-        )
-        import time
-
-        preferred_model = getattr(settings, 'GEMINI_MODEL', 'gemini-2.5-flash') or 'gemini-2.5-flash'
-        db_cached, lease_token, cache_record = claim_or_get_cached_ocr(
-            file_sha256=file_sha256,
-            model_name=preferred_model,
-            prompt_version=PROMPT_VERSION,
-            schema_version=SCHEMA_VERSION,
-        )
-        if db_cached is not None:
-            logger.info("Gemini Extractor: Using persistent DB-cached extraction for %s (0 API calls)", file_sha256[:12])
-            try:
-                cache.set(mem_cache_key, db_cached, timeout=86400 * 30)
-            except Exception:
-                pass
-            return db_cached
-
-        if lease_token is None and cache_record and cache_record.status == 'PROCESSING':
-            # Concurrent duplicate suppression: poll up to 5s if another worker is extracting
-            for _ in range(5):
-                time.sleep(1.0)
-                cache_record.refresh_from_db()
-                if cache_record.status == 'COMPLETED' and cache_record.extraction_data:
-                    logger.info("Gemini Extractor: Reused concurrent extraction for %s (0 duplicate API calls)", file_sha256[:12])
-                    try:
-                        cache.set(mem_cache_key, cache_record.extraction_data, timeout=86400 * 30)
-                    except Exception:
-                        pass
-                    return cache_record.extraction_data
 
         # Initialize client with timeout
         client = genai.Client(api_key=api_key)
@@ -424,6 +375,9 @@ def extract_with_gemini(
         }
         mime_type = mime_map.get(ext, 'image/jpeg')
 
+        with open(path_obj, 'rb') as f:
+            file_bytes = f.read()
+
         file_part = types.Part.from_bytes(data=file_bytes, mime_type=mime_type)
 
         prompt_contents = [file_part]
@@ -435,10 +389,10 @@ def extract_with_gemini(
         else:
             prompt_contents.append(PROMPT_INSTRUCTIONS)
 
-        # Accuracy-first model cascade: prioritize Flash models with 15 RPM / 1,500 RPD free tier limits
-        preferred_model = getattr(settings, 'GEMINI_MODEL', 'gemini-2.5-flash') or 'gemini-2.5-flash'
+        # Accuracy-first model cascade: prioritize active Gemini 3.5 Flash models
+        preferred_model = getattr(settings, 'GEMINI_MODEL', 'gemini-3.5-flash') or 'gemini-3.5-flash'
         candidate_models = [preferred_model]
-        for m in ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-2.5-flash-lite']:
+        for m in ['gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.8-flash']:
             if m not in candidate_models:
                 candidate_models.append(m)
 
@@ -500,55 +454,20 @@ def extract_with_gemini(
         data = validated_schema.model_dump()
         amounts, fin_warnings = _reconcile_extracted_amounts(data)
 
-        # Pro escalation disabled by default on free tier to protect 2 RPM / 50 RPD quota
-        enable_pro = getattr(settings, 'GEMINI_ENABLE_PRO_ESCALATION', False)
-        is_mock_client = type(response).__module__.startswith('unittest.mock')
-        needs_pro_verify = (
-            enable_pro
-            and not is_mock_client
-            and used_model != 'gemini-2.5-pro'
-            and (bool(fin_warnings) or bool(data.get('has_handwritten_amounts')) or str(data.get('document_type') or '').upper() == 'HANDWRITTEN')
-        )
-        if needs_pro_verify:
-            try:
-                pro_resp = _invoke_gemini('gemini-2.5-pro')
-                if pro_resp and pro_resp.text:
-                    pro_data = InvoiceSchema(**json.loads(pro_resp.text)).model_dump()
-                    pro_amounts, pro_warnings = _reconcile_extracted_amounts(pro_data)
-                    if len(pro_warnings) <= len(fin_warnings):
-                        data, amounts, fin_warnings = pro_data, pro_amounts, pro_warnings
-                        used_model = 'gemini-2.5-pro'
-            except Exception as pro_err:
-                logger.debug("Gemini Pro verification pass skipped softly: %s", type(pro_err).__name__)
-
-        # Date parsing with multi-format fallback
+        # Date parsing
         parsed_invoice_date = None
         if data.get('invoice_date'):
-            raw_d = str(data['invoice_date']).strip()
-            parsed_invoice_date = parse_invoice_date_from_text(raw_d)
-            if not parsed_invoice_date:
-                for fmt in ('%Y-%m-%d', '%d-%m-%Y', '%d/%m/%Y', '%d-%b-%Y', '%d-%B-%Y', '%Y/%m/%d'):
-                    try:
-                        parsed_invoice_date = datetime.strptime(raw_d[:10].strip(), fmt).date()
-                        break
-                    except (ValueError, TypeError):
-                        continue
-
-        is_handwritten = bool(data.get('has_handwritten_amounts')) or str(data.get('document_type') or '').upper() == 'HANDWRITTEN'
-        if not parsed_invoice_date and not is_handwritten and extracted_text:
-            parsed_invoice_date = parse_invoice_date_from_text(extracted_text)
+            try:
+                parsed_invoice_date = datetime.strptime(str(data['invoice_date'])[:10], '%Y-%m-%d').date()
+            except (ValueError, TypeError):
+                parsed_invoice_date = None
 
         parsed_due_date = None
         if data.get('due_date'):
-            raw_due = str(data['due_date']).strip()
-            parsed_due_date = parse_invoice_date_from_text(raw_due)
-            if not parsed_due_date:
-                for fmt in ('%Y-%m-%d', '%d-%m-%Y', '%d/%m/%Y', '%d-%b-%Y', '%d-%B-%Y', '%Y/%m/%d'):
-                    try:
-                        parsed_due_date = datetime.strptime(raw_due[:10].strip(), fmt).date()
-                        break
-                    except (ValueError, TypeError):
-                        continue
+            try:
+                parsed_due_date = datetime.strptime(str(data['due_date'])[:10], '%Y-%m-%d').date()
+            except (ValueError, TypeError):
+                parsed_due_date = None
 
         taxable_amt = amounts['taxable_amount']
         cgst_amt = amounts['cgst_amount']
@@ -682,17 +601,8 @@ def extract_with_gemini(
             result['party_gstin'],
             result['vendor_match_status']
         )
-        try:
-            cache.set(mem_cache_key, result, timeout=86400 * 30)
-            record_ocr_cache_success(cache_record, lease_token, result)
-        except Exception:
-            pass
         return result
 
     except Exception as exc:
-        try:
-            record_ocr_cache_failure(cache_record, lease_token, str(exc))
-        except Exception:
-            pass
         logger.warning("Gemini Vision AI extraction exception (falling back to RapidOCR): %s", type(exc).__name__)
         return None

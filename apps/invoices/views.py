@@ -397,13 +397,6 @@ def my_submissions(request):
     })
 
 
-def get_document_highlight_boxes(submission):
-    """
-    Highlight feature removed per user requirement. Returns empty list.
-    """
-    return []
-
-
 @login_required
 def submission_detail(request, submission_id):
     """
@@ -431,8 +424,6 @@ def submission_detail(request, submission_id):
         prev_sub = InvoiceSubmission.objects.filter(created_at__gt=submission.created_at).order_by('created_at').first()
         next_sub = InvoiceSubmission.objects.filter(created_at__lt=submission.created_at).order_by('-created_at').first()
 
-    highlight_boxes = get_document_highlight_boxes(submission)
-
     return render(request, 'invoices/submission_detail.html', {
         'submission': submission,
         'active_docs': active_docs,
@@ -440,7 +431,6 @@ def submission_detail(request, submission_id):
         'status_history': status_history,
         'prev_sub': prev_sub,
         'next_sub': next_sub,
-        'highlight_boxes': highlight_boxes,
         'can_edit': submission.can_be_edited and (
             (submission.employee_id == request.user.id and request.user.can_resubmit_own_invoices())
             or request.user.is_admin_role
@@ -1547,20 +1537,55 @@ def toggle_gst_status(request, submission_id):
 def export_tally_xml(request):
     """
     Exports invoices to standard Tally XML format (compatible with TallyPrime & Tally.ERP 9).
+    Strictly exports only verified, audit-cleared invoices (status=VERIFIED, requires_manual_review=False).
+    Assigns unique batch ID, timestamps export, records ExportAuditLog, and blocks accidental duplicate re-exports unless force=1 is passed.
     """
     if not (request.user.is_naveen or request.user.is_admin_role or request.user.is_management):
         raise PermissionDenied("Access Denied.")
 
+    force = request.GET.get('force', '').lower() in ('1', 'true', 'yes')
     filter_type = request.GET.get('filter', 'pending_tally')
-    submissions = InvoiceSubmission.objects.all().select_related('employee').prefetch_related('documents')
 
-    if filter_type == 'pending_tally':
-        submissions = submissions.filter(is_entered_in_tally=False)
-    elif filter_type == 'in_tally':
-        submissions = submissions.filter(is_entered_in_tally=True)
+    submissions = InvoiceSubmission.objects.filter(
+        status=InvoiceSubmission.STATUS_VERIFIED,
+        requires_manual_review=False
+    ).select_related('employee').prefetch_related('documents')
 
-    xml_content = generate_tally_xml(submissions)
-    now_str = timezone.now().strftime('%Y%m%d_%H%M')
+    if not force:
+        # Default: Prevent duplicate exports by only exporting unexported vouchers
+        submissions = submissions.filter(tally_export_batch='', is_entered_in_tally=False)
+    else:
+        if filter_type == 'in_tally':
+            submissions = submissions.filter(is_entered_in_tally=True)
+
+    # Convert to list to evaluate and freeze records for XML & audit batching
+    sub_list = list(submissions)
+
+    xml_content = generate_tally_xml(sub_list)
+    now = timezone.now()
+    now_str = now.strftime('%Y%m%d_%H%M')
+    batch_id = f"TALLY-{now.strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6].upper()}"
+
+    if sub_list:
+        sub_ids = [s.id for s in sub_list]
+        InvoiceSubmission.objects.filter(id__in=sub_ids).update(
+            tally_export_batch=batch_id,
+            exported_at=now,
+            is_entered_in_tally=True
+        )
+
+        total_taxable = sum((s.taxable_amount or Decimal('0.00')) for s in sub_list)
+        total_amount = sum((s.total_amount or Decimal('0.00')) for s in sub_list)
+
+        ExportAuditLog.objects.create(
+            export_type='TALLY_XML',
+            exported_by=request.user,
+            record_count=len(sub_list),
+            total_taxable=total_taxable,
+            total_amount=total_amount,
+            filename=f"tally_invoices_import_{now_str}.xml",
+            filters_applied=f"status=VERIFIED, manual_review=False, batch_id={batch_id}, force={force}"
+        )
 
     response = HttpResponse(xml_content, content_type='application/xml')
     response['Content-Disposition'] = f'attachment; filename="tally_invoices_import_{now_str}.xml"'
@@ -1920,29 +1945,6 @@ def verification_workspace(request, submission_id):
 
     financial_warnings = audit_submission_financials(submission)
     amount_in_words = (getattr(submission, 'gemini_extracted_data', None) or {}).get('amount_in_words') or ''
-    highlight_boxes = get_document_highlight_boxes(submission)
-
-    # Check if registered vendor or if a pending proposal exists
-    from .models import VendorMaster, VendorProposal
-    from .vendor_service import create_or_get_vendor_proposal
-    from .vendor_validator import normalize_vendor_name
-    from .vendor_directory import TALLY_EXPENSE_LEDGERS
-
-    is_registered_vendor = False
-    if submission.party_gstin:
-        is_registered_vendor = VendorMaster.objects.filter(gstin=submission.party_gstin).exists()
-    elif submission.party_name:
-        is_registered_vendor = VendorMaster.objects.filter(normalized_name=normalize_vendor_name(submission.party_name)).exists()
-
-    pending_vendor_proposal = None
-    if not is_registered_vendor and submission.party_name:
-        pending_vendor_proposal, _ = create_or_get_vendor_proposal(
-            party_name=submission.party_name,
-            party_gstin=submission.party_gstin,
-            source_submission=submission,
-            suggested_ledger=submission.expense_ledger,
-            created_by_user=request.user
-        )
 
     return render(request, 'invoices/verification_workspace.html', {
         'submission': submission,
@@ -1951,12 +1953,8 @@ def verification_workspace(request, submission_id):
         'ledger_mappings': ledger_mappings,
         'financial_warnings': financial_warnings,
         'amount_in_words': amount_in_words,
-        'highlight_boxes': highlight_boxes,
         'prev_sub': prev_sub,
         'next_sub': next_sub,
-        'is_registered_vendor': is_registered_vendor,
-        'pending_vendor_proposal': pending_vendor_proposal,
-        'tally_ledgers': TALLY_EXPENSE_LEDGERS,
         'page_title': f"Verify Purchase - {submission.submission_id}",
     })
 
@@ -2148,107 +2146,6 @@ def download_executive_report(request, report_type):
     )
     response['Content-Disposition'] = f'attachment; filename="Balaji_Executive_Report_{report_type}_{now_str}.xlsx"'
     return response
-
-
-# ==============================================================================
-# PHASE 2 — CONTROLLED VENDOR PROPOSAL & APPROVAL WORKFLOW
-# ==============================================================================
-
-@login_required
-def vendor_proposals_list(request):
-    """
-    Displays list of proposed vendors detected from invoices.
-    Allows Naveen / Admin to review checksum status, assign ledger, and explicitly approve/reject.
-    """
-    if not (request.user.is_naveen or request.user.is_admin_role or request.user.is_management):
-        raise PermissionDenied("Access Denied.")
-
-    from .models import VendorProposal, VendorAuditLog
-    from .vendor_directory import TALLY_EXPENSE_LEDGERS
-
-    status_filter = request.GET.get('status', VendorProposal.STATUS_PENDING)
-    qs = VendorProposal.objects.select_related('source_submission', 'reviewed_by', 'approved_vendor').all()
-    if status_filter != 'ALL':
-        qs = qs.filter(status=status_filter)
-
-    proposals = qs.order_by('-created_at')[:100]
-    audit_logs = VendorAuditLog.objects.select_related('performer', 'vendor', 'proposal').order_by('-created_at')[:30]
-
-    return render(request, 'invoices/vendor_proposals.html', {
-        'proposals': proposals,
-        'audit_logs': audit_logs,
-        'current_status': status_filter,
-        'tally_ledgers': TALLY_EXPENSE_LEDGERS,
-        'page_title': 'Vendor Proposal & Onboarding Desk',
-    })
-
-
-@login_required
-def approve_vendor_proposal_view(request, proposal_id):
-    """
-    POST endpoint to explicitly approve a VendorProposal and register into VendorMaster.
-    """
-    if not (request.user.is_naveen or request.user.is_admin_role):
-        raise PermissionDenied("Only Naveen or Administrator can approve new vendors.")
-
-    if request.method != 'POST':
-        messages.error(request, "Invalid request method.")
-        return redirect('invoices:vendor_proposals_list')
-
-    from .vendor_service import approve_vendor_proposal
-
-    assigned_ledger = request.POST.get('assigned_expense_ledger', '').strip()
-    final_name = request.POST.get('final_name', '').strip() or None
-    final_address = request.POST.get('final_address', '').strip() or None
-    redirect_to = request.POST.get('redirect_to', '')
-
-    try:
-        vendor = approve_vendor_proposal(
-            proposal_id=proposal_id,
-            approved_by_user=request.user,
-            assigned_ledger=assigned_ledger,
-            final_name=final_name,
-            final_address=final_address,
-        )
-        messages.success(request, f"✓ Vendor '{vendor.name}' successfully approved and registered into VendorMaster!")
-    except Exception as e:
-        messages.error(request, f"Failed to approve vendor proposal: {str(e)}")
-
-    if redirect_to:
-        return redirect(redirect_to)
-    return redirect('invoices:vendor_proposals_list')
-
-
-@login_required
-def reject_vendor_proposal_view(request, proposal_id):
-    """
-    POST endpoint to reject a VendorProposal.
-    """
-    if not (request.user.is_naveen or request.user.is_admin_role):
-        raise PermissionDenied("Only Naveen or Administrator can reject vendor proposals.")
-
-    if request.method != 'POST':
-        messages.error(request, "Invalid request method.")
-        return redirect('invoices:vendor_proposals_list')
-
-    from .vendor_service import reject_vendor_proposal
-
-    reason = request.POST.get('rejection_reason', 'Rejected during manual operator review').strip()
-    redirect_to = request.POST.get('redirect_to', '')
-
-    try:
-        proposal = reject_vendor_proposal(
-            proposal_id=proposal_id,
-            rejected_by_user=request.user,
-            reason=reason,
-        )
-        messages.warning(request, f"Vendor proposal '{proposal.proposed_name}' was rejected.")
-    except Exception as e:
-        messages.error(request, f"Failed to reject vendor proposal: {str(e)}")
-
-    if redirect_to:
-        return redirect(redirect_to)
-    return redirect('invoices:vendor_proposals_list')
 
 
 

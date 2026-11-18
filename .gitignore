@@ -2,6 +2,10 @@
 *.pyc
 __pycache__/
 *.dump
+db.sqlite3
+*.sqlite3
+db.sqlite3-shm
+db.sqlite3-wal
 media/invoices/originals/*
 media/invoices/processed/*
 !media/invoices/originals/.gitkeep

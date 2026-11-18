@@ -1,13 +1,18 @@
 import xml.etree.ElementTree as ET
+from decimal import Decimal
 from xml.dom import minidom
 from django.utils import timezone
 from .models import InvoiceSubmission
+
+TWO_PLACES = Decimal('0.01')
 
 
 def generate_tally_xml(submissions) -> str:
     """
     Generate standard TallyPrime & Tally.ERP 9 compatible XML for importing
     Purchase & Expense vouchers directly into Tally.
+    Enforces strict Decimal arithmetic, debits/credits balance validation,
+    Round Off ledger handling (<= ₹1.00), and Input Cess accounting.
     """
     envelope = ET.Element('ENVELOPE')
 
@@ -26,8 +31,7 @@ def generate_tally_xml(submissions) -> str:
 
     static_vars = ET.SubElement(req_desc, 'STATICVARIABLES')
     sv_company = ET.SubElement(static_vars, 'SVCURRENTCOMPANY')
-    from django.conf import settings
-    sv_company.text = getattr(settings, 'TALLY_COMPANY_NAME', 'Balaji Transports') or 'Balaji Transports'
+    sv_company.text = 'Balaji Transports'
 
     req_data = ET.SubElement(import_data, 'REQUESTDATA')
 
@@ -56,20 +60,41 @@ def generate_tally_xml(submissions) -> str:
             narration += f" | GSTIN: {sub.party_gstin}"
         ET.SubElement(voucher, 'NARRATION').text = narration
 
-        # Total amount credited to Supplier (Party Ledger - Credit)
-        total_val = float(sub.total_amount or 0.0)
-        taxable_val = float(sub.taxable_amount or total_val)
-        cgst_val = float(sub.cgst_amount or 0.0)
-        sgst_val = float(sub.sgst_amount or 0.0)
-        igst_val = float(sub.igst_amount or 0.0)
+        # Precise Decimal calculations (quantized to 2 decimal places)
+        total_val = Decimal(str(sub.total_amount or '0.00')).quantize(TWO_PLACES)
+        cgst_val = Decimal(str(sub.cgst_amount or '0.00')).quantize(TWO_PLACES)
+        sgst_val = Decimal(str(sub.sgst_amount or '0.00')).quantize(TWO_PLACES)
+        igst_val = Decimal(str(sub.igst_amount or '0.00')).quantize(TWO_PLACES)
+        cess_val = Decimal(str(getattr(sub, 'cess_amount', None) or '0.00')).quantize(TWO_PLACES)
 
-        # 1. Party Ledger (Credit = negative in Tally XML)
+        raw_taxable = Decimal(str(sub.taxable_amount or '0.00')).quantize(TWO_PLACES)
+        taxes_sum = cgst_val + sgst_val + igst_val + cess_val
+
+        if raw_taxable > Decimal('0.00'):
+            taxable_val = raw_taxable
+        else:
+            # If taxable amount is 0, compute it by subtracting taxes from total, never counting tax twice
+            taxable_val = max(Decimal('0.00'), total_val - taxes_sum).quantize(TWO_PLACES)
+
+        # Balance check: Debits must equal Credits (within ₹1.00 for statutory round-off)
+        debits_sum = taxable_val + cgst_val + sgst_val + igst_val + cess_val
+        diff = (total_val - debits_sum).quantize(TWO_PLACES)
+
+        if abs(diff) > Decimal('1.00'):
+            raise ValueError(
+                f"Invoice {sub.submission_id} has a debit/credit imbalance of ₹{abs(diff):.2f} "
+                f"(exceeds ₹1.00 statutory tolerance). Total Credit: ₹{total_val:.2f}, "
+                f"Total Debits: ₹{debits_sum:.2f} (Taxable: ₹{taxable_val:.2f}, Tax: ₹{taxes_sum:.2f}). "
+                f"Please correct the invoice amounts before exporting to Tally."
+            )
+
+        # 1. Party Ledger (Credit = positive amount with ISDEEMEDPOSITIVE='No' in Tally XML)
         party_entry = ET.SubElement(voucher, 'ALLLEDGERENTRIES.LIST')
         ET.SubElement(party_entry, 'LEDGERNAME').text = party_name
         ET.SubElement(party_entry, 'ISDEEMEDPOSITIVE').text = 'No'
         ET.SubElement(party_entry, 'AMOUNT').text = f"{total_val:.2f}"
 
-        # 2. Expense Ledger (Debit = positive in Tally XML)
+        # 2. Expense Ledger (Debit = negative amount with ISDEEMEDPOSITIVE='Yes' in Tally XML)
         expense_ledger_name = sub.expense_ledger or 'Diesel Expenses'
         expense_entry = ET.SubElement(voucher, 'ALLLEDGERENTRIES.LIST')
         ET.SubElement(expense_entry, 'LEDGERNAME').text = expense_ledger_name
@@ -77,25 +102,45 @@ def generate_tally_xml(submissions) -> str:
         ET.SubElement(expense_entry, 'AMOUNT').text = f"-{taxable_val:.2f}"
 
         # 3. CGST Input Ledger (if applicable)
-        if cgst_val > 0:
+        if cgst_val > Decimal('0.00'):
             cgst_entry = ET.SubElement(voucher, 'ALLLEDGERENTRIES.LIST')
             ET.SubElement(cgst_entry, 'LEDGERNAME').text = 'Input CGST'
             ET.SubElement(cgst_entry, 'ISDEEMEDPOSITIVE').text = 'Yes'
             ET.SubElement(cgst_entry, 'AMOUNT').text = f"-{cgst_val:.2f}"
 
         # 4. SGST Input Ledger (if applicable)
-        if sgst_val > 0:
+        if sgst_val > Decimal('0.00'):
             sgst_entry = ET.SubElement(voucher, 'ALLLEDGERENTRIES.LIST')
             ET.SubElement(sgst_entry, 'LEDGERNAME').text = 'Input SGST'
             ET.SubElement(sgst_entry, 'ISDEEMEDPOSITIVE').text = 'Yes'
             ET.SubElement(sgst_entry, 'AMOUNT').text = f"-{sgst_val:.2f}"
 
         # 5. IGST Input Ledger (if applicable)
-        if igst_val > 0:
+        if igst_val > Decimal('0.00'):
             igst_entry = ET.SubElement(voucher, 'ALLLEDGERENTRIES.LIST')
             ET.SubElement(igst_entry, 'LEDGERNAME').text = 'Input IGST'
             ET.SubElement(igst_entry, 'ISDEEMEDPOSITIVE').text = 'Yes'
             ET.SubElement(igst_entry, 'AMOUNT').text = f"-{igst_val:.2f}"
+
+        # 6. Cess Input Ledger (if applicable)
+        if cess_val > Decimal('0.00'):
+            cess_entry = ET.SubElement(voucher, 'ALLLEDGERENTRIES.LIST')
+            ET.SubElement(cess_entry, 'LEDGERNAME').text = 'Input Cess'
+            ET.SubElement(cess_entry, 'ISDEEMEDPOSITIVE').text = 'Yes'
+            ET.SubElement(cess_entry, 'AMOUNT').text = f"-{cess_val:.2f}"
+
+        # 7. Round Off Ledger (if difference exists within ₹1.00 tolerance)
+        if diff != Decimal('0.00'):
+            roundoff_entry = ET.SubElement(voucher, 'ALLLEDGERENTRIES.LIST')
+            ET.SubElement(roundoff_entry, 'LEDGERNAME').text = 'Round Off'
+            if diff > Decimal('0.00'):
+                # Total credit exceeds debits; add a debit to balance
+                ET.SubElement(roundoff_entry, 'ISDEEMEDPOSITIVE').text = 'Yes'
+                ET.SubElement(roundoff_entry, 'AMOUNT').text = f"-{diff:.2f}"
+            else:
+                # Debits exceed total credit; add a credit to balance
+                ET.SubElement(roundoff_entry, 'ISDEEMEDPOSITIVE').text = 'No'
+                ET.SubElement(roundoff_entry, 'AMOUNT').text = f"{abs(diff):.2f}"
 
     rough_xml = ET.tostring(envelope, 'utf-8')
     reparsed = minidom.parseString(rough_xml)

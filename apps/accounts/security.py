@@ -203,7 +203,7 @@ def get_session_expiry_for_user(user, remember_me: bool) -> int:
     - If remember_me is False -> 0 (expire at browser close).
     - Privileged roles (Admin / Naveen / Accounts / Management) -> shorter privileged window (default 8h).
     - External submitters -> bounded convenience window (default 14 days).
-    - Field employees -> long-lived mobile convenience window (default 365 days).
+    - Field employees -> bounded mobile window (default 30 days max).
     """
     if not remember_me:
         return 0
@@ -211,7 +211,7 @@ def get_session_expiry_for_user(user, remember_me: bool) -> int:
         return int(getattr(settings, 'PRIVILEGED_SESSION_AGE', 28800))
     if getattr(user, 'is_external_submitter', False):
         return int(getattr(settings, 'EXTERNAL_SUBMITTER_SESSION_AGE', 1209600))
-    return int(getattr(settings, 'EMPLOYEE_SESSION_AGE', 31536000))
+    return int(getattr(settings, 'EMPLOYEE_SESSION_AGE', 2592000))
 
 
 def invalidate_user_sessions(user) -> int:

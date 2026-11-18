@@ -30,8 +30,8 @@ class VendorValidatorAndMasterTestSuite(TestCase):
         # Create sample verified vendor
         self.vm1 = VendorMaster.objects.create(
             name="TEST LOGISTICS SUPPLIES",
-            gstin="29ABCPE1234F1Z7",
-            pan="ABCPE1234F",
+            gstin="29ABCDE1234F1Z5",
+            pan="ABCDE1234F",
             state="Karnataka",
             state_code="29",
             default_expense_ledger="Purchase Spares & Consumables",
@@ -53,7 +53,7 @@ class VendorValidatorAndMasterTestSuite(TestCase):
         """Rule A: Known vendor with matching GSTIN -> MATCHED_VERIFIED, financial approval eligible."""
         val = validate_vendor_and_financials(
             party_name="TEST LOGISTICS SUPPLIES",
-            party_gstin="29ABCPE1234F1Z7"
+            party_gstin="29ABCDE1234F1Z5"
         )
         self.assertEqual(val['vendor_match_status'], 'MATCHED_VERIFIED')
         self.assertFalse(val['is_ambiguous_vendor'])
@@ -72,7 +72,7 @@ class VendorValidatorAndMasterTestSuite(TestCase):
         self.assertFalse(val['is_ambiguous_vendor'])
         self.assertTrue(val['requires_manual_review'])
         self.assertFalse(val['is_financial_approval_eligible'])
-        self.assertEqual(val['party_gstin'], "29ABCPE1234F1Z7")
+        self.assertEqual(val['party_gstin'], "29ABCDE1234F1Z5")
 
     def test_rule_c_unknown_vendor_no_gstin(self):
         """Rule C: Unknown vendor without GSTIN -> UNKNOWN_VENDOR_NO_GSTIN, ambiguous, review strictly required."""
@@ -90,7 +90,7 @@ class VendorValidatorAndMasterTestSuite(TestCase):
         """Rule D: Unknown vendor with statutory GSTIN -> UNREGISTERED_VENDOR_VALID_GSTIN."""
         val = validate_vendor_and_financials(
             party_name="New Highway Spares Store",
-            party_gstin="29XYZAB5678C1Z2"
+            party_gstin="29XYZAB5678C1Z9"
         )
         self.assertEqual(val['vendor_match_status'], 'UNREGISTERED_VENDOR_VALID_GSTIN')
         self.assertFalse(val['is_ambiguous_vendor'])
@@ -100,7 +100,7 @@ class VendorValidatorAndMasterTestSuite(TestCase):
 
     def test_rule_e_gstin_mismatch(self):
         """Rule E: GSTIN Mismatch -> GSTIN_MISMATCH, never silently overwrite registered GSTIN."""
-        # Voucher has vendor name TEST LOGISTICS SUPPLIES (registered 29ABCPE1234F1Z7),
+        # Voucher has vendor name TEST LOGISTICS SUPPLIES (registered 29ABCDE1234F1Z5),
         # but voucher has different GSTIN 29AAACJ6716F1ZK (JK Tyre)
         val = validate_vendor_and_financials(
             party_name="TEST LOGISTICS SUPPLIES",
@@ -116,15 +116,15 @@ class VendorValidatorAndMasterTestSuite(TestCase):
 
     def test_database_vendor_master_lookups(self):
         """Test database VendorMaster lookup by GSTIN, name, and PAN."""
-        v_gstin = find_vendor_by_gstin("29ABCPE1234F1Z7")
+        v_gstin = find_vendor_by_gstin("29ABCDE1234F1Z5")
         self.assertIsNotNone(v_gstin)
         self.assertEqual(v_gstin['name'], "TEST LOGISTICS SUPPLIES")
 
         v_name = find_vendor_by_name("Test Logistics Supplies")
         self.assertIsNotNone(v_name)
-        self.assertEqual(v_name['gstin'], "29ABCPE1234F1Z7")
+        self.assertEqual(v_name['gstin'], "29ABCDE1234F1Z5")
 
-        v_pan = find_vendor_by_pan("ABCPE1234F")
+        v_pan = find_vendor_by_pan("ABCDE1234F")
         self.assertIsNotNone(v_pan)
         self.assertEqual(v_pan['name'], "TEST LOGISTICS SUPPLIES")
 
@@ -132,8 +132,8 @@ class VendorValidatorAndMasterTestSuite(TestCase):
         """Test CSV import of vendor master records with duplicate detection."""
         csv_content = (
             "vendor_name,gstin,pan,state,ledger,address\n"
-            "SRI GANESH BATTERIES,29AAIFG1234K1ZB,AAIFG1234K,Karnataka,Purchase Spares & Consumables,Hubli Road\n"
-            "TEST LOGISTICS SUPPLIES,29ABCPE1234F1Z7,ABCPE1234F,Karnataka,Purchase Spares & Consumables,Bangalore\n"  # Duplicate
+            "SRI GANESH BATTERIES,29AAIFG1234K1Z2,AAIFG1234K,Karnataka,Purchase Spares & Consumables,Hubli Road\n"
+            "TEST LOGISTICS SUPPLIES,29ABCDE1234F1Z5,ABCDE1234F,Karnataka,Purchase Spares & Consumables,Bangalore\n"  # Duplicate
             "BAD GSTIN VENDOR,INVALID_GST_CODE,,,General Office Expenses,\n"  # Invalid GSTIN
         )
 
@@ -146,5 +146,5 @@ class VendorValidatorAndMasterTestSuite(TestCase):
         self.assertEqual(report['error_count'], 1)    # BAD GSTIN VENDOR
 
         # Verify SRI GANESH BATTERIES was persisted
-        self.assertTrue(VendorMaster.objects.filter(gstin="29AAIFG1234K1ZB").exists())
+        self.assertTrue(VendorMaster.objects.filter(gstin="29AAIFG1234K1Z2").exists())
 
