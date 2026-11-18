@@ -1309,6 +1309,17 @@ def tally_workspace(request, submission_id):
         is_in_tally = 'is_entered_in_tally' in request.POST
         is_in_gst = 'is_filed_in_gst' in request.POST
 
+        # Already in Tally and staying there: financial fields are locked (only voucher no / GST status change).
+        keep_financials_locked = submission.is_financially_locked and is_in_tally
+        # Only verified invoices may be marked as entered in Tally.
+        if is_in_tally and not submission.is_entered_in_tally and submission.status != InvoiceSubmission.STATUS_VERIFIED:
+            is_in_tally = False
+            messages.warning(
+                request,
+                f"Invoice {submission.submission_id} is not verified yet, so it was not marked as entered in Tally. "
+                "Verify it on the Verification Desk first."
+            )
+
         new_data = {
             'party_name': party_name,
             'party_gstin': party_gstin,
@@ -1333,13 +1344,16 @@ def tally_workspace(request, submission_id):
             except ValueError:
                 messages.warning(request, f"Invalid invoice date format '{invoice_date_str}'; expected YYYY-MM-DD.")
 
-        record_field_corrections(submission, new_data, request.user, reason="Tally Workspace update")
-        submission.refresh_from_db()
+        if keep_financials_locked:
+            messages.info(request, "Invoice is already entered in Tally; financial fields were not changed.")
+        else:
+            record_field_corrections(submission, new_data, request.user, reason="Tally Workspace update")
+            submission.refresh_from_db()
 
-        apply_vendor_validation_to_submission(submission)
-        if einv_patch:
-            submission.e_invoice_manually_verified = True
-        apply_e_invoice_to_submission(submission)
+            apply_vendor_validation_to_submission(submission)
+            if einv_patch:
+                submission.e_invoice_manually_verified = True
+            apply_e_invoice_to_submission(submission)
         submission.tally_voucher_no = tally_voucher_no
         submission.gst_filing_period = gst_filing_period
 
@@ -1347,6 +1361,9 @@ def tally_workspace(request, submission_id):
         if is_in_tally and not submission.is_entered_in_tally:
             submission.tally_entered_at = now
             submission.tally_entered_by = request.user
+        elif not is_in_tally:
+            submission.tally_entered_at = None
+            submission.tally_entered_by = None
         submission.is_entered_in_tally = is_in_tally
 
         if is_in_gst and not submission.is_filed_in_gst:

@@ -100,13 +100,28 @@ class SecurityHardeningTests(TestCase):
 
         # Common / short / numeric passwords must be rejected
         for weak in ("1234567", "password", "12345678"):
-            resp = self.client.post(url, {'new_password': weak, 'confirm_password': weak})
+            resp = self.client.post(url, {
+                'current_password': 'StrongPassword@2026',
+                'new_password': weak,
+                'confirm_password': weak,
+            })
             self.assertEqual(resp.status_code, 200)
             self.emp.refresh_from_db()
             self.assertFalse(self.emp.check_password(weak))
 
+        # Wrong current password is rejected
+        resp_wrong = self.client.post(url, {
+            'current_password': 'NotMyPassword#1',
+            'new_password': 'VeryStrongBalajiPass#2026',
+            'confirm_password': 'VeryStrongBalajiPass#2026',
+        })
+        self.assertEqual(resp_wrong.status_code, 200)
+        self.emp.refresh_from_db()
+        self.assertFalse(self.emp.check_password('VeryStrongBalajiPass#2026'))
+
         # Strong password accepted
         resp_ok = self.client.post(url, {
+            'current_password': 'StrongPassword@2026',
             'new_password': 'VeryStrongBalajiPass#2026',
             'confirm_password': 'VeryStrongBalajiPass#2026',
         })
