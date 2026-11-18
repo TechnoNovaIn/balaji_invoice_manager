@@ -299,9 +299,10 @@ class TestOwnershipIsolation:
         assert serve_resp['X-Frame-Options'] == 'SAMEORIGIN'
         assert "script-src 'none'" in serve_resp['Content-Security-Policy']
 
+        # Full source-file download is restricted to accounts/admin roles, even for the owner
+        # (submitters still see their own pages via serve_document above).
         dl_resp = client.get(reverse('invoices:download_source_document', kwargs={'doc_id': src_a.pk}))
-        assert dl_resp.status_code == 200
-        assert dl_resp['X-Content-Type-Options'] == 'nosniff'
+        assert dl_resp.status_code == 403
 
     def test_external_user_cannot_access_other_users_invoices_or_documents(self, client):
         user_a = _make_user('ext_iso_a', UserRole.EXTERNAL_SUBMITTER)
@@ -519,8 +520,10 @@ class TestSecurityHardening:
         assert client.session.get_expiry_age() >= 1209500
         client.logout()
 
+        # Employees: 30 days maximum (EMPLOYEE_SESSION_AGE default, cut from 365 days)
         client.post(login_url, {'username': 'emp_sess', 'password': 'ValidPassword#2026!', 'remember_me': 'on'})
-        assert client.session.get_expiry_age() >= 31535000
+        assert client.session.get_expiry_age() <= 2592005
+        assert client.session.get_expiry_age() >= 2591900
 
     def test_recover_admin_account_management_command(self):
         admin = _make_user(
