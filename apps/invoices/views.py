@@ -1,6 +1,7 @@
 import os
 import re
 import csv
+import logging
 from decimal import Decimal
 from django.shortcuts import render, redirect, get_object_or_404
 from django.urls import reverse
@@ -10,6 +11,8 @@ from django.contrib import messages
 from django.http import FileResponse, Http404, HttpResponseForbidden, HttpResponse, JsonResponse
 from datetime import datetime
 from django.utils import timezone
+from django.utils.http import url_has_allowed_host_and_scheme
+from django.db import transaction
 from django.db.models import Q, Sum
 from django.views.decorators.clickjacking import xframe_options_sameorigin
 
@@ -45,6 +48,8 @@ from .e_invoice_utils import (
     apply_e_invoice_to_submission,
 )
 from .document_type_utils import audit_submission_financials, has_unclear_financial_values
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_e_invoice_post(post_data, submission):
@@ -148,6 +153,27 @@ def _build_protected_document_response(file_handle, raw_filename: str, content_t
     )
     return response
 
+
+
+def _safe_next_url(request, default_route: str, use_referer: bool = True) -> str:
+    """Return a same-host redirect target from next / Referer, else the default route (prevents open redirects)."""
+    candidates = [request.POST.get('next'), request.GET.get('next')]
+    if use_referer:
+        candidates.append(request.META.get('HTTP_REFERER'))
+    for candidate in candidates:
+        candidate = (candidate or '').strip()
+        if candidate and url_has_allowed_host_and_scheme(
+            candidate, allowed_hosts={request.get_host()}, require_https=request.is_secure()
+        ):
+            return candidate
+    return reverse(default_route)
+
+
+def _transition_error(submission, target_label: str) -> str:
+    if submission.is_financially_locked:
+        return f"Invoice {submission.submission_id} is already entered in Tally and cannot be {target_label}."
+    return (f"Invoice {submission.submission_id} cannot be {target_label} from its current status "
+            f"({submission.get_status_display()}).")
 
 @login_required
 def upload_invoice(request):
@@ -780,6 +806,10 @@ def naveen_return_invoice(request, submission_id):
         messages.error(request, "Please provide a specific reason for returning this invoice to the employee.")
         return redirect('invoices:submission_detail', submission_id=submission.submission_id)
 
+    if not submission.can_transition_to(InvoiceSubmission.STATUS_RETURNED):
+        messages.error(request, _transition_error(submission, 'returned'))
+        return redirect('invoices:submission_detail', submission_id=submission.submission_id)
+
     old_status = submission.status
     submission.status = InvoiceSubmission.STATUS_RETURNED
     submission.return_reason = reason
@@ -828,6 +858,10 @@ def naveen_reject_invoice(request, submission_id):
 
     if not reason:
         messages.error(request, "Please provide a clear reason for rejecting this invoice.")
+        return redirect('invoices:verification_workspace', submission_id=submission.submission_id)
+
+    if not submission.can_transition_to(InvoiceSubmission.STATUS_REJECTED):
+        messages.error(request, _transition_error(submission, 'rejected'))
         return redirect('invoices:verification_workspace', submission_id=submission.submission_id)
 
     old_status = submission.status
@@ -915,6 +949,10 @@ def naveen_verify_invoice(request, submission_id):
         )
         return redirect('invoices:verification_workspace', submission_id=submission.submission_id)
 
+    if not submission.can_transition_to(InvoiceSubmission.STATUS_VERIFIED):
+        messages.error(request, _transition_error(submission, 'verified'))
+        return redirect('invoices:submission_detail', submission_id=submission.submission_id)
+
     old_status = submission.status
     submission.status = InvoiceSubmission.STATUS_VERIFIED
     submission.verified_by = request.user
@@ -975,6 +1013,14 @@ def delete_invoice_submission(request, submission_id):
     if submission.employee_id != request.user.id and not (request.user.is_superuser or getattr(request.user, 'is_admin_role', False)):
         raise PermissionDenied("Access Denied: You can only delete your own invoice submissions.")
 
+    if not submission.can_be_deleted:
+        messages.error(
+            request,
+            f"Invoice {submission.submission_id} is verified or already entered in Tally and cannot be deleted. "
+            "Ask the accounts team to return or reject it instead."
+        )
+        return redirect('invoices:submission_detail', submission_id=submission.submission_id)
+
     if request.method == 'POST':
         sub_id = submission.submission_id
         vendor = submission.party_name or 'Unknown Vendor'
@@ -1011,10 +1057,7 @@ def delete_invoice_submission(request, submission_id):
         submission.delete()
         messages.success(request, f"Faulty invoice {sub_id} ({vendor}) has been permanently deleted.")
 
-        next_url = request.POST.get('next') or request.GET.get('next')
-        if next_url:
-            return redirect(next_url)
-        return redirect('core:employee_dashboard')
+        return redirect(_safe_next_url(request, 'core:employee_dashboard', use_referer=False))
 
     return redirect('invoices:submission_detail', submission_id=submission_id)
 
@@ -1336,18 +1379,23 @@ def toggle_tally_status(request, submission_id):
         return HttpResponseForbidden("POST required")
 
     submission = get_object_or_404(InvoiceSubmission, submission_id=submission_id)
+    if not submission.is_entered_in_tally and submission.status != InvoiceSubmission.STATUS_VERIFIED:
+        messages.error(request, f"Invoice {submission.submission_id} must be verified before it can be marked as entered in Tally.")
+        return redirect(_safe_next_url(request, 'core:naveen_dashboard'))
     submission.is_entered_in_tally = not submission.is_entered_in_tally
     if submission.is_entered_in_tally:
         submission.tally_entered_at = timezone.now()
+        submission.tally_entered_by = request.user
     else:
         submission.tally_entered_at = None
-    submission.save(update_fields=['is_entered_in_tally', 'tally_entered_at', 'updated_at'])
+        submission.tally_entered_by = None
+    submission.save(update_fields=['is_entered_in_tally', 'tally_entered_at', 'tally_entered_by', 'updated_at'])
+    _record_tally_batch_history(request, [submission.submission_id], entered=submission.is_entered_in_tally)
 
     status_str = "marked as Entered in Tally ✓" if submission.is_entered_in_tally else "marked as Pending Tally"
     messages.success(request, f"Invoice {submission.submission_id} {status_str}.")
 
-    next_url = request.POST.get('next') or request.META.get('HTTP_REFERER') or '/dashboard/naveen/'
-    return redirect(next_url)
+    return redirect(_safe_next_url(request, 'core:naveen_dashboard'))
 
 
 @login_required
@@ -1364,6 +1412,12 @@ def quick_update_metadata(request, submission_id):
         return HttpResponseForbidden("POST required")
 
     submission = get_object_or_404(InvoiceSubmission, submission_id=submission_id)
+    if submission.is_financially_locked:
+        lock_msg = f"Invoice {submission.submission_id} is already entered in Tally; its details are locked."
+        if request.headers.get('x-requested-with') == 'XMLHttpRequest' or request.GET.get('ajax'):
+            return JsonResponse({'status': 'error', 'message': lock_msg}, status=409)
+        messages.error(request, lock_msg)
+        return redirect(_safe_next_url(request, 'core:naveen_dashboard'))
     party_name = request.POST.get('party_name', '').strip()
     invoice_number = request.POST.get('invoice_number', '').strip()
     invoice_date_str = request.POST.get('invoice_date', '').strip()
@@ -1399,8 +1453,7 @@ def quick_update_metadata(request, submission_id):
         if request.headers.get('x-requested-with') == 'XMLHttpRequest' or request.GET.get('ajax'):
             return JsonResponse({'status': 'error', 'message': einv_err}, status=400)
         messages.error(request, einv_err)
-        next_url = request.POST.get('next') or request.META.get('HTTP_REFERER') or '/dashboard/naveen/'
-        return redirect(next_url)
+        return redirect(_safe_next_url(request, 'core:naveen_dashboard'))
     if einv_patch:
         new_data.update(einv_patch)
 
@@ -1441,8 +1494,7 @@ def quick_update_metadata(request, submission_id):
         })
 
     messages.success(request, f"Updated {submission.submission_id}: Vendor '{submission.party_name}', Bill #{submission.invoice_number}.")
-    next_url = request.POST.get('next') or request.META.get('HTTP_REFERER') or '/dashboard/naveen/'
-    return redirect(next_url)
+    return redirect(_safe_next_url(request, 'core:naveen_dashboard'))
 
 
 @login_required
@@ -1464,19 +1516,61 @@ def batch_complete_tally(request):
         return redirect('core:naveen_dashboard')
 
     now = timezone.now()
-    updated_count = InvoiceSubmission.objects.filter(
-        submission_id__in=selected_ids
-    ).update(
-        is_entered_in_tally=True,
-        tally_entered_at=now,
-        updated_at=now
-    )
+    with transaction.atomic():
+        selected_qs = InvoiceSubmission.objects.filter(submission_id__in=selected_ids)
+        eligible_qs = selected_qs.filter(
+            status=InvoiceSubmission.STATUS_VERIFIED,
+            is_entered_in_tally=False,
+        )
+        eligible_ids = list(eligible_qs.values_list('submission_id', flat=True))
+        skipped_count = selected_qs.count() - len(eligible_ids)
+        updated_count = InvoiceSubmission.objects.filter(submission_id__in=eligible_ids).update(
+            is_entered_in_tally=True,
+            tally_entered_at=now,
+            tally_entered_by=request.user,
+            updated_at=now,
+        )
+        _record_tally_batch_history(request, eligible_ids, entered=True)
 
-    messages.success(
-        request,
-        f"✓ Successfully marked {updated_count} invoice{'s' if updated_count != 1 else ''} as Completed in Tally!"
-    )
+    if updated_count:
+        messages.success(
+            request,
+            f"✓ Successfully marked {updated_count} invoice{'s' if updated_count != 1 else ''} as Completed in Tally!"
+        )
+    if skipped_count:
+        messages.warning(
+            request,
+            f"{skipped_count} selected invoice{'s were' if skipped_count != 1 else ' was'} skipped: "
+            "only verified invoices not already in Tally can be marked as completed."
+        )
     return redirect('core:naveen_dashboard')
+
+
+def _record_tally_batch_history(request, submission_ids, entered: bool) -> None:
+    """Write status history + audit log for batch Tally (un)marking, which bypasses model save()."""
+    if not submission_ids:
+        return
+    note = "Marked as entered in Tally (batch)" if entered else "Moved back to pending Tally entry (batch)"
+    subs = list(InvoiceSubmission.objects.filter(submission_id__in=submission_ids).only('id', 'status', 'submission_id'))
+    InvoiceStatusHistory.objects.bulk_create([
+        InvoiceStatusHistory(
+            submission=sub,
+            old_status=sub.status,
+            new_status=sub.status,
+            changed_by=request.user,
+            notes=note,
+        )
+        for sub in subs
+    ])
+    try:
+        record_audit_log(
+            request.user,
+            "TALLY_BATCH_COMPLETE" if entered else "TALLY_BATCH_UNDO",
+            request=request,
+            details={"submission_ids": [sub.submission_id for sub in subs]},
+        )
+    except Exception as audit_err:
+        logger.warning("Failed to record AuditLog for batch Tally update: %s", audit_err)
 
 
 @login_required
@@ -1496,13 +1590,18 @@ def batch_undo_tally(request):
         return redirect(f"{reverse('core:naveen_dashboard')}?tab=completed")
 
     now = timezone.now()
-    updated_count = InvoiceSubmission.objects.filter(
-        submission_id__in=selected_ids
-    ).update(
-        is_entered_in_tally=False,
-        tally_entered_at=None,
-        updated_at=now
-    )
+    with transaction.atomic():
+        undo_ids = list(
+            InvoiceSubmission.objects.filter(submission_id__in=selected_ids, is_entered_in_tally=True)
+            .values_list('submission_id', flat=True)
+        )
+        updated_count = InvoiceSubmission.objects.filter(submission_id__in=undo_ids).update(
+            is_entered_in_tally=False,
+            tally_entered_at=None,
+            tally_entered_by=None,
+            updated_at=now,
+        )
+        _record_tally_batch_history(request, undo_ids, entered=False)
 
     messages.info(
         request,
@@ -1784,7 +1883,14 @@ def verification_workspace(request, submission_id):
         if request.user.is_management:
             raise PermissionDenied("Management has read-only privileges.")
 
+        if submission.is_financially_locked:
+            messages.error(request, f"Invoice {submission.submission_id} is already entered in Tally; its details are locked.")
+            return redirect('invoices:verification_workspace', submission_id=submission.submission_id)
+
         action = request.POST.get('action', 'save_only')
+        if action == 'verify' and not submission.can_transition_to(InvoiceSubmission.STATUS_VERIFIED):
+            messages.error(request, _transition_error(submission, 'verified'))
+            return redirect('invoices:verification_workspace', submission_id=submission.submission_id)
         reason = request.POST.get('audit_reason', 'Manual review and verification update').strip()
 
         # Parse Decimal fields safely

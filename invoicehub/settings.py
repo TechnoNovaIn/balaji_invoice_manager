@@ -125,6 +125,9 @@ if 'sqlite' in DB_ENGINE.lower():
             'NAME': _sqlite_path,
             'OPTIONS': {
                 'timeout': 30,
+                # IMMEDIATE takes the write lock at BEGIN, so concurrent writers wait on the busy
+                # timeout instead of failing with 'database is locked' on lock upgrade (Django 5.1+).
+                'transaction_mode': 'IMMEDIATE',
             },
         }
     }
@@ -278,6 +281,11 @@ GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '').strip()
 GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-3.5-flash').strip()
 GEMINI_FALLBACK_POLICY = os.getenv('GEMINI_FALLBACK_POLICY', 'auto').strip().lower()  # auto | always | never
 GEMINI_MAX_PAGES_PER_INVOICE = max(1, int(os.getenv('GEMINI_MAX_PAGES_PER_INVOICE', '3') or '3'))
+# Comma-separated extra models to try ONLY when the primary returns 404 (model unavailable). Empty = primary only.
+GEMINI_FALLBACK_MODELS = os.getenv('GEMINI_FALLBACK_MODELS', '').strip()
+GEMINI_TIMEOUT_MS = int(os.getenv('GEMINI_TIMEOUT_MS', '60000') or '60000')
+GEMINI_MAX_ATTEMPTS = max(1, int(os.getenv('GEMINI_MAX_ATTEMPTS', '3') or '3'))
+GEMINI_MAX_RETRY_DELAY_SECONDS = float(os.getenv('GEMINI_MAX_RETRY_DELAY_SECONDS', '60') or '60')
 
 # Bounded Background OCR Worker Configuration
 OCR_MAX_WORKERS = max(1, int(os.getenv('OCR_MAX_WORKERS', '2') or '2'))

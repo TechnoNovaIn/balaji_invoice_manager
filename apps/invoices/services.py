@@ -356,7 +356,28 @@ def check_duplicates(user, validated_files: List[Dict[str, Any]]) -> Tuple[bool,
     return is_suspected, duplicate_notes
 
 
-@transaction.atomic
+def _discard_partial_upload(created_submissions, created_document_ids) -> None:
+    """Best-effort cleanup of records and files created by a failed create_invoice_submissions call."""
+    for sub in created_submissions:
+        try:
+            for doc in sub.documents.all():
+                if doc.original_file and doc.original_file.storage.exists(doc.original_file.name):
+                    doc.original_file.delete(save=False)
+            sub.delete()
+        except Exception as cleanup_err:
+            logger.warning('Cleanup of partial submission %s failed: %s', getattr(sub, 'submission_id', '?'), cleanup_err)
+    for doc_id in created_document_ids:
+        try:
+            InvoiceSubmission.objects.filter(source_document_id=doc_id).delete()
+            uploaded = UploadedDocument.objects.filter(id=doc_id).first()
+            if uploaded is not None:
+                if uploaded.original_file and uploaded.original_file.storage.exists(uploaded.original_file.name):
+                    uploaded.original_file.delete(save=False)
+                uploaded.delete()
+        except Exception as cleanup_err:
+            logger.warning('Cleanup of partial upload document #%s failed: %s', doc_id, cleanup_err)
+
+
 def create_invoice_submissions(
     user,
     files: List[Any],
@@ -380,174 +401,254 @@ def create_invoice_submissions(
 
     created_submissions = []
 
-    for item in validated_files:
-        f_obj = item['file']
-        mime_type = item['content_type']
-        file_sha256 = item['sha256']
-        file_name = item['filename']
-        file_size = item['size']
+    # No outer transaction: OCR / Gemini calls take seconds per file and a long-held SQLite write
+    # lock blocks every other user. Each ORM write commits on its own; on failure we remove the
+    # partial records created by this call so the upload behaves all-or-nothing as before.
+    created_document_ids: List[int] = []
+    try:
+        for item in validated_files:
+            f_obj = item['file']
+            mime_type = item['content_type']
+            file_sha256 = item['sha256']
+            file_name = item['filename']
+            file_size = item['size']
 
-        # 1. Create UploadedDocument entity representing the immutable source document
-        uploaded_doc = UploadedDocument.objects.create(
-            uploader=user,
-            original_file=f_obj,
-            file_name=file_name,
-            file_sha256=file_sha256,
-            file_size_bytes=file_size,
-            content_type=mime_type,
-            processing_status=UploadedDocument.STATUS_PROCESSING,
-        )
+            # 1. Create UploadedDocument entity representing the immutable source document
+            uploaded_doc = UploadedDocument.objects.create(
+                uploader=user,
+                original_file=f_obj,
+                file_name=file_name,
+                file_sha256=file_sha256,
+                file_size_bytes=file_size,
+                content_type=mime_type,
+                processing_status=UploadedDocument.STATUS_PROCESSING,
+            )
+            created_document_ids.append(uploaded_doc.id)
 
-        # 2. PDF Processing: Multi-Invoice Boundary Detection & Segmentation
-        if mime_type == 'application/pdf' or file_name.lower().endswith('.pdf'):
-            segments = []
-            try:
-                segments = segment_and_extract_pdf(uploaded_doc.original_file.path)
-            except Exception as e:
-                uploaded_doc.processing_status = UploadedDocument.STATUS_FAILED
-                uploaded_doc.error_message = f"Segmentation failed: {str(e)}"
-                uploaded_doc.save()
+            # 2. PDF Processing: Multi-Invoice Boundary Detection & Segmentation
+            if mime_type == 'application/pdf' or file_name.lower().endswith('.pdf'):
+                segments = []
+                try:
+                    segments = segment_and_extract_pdf(uploaded_doc.original_file.path)
+                except Exception as e:
+                    uploaded_doc.processing_status = UploadedDocument.STATUS_FAILED
+                    uploaded_doc.error_message = f"Segmentation failed: {str(e)}"
+                    uploaded_doc.save()
 
-            if segments:
-                uploaded_doc.total_pages = max(s['end_page'] for s in segments)
-                uploaded_doc.pages_processed = uploaded_doc.total_pages
-                uploaded_doc.invoices_detected = len(segments)
-                uploaded_doc.processing_status = UploadedDocument.STATUS_DETECTION_COMPLETED
-                uploaded_doc.save()
+                if segments:
+                    uploaded_doc.total_pages = max(s['end_page'] for s in segments)
+                    uploaded_doc.pages_processed = uploaded_doc.total_pages
+                    uploaded_doc.invoices_detected = len(segments)
+                    uploaded_doc.processing_status = UploadedDocument.STATUS_DETECTION_COMPLETED
+                    uploaded_doc.save()
 
-                for seg in segments:
-                    sub_id = InvoiceSequence.get_next_submission_id()
-                    meta = seg['metadata']
+                    for seg in segments:
+                        sub_id = InvoiceSequence.get_next_submission_id()
+                        meta = seg['metadata']
 
-                    sub = InvoiceSubmission.objects.create(
-                        submission_id=sub_id,
-                        employee=user,
-                        source_document=uploaded_doc,
-                        start_page=seg['start_page'],
-                        end_page=seg['end_page'],
-                        batch_id=batch_id,
-                        remarks=remarks.strip(),
-                        status=InvoiceSubmission.STATUS_SUBMITTED,
-                        is_duplicate_suspected=is_suspected,
-                        duplicate_notes=duplicate_notes,
-                        party_name=meta.get('party_name', ''),
-                        party_gstin=meta.get('party_gstin', ''),
-                        invoice_number=meta.get('invoice_number', ''),
-                        invoice_date=meta.get('invoice_date'),
-                        taxable_amount=meta.get('taxable_amount', Decimal('0.00')),
-                        cgst_amount=meta.get('cgst_amount', Decimal('0.00')),
-                        sgst_amount=meta.get('sgst_amount', Decimal('0.00')),
-                        igst_amount=meta.get('igst_amount', Decimal('0.00')),
-                        total_amount=meta.get('total_amount', Decimal('0.00')),
-                        expense_ledger=meta.get('expense_ledger', 'Purchase Spares & Consumables'),
-                        ocr_confidence=meta.get('confidence', 0.0),
-                        is_ambiguous_vendor=meta.get('is_ambiguous_vendor', True),
-                        requires_manual_review=True,
-                    )
-
-                    # Fallback party name matching from remarks if not detected
-                    if not sub.party_name and remarks.strip():
-                        sub.party_name = remarks.strip()[:100]
-                        matched = find_vendor_by_name(remarks.strip())
-                        if matched:
-                            sub.party_name = matched['name']
-                            if not sub.party_gstin:
-                                sub.party_gstin = matched['gstin']
-                            if matched.get('ledger'):
-                                sub.expense_ledger = matched['ledger']
-
-                    apply_vendor_validation_to_submission(sub, raw_confidence=meta.get('confidence', 0.0))
-                    apply_e_invoice_to_submission(sub, meta)
-                    sub.save()
-
-                    # Attach document records
-                    sub_files = seg.get('sub_files', {})
-                    page_images = sub_files.get('page_images', [])
-
-                    if uploaded_doc.total_pages == 1 and len(segments) == 1:
-                        # For single-page PDF, keep original file as document 1
-                        InvoiceDocument.objects.create(
-                            submission=sub,
+                        sub = InvoiceSubmission.objects.create(
+                            submission_id=sub_id,
+                            employee=user,
                             source_document=uploaded_doc,
-                            start_page=1,
-                            end_page=1,
-                            page_number=1,
-                            original_file=uploaded_doc.original_file,
-                            original_filename=file_name,
-                            file_sha256=file_sha256,
-                            file_size_bytes=file_size,
-                            content_type=mime_type,
-                            version=1,
-                            is_active_version=True,
+                            start_page=seg['start_page'],
+                            end_page=seg['end_page'],
+                            batch_id=batch_id,
+                            remarks=remarks.strip(),
+                            status=InvoiceSubmission.STATUS_SUBMITTED,
+                            is_duplicate_suspected=is_suspected,
+                            duplicate_notes=duplicate_notes,
+                            party_name=meta.get('party_name', ''),
+                            party_gstin=meta.get('party_gstin', ''),
+                            invoice_number=meta.get('invoice_number', ''),
+                            invoice_date=meta.get('invoice_date'),
+                            taxable_amount=meta.get('taxable_amount', Decimal('0.00')),
+                            cgst_amount=meta.get('cgst_amount', Decimal('0.00')),
+                            sgst_amount=meta.get('sgst_amount', Decimal('0.00')),
+                            igst_amount=meta.get('igst_amount', Decimal('0.00')),
+                            total_amount=meta.get('total_amount', Decimal('0.00')),
+                            expense_ledger=meta.get('expense_ledger', 'Purchase Spares & Consumables'),
+                            ocr_confidence=meta.get('confidence', 0.0),
+                            is_ambiguous_vendor=meta.get('is_ambiguous_vendor', True),
+                            requires_manual_review=True,
                         )
-                        for p_idx, p_img in enumerate(page_images, start=2):
-                            p_bytes = p_img['image_bytes']
-                            p_num = p_img['page_number_in_src']
-                            img_name = f"{os.path.splitext(file_name)[0]}_pg{p_num}.jpg"
+
+                        # Fallback party name matching from remarks if not detected
+                        if not sub.party_name and remarks.strip():
+                            sub.party_name = remarks.strip()[:100]
+                            matched = find_vendor_by_name(remarks.strip())
+                            if matched:
+                                sub.party_name = matched['name']
+                                if not sub.party_gstin:
+                                    sub.party_gstin = matched['gstin']
+                                if matched.get('ledger'):
+                                    sub.expense_ledger = matched['ledger']
+
+                        apply_vendor_validation_to_submission(sub, raw_confidence=meta.get('confidence', 0.0))
+                        apply_e_invoice_to_submission(sub, meta)
+                        sub.save()
+
+                        # Attach document records
+                        sub_files = seg.get('sub_files', {})
+                        page_images = sub_files.get('page_images', [])
+
+                        if uploaded_doc.total_pages == 1 and len(segments) == 1:
+                            # For single-page PDF, keep original file as document 1
                             InvoiceDocument.objects.create(
                                 submission=sub,
                                 source_document=uploaded_doc,
                                 start_page=1,
                                 end_page=1,
-                                page_number=p_idx,
-                                original_file=ContentFile(p_bytes, name=img_name),
-                                original_filename=img_name,
-                                file_sha256=hashlib.sha256(p_bytes).hexdigest(),
-                                file_size_bytes=len(p_bytes),
-                                content_type='image/jpeg',
+                                page_number=1,
+                                original_file=uploaded_doc.original_file,
+                                original_filename=file_name,
+                                file_sha256=file_sha256,
+                                file_size_bytes=file_size,
+                                content_type=mime_type,
                                 version=1,
                                 is_active_version=True,
                             )
-                    else:
-                        # Multi-invoice or multi-page PDF: attach rendered images and excerpt PDF
-                        for p_idx, p_img in enumerate(page_images, start=1):
-                            p_bytes = p_img['image_bytes']
-                            p_num = p_img['page_number_in_src']
-                            img_name = f"{os.path.splitext(file_name)[0]}_pg{p_num}.jpg"
-                            InvoiceDocument.objects.create(
-                                submission=sub,
-                                source_document=uploaded_doc,
-                                start_page=seg['start_page'],
-                                end_page=seg['end_page'],
-                                page_number=p_idx,
-                                original_file=ContentFile(p_bytes, name=img_name),
-                                original_filename=img_name,
-                                file_sha256=hashlib.sha256(p_bytes).hexdigest(),
-                                file_size_bytes=len(p_bytes),
-                                content_type='image/jpeg',
-                                version=1,
-                                is_active_version=True,
-                            )
+                            for p_idx, p_img in enumerate(page_images, start=2):
+                                p_bytes = p_img['image_bytes']
+                                p_num = p_img['page_number_in_src']
+                                img_name = f"{os.path.splitext(file_name)[0]}_pg{p_num}.jpg"
+                                InvoiceDocument.objects.create(
+                                    submission=sub,
+                                    source_document=uploaded_doc,
+                                    start_page=1,
+                                    end_page=1,
+                                    page_number=p_idx,
+                                    original_file=ContentFile(p_bytes, name=img_name),
+                                    original_filename=img_name,
+                                    file_sha256=hashlib.sha256(p_bytes).hexdigest(),
+                                    file_size_bytes=len(p_bytes),
+                                    content_type='image/jpeg',
+                                    version=1,
+                                    is_active_version=True,
+                                )
+                        else:
+                            # Multi-invoice or multi-page PDF: attach rendered images and excerpt PDF
+                            for p_idx, p_img in enumerate(page_images, start=1):
+                                p_bytes = p_img['image_bytes']
+                                p_num = p_img['page_number_in_src']
+                                img_name = f"{os.path.splitext(file_name)[0]}_pg{p_num}.jpg"
+                                InvoiceDocument.objects.create(
+                                    submission=sub,
+                                    source_document=uploaded_doc,
+                                    start_page=seg['start_page'],
+                                    end_page=seg['end_page'],
+                                    page_number=p_idx,
+                                    original_file=ContentFile(p_bytes, name=img_name),
+                                    original_filename=img_name,
+                                    file_sha256=hashlib.sha256(p_bytes).hexdigest(),
+                                    file_size_bytes=len(p_bytes),
+                                    content_type='image/jpeg',
+                                    version=1,
+                                    is_active_version=True,
+                                )
 
-                        pdf_bytes = sub_files.get('pdf_bytes')
-                        if pdf_bytes:
-                            pdf_name = f"{os.path.splitext(file_name)[0]}_inv{seg['invoice_index']}.pdf"
-                            InvoiceDocument.objects.create(
-                                submission=sub,
-                                source_document=uploaded_doc,
-                                start_page=seg['start_page'],
-                                end_page=seg['end_page'],
-                                page_number=len(page_images) + 1,
-                                original_file=ContentFile(pdf_bytes, name=pdf_name),
-                                original_filename=pdf_name,
-                                file_sha256=hashlib.sha256(pdf_bytes).hexdigest(),
-                                file_size_bytes=len(pdf_bytes),
-                                content_type='application/pdf',
-                                version=1,
-                                is_active_version=True,
-                            )
+                            pdf_bytes = sub_files.get('pdf_bytes')
+                            if pdf_bytes:
+                                pdf_name = f"{os.path.splitext(file_name)[0]}_inv{seg['invoice_index']}.pdf"
+                                InvoiceDocument.objects.create(
+                                    submission=sub,
+                                    source_document=uploaded_doc,
+                                    start_page=seg['start_page'],
+                                    end_page=seg['end_page'],
+                                    page_number=len(page_images) + 1,
+                                    original_file=ContentFile(pdf_bytes, name=pdf_name),
+                                    original_filename=pdf_name,
+                                    file_sha256=hashlib.sha256(pdf_bytes).hexdigest(),
+                                    file_size_bytes=len(pdf_bytes),
+                                    content_type='application/pdf',
+                                    version=1,
+                                    is_active_version=True,
+                                )
+
+                        InvoiceStatusHistory.objects.create(
+                            submission=sub,
+                            old_status='',
+                            new_status=InvoiceSubmission.STATUS_SUBMITTED,
+                            changed_by=user,
+                            notes=f'Extracted invoice #{seg["invoice_index"]} from {file_name} (pages {seg["start_page"]}–{seg["end_page"]}).'
+                        )
+                        created_submissions.append(sub)
+
+                else:
+                    # Single-page or non-segmented PDF fallback
+                    sub_id = InvoiceSequence.get_next_submission_id()
+                    sub = InvoiceSubmission.objects.create(
+                        submission_id=sub_id,
+                        employee=user,
+                        source_document=uploaded_doc,
+                        start_page=1,
+                        end_page=1,
+                        batch_id=batch_id,
+                        remarks=remarks.strip(),
+                        status=InvoiceSubmission.STATUS_SUBMITTED,
+                        is_duplicate_suspected=is_suspected,
+                        duplicate_notes=duplicate_notes,
+                        invoice_number='',
+                    )
+                    doc_rec = InvoiceDocument.objects.create(
+                        submission=sub,
+                        source_document=uploaded_doc,
+                        start_page=1,
+                        end_page=1,
+                        page_number=1,
+                        original_file=uploaded_doc.original_file,
+                        original_filename=file_name,
+                        file_sha256=file_sha256,
+                        file_size_bytes=file_size,
+                        content_type=mime_type,
+                        version=1,
+                        is_active_version=True,
+                    )
+                    meta = extract_invoice_metadata(doc_rec.original_file.path, mime_type)
+                    if meta.get('invoice_number'):
+                        sub.invoice_number = meta['invoice_number']
+                    if meta.get('party_name'):
+                        sub.party_name = meta['party_name']
+                    if meta.get('party_gstin'):
+                        sub.party_gstin = meta['party_gstin']
+                    if meta.get('invoice_date'):
+                        sub.invoice_date = meta['invoice_date']
+                    if meta.get('taxable_amount'):
+                        sub.taxable_amount = meta['taxable_amount']
+                    if meta.get('cgst_amount'):
+                        sub.cgst_amount = meta['cgst_amount']
+                    if meta.get('sgst_amount'):
+                        sub.sgst_amount = meta['sgst_amount']
+                    if meta.get('igst_amount'):
+                        sub.igst_amount = meta['igst_amount']
+                    if meta.get('total_amount'):
+                        sub.total_amount = meta['total_amount']
+                    if meta.get('items'):
+                        sub.line_items = meta['items']
+                    if meta.get('expense_ledger'):
+                        sub.expense_ledger = meta['expense_ledger']
+                    if meta.get('confidence'):
+                        sub.ocr_confidence = meta['confidence']
+                    apply_vendor_validation_to_submission(sub, raw_confidence=meta.get('confidence', 0.0))
+                    apply_e_invoice_to_submission(sub, meta)
+                    sub.save()
 
                     InvoiceStatusHistory.objects.create(
                         submission=sub,
                         old_status='',
                         new_status=InvoiceSubmission.STATUS_SUBMITTED,
                         changed_by=user,
-                        notes=f'Extracted invoice #{seg["invoice_index"]} from {file_name} (pages {seg["start_page"]}–{seg["end_page"]}).'
+                        notes='Single PDF invoice submission.'
                     )
                     created_submissions.append(sub)
 
+            # 3. Image Processing: Independent invoice record per photo
             else:
-                # Single-page or non-segmented PDF fallback
+                uploaded_doc.total_pages = 1
+                uploaded_doc.pages_processed = 1
+                uploaded_doc.invoices_detected = 1
+                uploaded_doc.processing_status = UploadedDocument.STATUS_DETECTION_COMPLETED
+                uploaded_doc.save()
+
                 sub_id = InvoiceSequence.get_next_submission_id()
                 sub = InvoiceSubmission.objects.create(
                     submission_id=sub_id,
@@ -562,20 +663,45 @@ def create_invoice_submissions(
                     duplicate_notes=duplicate_notes,
                     invoice_number='',
                 )
+
+                # Auto-crop document boundary, deskew & preserve 300 DPI for paper printing
+                from apps.invoices.image_processing import auto_crop_invoice_image
+
+                doc_file = uploaded_doc.original_file
+                doc_sha256 = file_sha256
+                doc_size = file_size
+                doc_mime = mime_type
+
+                try:
+                    if uploaded_doc.original_file and uploaded_doc.original_file.storage.exists(uploaded_doc.original_file.name):
+                        with uploaded_doc.original_file.open('rb') as raw_f:
+                            raw_bytes = raw_f.read()
+                        processed_bytes, was_cropped, crop_meta = auto_crop_invoice_image(raw_bytes)
+                        if was_cropped and processed_bytes:
+                            cropped_name = f"autocrop_{file_name}"
+                            doc_file = ContentFile(processed_bytes, name=cropped_name)
+                            doc_sha256 = hashlib.sha256(processed_bytes).hexdigest()
+                            doc_size = len(processed_bytes)
+                            doc_mime = 'image/jpeg'
+                            logger.info("Auto-cropped invoice image for submission %s: %s", sub_id, crop_meta.get('method'))
+                except Exception as crop_err:
+                    logger.warning("Auto-crop processing skipped for %s: %s", file_name, crop_err)
+
                 doc_rec = InvoiceDocument.objects.create(
                     submission=sub,
                     source_document=uploaded_doc,
                     start_page=1,
                     end_page=1,
                     page_number=1,
-                    original_file=uploaded_doc.original_file,
+                    original_file=doc_file,
                     original_filename=file_name,
-                    file_sha256=file_sha256,
-                    file_size_bytes=file_size,
-                    content_type=mime_type,
+                    file_sha256=doc_sha256,
+                    file_size_bytes=doc_size,
+                    content_type=doc_mime,
                     version=1,
                     is_active_version=True,
                 )
+
                 meta = extract_invoice_metadata(doc_rec.original_file.path, mime_type)
                 if meta.get('invoice_number'):
                     sub.invoice_number = meta['invoice_number']
@@ -601,6 +727,17 @@ def create_invoice_submissions(
                     sub.expense_ledger = meta['expense_ledger']
                 if meta.get('confidence'):
                     sub.ocr_confidence = meta['confidence']
+
+                if not sub.party_name and remarks.strip():
+                    sub.party_name = remarks.strip()[:100]
+                    matched = find_vendor_by_name(remarks.strip())
+                    if matched:
+                        sub.party_name = matched['name']
+                        if not sub.party_gstin:
+                            sub.party_gstin = matched['gstin']
+                        if matched.get('ledger'):
+                            sub.expense_ledger = matched['ledger']
+
                 apply_vendor_validation_to_submission(sub, raw_confidence=meta.get('confidence', 0.0))
                 apply_e_invoice_to_submission(sub, meta)
                 sub.save()
@@ -610,119 +747,12 @@ def create_invoice_submissions(
                     old_status='',
                     new_status=InvoiceSubmission.STATUS_SUBMITTED,
                     changed_by=user,
-                    notes='Single PDF invoice submission.'
+                    notes='Photographed invoice submission.'
                 )
                 created_submissions.append(sub)
-
-        # 3. Image Processing: Independent invoice record per photo
-        else:
-            uploaded_doc.total_pages = 1
-            uploaded_doc.pages_processed = 1
-            uploaded_doc.invoices_detected = 1
-            uploaded_doc.processing_status = UploadedDocument.STATUS_DETECTION_COMPLETED
-            uploaded_doc.save()
-
-            sub_id = InvoiceSequence.get_next_submission_id()
-            sub = InvoiceSubmission.objects.create(
-                submission_id=sub_id,
-                employee=user,
-                source_document=uploaded_doc,
-                start_page=1,
-                end_page=1,
-                batch_id=batch_id,
-                remarks=remarks.strip(),
-                status=InvoiceSubmission.STATUS_SUBMITTED,
-                is_duplicate_suspected=is_suspected,
-                duplicate_notes=duplicate_notes,
-                invoice_number='',
-            )
-
-            # Auto-crop document boundary, deskew & preserve 300 DPI for paper printing
-            from apps.invoices.image_processing import auto_crop_invoice_image
-
-            doc_file = uploaded_doc.original_file
-            doc_sha256 = file_sha256
-            doc_size = file_size
-            doc_mime = mime_type
-
-            try:
-                if uploaded_doc.original_file and uploaded_doc.original_file.storage.exists(uploaded_doc.original_file.name):
-                    with uploaded_doc.original_file.open('rb') as raw_f:
-                        raw_bytes = raw_f.read()
-                    processed_bytes, was_cropped, crop_meta = auto_crop_invoice_image(raw_bytes)
-                    if was_cropped and processed_bytes:
-                        cropped_name = f"autocrop_{file_name}"
-                        doc_file = ContentFile(processed_bytes, name=cropped_name)
-                        doc_sha256 = hashlib.sha256(processed_bytes).hexdigest()
-                        doc_size = len(processed_bytes)
-                        doc_mime = 'image/jpeg'
-                        logger.info("Auto-cropped invoice image for submission %s: %s", sub_id, crop_meta.get('method'))
-            except Exception as crop_err:
-                logger.warning("Auto-crop processing skipped for %s: %s", file_name, crop_err)
-
-            doc_rec = InvoiceDocument.objects.create(
-                submission=sub,
-                source_document=uploaded_doc,
-                start_page=1,
-                end_page=1,
-                page_number=1,
-                original_file=doc_file,
-                original_filename=file_name,
-                file_sha256=doc_sha256,
-                file_size_bytes=doc_size,
-                content_type=doc_mime,
-                version=1,
-                is_active_version=True,
-            )
-
-            meta = extract_invoice_metadata(doc_rec.original_file.path, mime_type)
-            if meta.get('invoice_number'):
-                sub.invoice_number = meta['invoice_number']
-            if meta.get('party_name'):
-                sub.party_name = meta['party_name']
-            if meta.get('party_gstin'):
-                sub.party_gstin = meta['party_gstin']
-            if meta.get('invoice_date'):
-                sub.invoice_date = meta['invoice_date']
-            if meta.get('taxable_amount'):
-                sub.taxable_amount = meta['taxable_amount']
-            if meta.get('cgst_amount'):
-                sub.cgst_amount = meta['cgst_amount']
-            if meta.get('sgst_amount'):
-                sub.sgst_amount = meta['sgst_amount']
-            if meta.get('igst_amount'):
-                sub.igst_amount = meta['igst_amount']
-            if meta.get('total_amount'):
-                sub.total_amount = meta['total_amount']
-            if meta.get('items'):
-                sub.line_items = meta['items']
-            if meta.get('expense_ledger'):
-                sub.expense_ledger = meta['expense_ledger']
-            if meta.get('confidence'):
-                sub.ocr_confidence = meta['confidence']
-
-            if not sub.party_name and remarks.strip():
-                sub.party_name = remarks.strip()[:100]
-                matched = find_vendor_by_name(remarks.strip())
-                if matched:
-                    sub.party_name = matched['name']
-                    if not sub.party_gstin:
-                        sub.party_gstin = matched['gstin']
-                    if matched.get('ledger'):
-                        sub.expense_ledger = matched['ledger']
-
-            apply_vendor_validation_to_submission(sub, raw_confidence=meta.get('confidence', 0.0))
-            apply_e_invoice_to_submission(sub, meta)
-            sub.save()
-
-            InvoiceStatusHistory.objects.create(
-                submission=sub,
-                old_status='',
-                new_status=InvoiceSubmission.STATUS_SUBMITTED,
-                changed_by=user,
-                notes='Photographed invoice submission.'
-            )
-            created_submissions.append(sub)
+    except Exception:
+        _discard_partial_upload(created_submissions, created_document_ids)
+        raise
 
     return created_submissions
 

@@ -191,18 +191,25 @@ def change_password_view(request):
     Password setup and change view enforcing Django password validators.
     """
     user = request.user
-    is_first_time = user.must_change_password or (user.is_submitter and user.check_password('BalajiEmp@2026'))
+    # First-time setup is driven only by the must_change_password flag (no hardcoded default passwords).
+    is_first_time = bool(user.must_change_password)
 
     if request.method == 'POST':
+        current_password = request.POST.get('current_password', '')
         new_password = request.POST.get('new_password', '').strip()
         confirm_password = request.POST.get('confirm_password', '').strip()
+
+        # Require the current password for voluntary changes so a stolen session cannot take over the account.
+        if not is_first_time and not user.check_password(current_password):
+            messages.error(request, "Your current password is incorrect.")
+            return render(request, 'accounts/change_password.html', {'is_first_time': is_first_time})
 
         if new_password != confirm_password:
             messages.error(request, "Passwords do not match. Please re-enter carefully.")
             return render(request, 'accounts/change_password.html', {'is_first_time': is_first_time})
 
-        if new_password == 'BalajiEmp@2026':
-            messages.error(request, "Please choose a personal password different from the initial demo password.")
+        if user.check_password(new_password):
+            messages.error(request, "Please choose a new password different from your current one.")
             return render(request, 'accounts/change_password.html', {'is_first_time': is_first_time})
 
         try:

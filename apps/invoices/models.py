@@ -224,6 +224,17 @@ class InvoiceSubmission(models.Model):
         (STATUS_REJECTED, 'Rejected'),
     ]
 
+    # Allowed workflow transitions. Anything not listed is rejected by can_transition_to().
+    ALLOWED_TRANSITIONS = {
+        STATUS_SUBMITTED: {STATUS_RETURNED, STATUS_VERIFIED, STATUS_REJECTED},
+        STATUS_RESUBMITTED: {STATUS_RETURNED, STATUS_VERIFIED, STATUS_REJECTED},
+        STATUS_RETURNED: {STATUS_RESUBMITTED, STATUS_REJECTED},
+        STATUS_VERIFIED: {STATUS_RETURNED, STATUS_REJECTED},  # only while not entered in Tally
+        STATUS_REJECTED: set(),
+    }
+    # Statuses in which the submitter may still delete their own submission.
+    DELETABLE_STATUSES = {STATUS_SUBMITTED, STATUS_RETURNED, STATUS_RESUBMITTED, STATUS_REJECTED}
+
     EINV_STATUS_YES = 'YES'
     EINV_STATUS_NO = 'NO'
     EINV_STATUS_HANDWRITTEN = 'HANDWRITTEN'
@@ -503,6 +514,19 @@ class InvoiceSubmission(models.Model):
             return 'IRN Not Found'
         return ''
 
+    @property
+    def is_financially_locked(self) -> bool:
+        """Once an invoice is entered in Tally its status and financial fields must not change."""
+        return bool(self.is_entered_in_tally)
+
+    def can_transition_to(self, new_status: str) -> bool:
+        if self.is_financially_locked:
+            return False
+        return new_status in self.ALLOWED_TRANSITIONS.get(self.status, set())
+
+    @property
+    def can_be_deleted(self) -> bool:
+        return not self.is_financially_locked and self.status in self.DELETABLE_STATUSES
 
 class InvoiceDocument(models.Model):
     """

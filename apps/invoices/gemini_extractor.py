@@ -10,6 +10,7 @@ import re
 import json
 import time
 import logging
+import threading
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -24,6 +25,72 @@ from .e_invoice_utils import evaluate_e_invoice_status, extract_qr_e_invoice_dat
 os.environ.setdefault('GOOGLE_GENAI_HTTP_CLIENT', 'httpx')
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Gemini client + retry helpers
+# ---------------------------------------------------------------------------
+_CLIENT_CACHE: Dict[Any, Any] = {}
+_CLIENT_LOCK = threading.Lock()
+
+# HTTP status codes worth retrying on the same model.
+_RETRYABLE_CODES = {429, 500, 502, 503, 504}
+# Codes meaning "this model is unavailable for this key" -> try the next configured model.
+_MODEL_UNAVAILABLE_CODES = {404}
+
+
+def _get_gemini_client(api_key: str):
+    """Return a cached google-genai client (one per key) with an HTTP timeout.
+
+    Reusing the client avoids a new connection/TLS handshake per invoice; the timeout stops a
+    single hung request from blocking an OCR worker for minutes.
+    """
+    from google import genai
+    from google.genai import types
+
+    cache_key = (api_key, id(genai.Client))  # id() keeps test patches of genai.Client isolated
+    with _CLIENT_LOCK:
+        client = _CLIENT_CACHE.get(cache_key)
+        if client is None:
+            timeout_ms = int(getattr(settings, 'GEMINI_TIMEOUT_MS', 60000) or 60000)
+            client = genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=timeout_ms))
+            _CLIENT_CACHE[cache_key] = client
+        return client
+
+
+def _gemini_error_code(err: Exception) -> Optional[int]:
+    """Extract the HTTP status code from a google-genai APIError (None for network errors)."""
+    code = getattr(err, 'code', None)
+    if isinstance(code, int):
+        return code
+    status_code = getattr(err, 'status_code', None)
+    return status_code if isinstance(status_code, int) else None
+
+
+def _gemini_retry_delay(err: Exception, attempt: int) -> float:
+    """Seconds to wait before retrying: the server's RetryInfo hint if present, else exponential backoff."""
+    max_delay = float(getattr(settings, 'GEMINI_MAX_RETRY_DELAY_SECONDS', 60) or 60)
+    details = getattr(err, 'details', None)
+    try:
+        error_block = details.get('error', details) if isinstance(details, dict) else {}
+        for item in error_block.get('details', []) or []:
+            if isinstance(item, dict) and 'retryDelay' in item:
+                hinted = float(str(item['retryDelay']).rstrip('s') or 0)
+                if hinted > 0:
+                    return min(hinted, max_delay)
+    except (AttributeError, TypeError, ValueError):
+        pass
+    return min(2.0 * (2 ** attempt), max_delay)
+
+
+def _configured_gemini_models() -> List[str]:
+    """Primary model plus optional explicit fallbacks (GEMINI_FALLBACK_MODELS, comma-separated)."""
+    primary = (getattr(settings, 'GEMINI_MODEL', '') or 'gemini-3.5-flash').strip()
+    models = [primary]
+    for name in str(getattr(settings, 'GEMINI_FALLBACK_MODELS', '') or '').split(','):
+        name = name.strip()
+        if name and name not in models:
+            models.append(name)
+    return models
 
 
 class InvoiceItemSchema(BaseModel):
@@ -361,8 +428,7 @@ def extract_with_gemini(
         from google import genai
         from google.genai import types
 
-        # Initialize client with timeout
-        client = genai.Client(api_key=api_key)
+        client = _get_gemini_client(api_key)
 
         # Detect MIME type
         ext = path_obj.suffix.lower()
@@ -389,12 +455,8 @@ def extract_with_gemini(
         else:
             prompt_contents.append(PROMPT_INSTRUCTIONS)
 
-        # Accuracy-first model cascade: prioritize active Gemini 3.5 Flash models
-        preferred_model = getattr(settings, 'GEMINI_MODEL', 'gemini-3.5-flash') or 'gemini-3.5-flash'
-        candidate_models = [preferred_model]
-        for m in ['gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.8-flash']:
-            if m not in candidate_models:
-                candidate_models.append(m)
+        candidate_models = _configured_gemini_models()
+        max_attempts = max(1, int(getattr(settings, 'GEMINI_MAX_ATTEMPTS', 3) or 3))
 
         def _invoke_gemini(model_name: str):
             return client.models.generate_content(
@@ -407,14 +469,23 @@ def extract_with_gemini(
                 ),
             )
 
-        response = None
+        def _parse_response(resp) -> Optional[Dict[str, Any]]:
+            parsed = getattr(resp, 'parsed', None)
+            if isinstance(parsed, InvoiceSchema):
+                return parsed.model_dump()
+            text = getattr(resp, 'text', None)
+            if not text:
+                return None
+            return InvoiceSchema(**json.loads(text)).model_dump()
+
+        data = None
         used_model = None
         last_error_type = None
         gemini_start = time.perf_counter()
 
-        # Controlled retry logic with backoff
         for m_name in candidate_models:
-            for retry_idx in range(2):
+            for attempt in range(max_attempts):
+                is_last_attempt = attempt == max_attempts - 1
                 try:
                     if timer is not None:
                         timer.increment('gemini_requests_count')
@@ -424,34 +495,40 @@ def extract_with_gemini(
                     finally:
                         if timer is not None:
                             timer.stop_timing('gemini_api_ms')
-                    if response and response.text:
-                        used_model = m_name
-                        break
                 except Exception as m_err:
                     last_error_type = type(m_err).__name__
-                    err_str = str(m_err).lower()
-                    if '429' in err_str or 'quota' in err_str or 'rate' in err_str:
-                        logger.warning("Gemini model %s rate limit (429), backing off...", m_name)
-                        time.sleep(1.0 * (retry_idx + 1))
-                        continue
-                    elif '503' in err_str or 'unavailable' in err_str:
-                        logger.info("Gemini service temporarily unavailable, retrying...")
-                        time.sleep(0.5)
-                        continue
-                    else:
-                        logger.info("Gemini model %s exception: %s", m_name, last_error_type)
+                    code = _gemini_error_code(m_err)
+                    if code in _MODEL_UNAVAILABLE_CODES:
+                        logger.warning("Gemini model %s unavailable (HTTP %s); trying next configured model.", m_name, code)
                         break
-            if response and response.text:
+                    if (code in _RETRYABLE_CODES or code is None) and not is_last_attempt:
+                        delay = _gemini_retry_delay(m_err, attempt)
+                        logger.warning("Gemini model %s error (HTTP %s, %s); retrying in %.1fs.",
+                                       m_name, code, last_error_type, delay)
+                        time.sleep(delay)
+                        continue
+                    logger.warning("Gemini model %s failed (HTTP %s, %s).", m_name, code, last_error_type)
+                    break
+
+                # Response received: validate structure; retry once on malformed / truncated JSON.
+                try:
+                    data = _parse_response(response)
+                except Exception as parse_err:
+                    last_error_type = type(parse_err).__name__
+                    data = None
+                if data is not None:
+                    used_model = m_name
+                    break
+                logger.warning("Gemini model %s returned empty or malformed JSON (%s).", m_name, last_error_type)
+                if is_last_attempt:
+                    break
+            if data is not None:
                 break
 
-        if not response or not response.text:
-            logger.warning("Gemini Extractor: All candidate models failed or returned empty response (last_error=%s).", last_error_type)
+        if data is None:
+            logger.warning("Gemini Extractor: no usable response from %s (last_error=%s).", candidate_models, last_error_type)
             return None
 
-        # Parse & Validate with Pydantic
-        raw_json_dict = json.loads(response.text)
-        validated_schema = InvoiceSchema(**raw_json_dict)
-        data = validated_schema.model_dump()
         amounts, fin_warnings = _reconcile_extracted_amounts(data)
 
         # Date parsing
@@ -593,14 +670,8 @@ def extract_with_gemini(
             'audit_notes': combined_notes,
         }
 
-        logger.info(
-            "Gemini Vision Extracted: %s | Inv #%s | ₹%s | GSTIN: %s | Match: %s",
-            result['party_name'],
-            result['invoice_number'],
-            result['total_amount'],
-            result['party_gstin'],
-            result['vendor_match_status']
-        )
+        # Keep business data (vendor, GSTIN, amounts) out of INFO logs.
+        logger.info("Gemini Vision extraction complete | model=%s | match=%s", used_model, result['vendor_match_status'])
         return result
 
     except Exception as exc:
