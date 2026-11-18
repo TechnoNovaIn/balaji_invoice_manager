@@ -136,103 +136,11 @@ def compute_sha256(file_obj) -> str:
 
 def format_and_orient_image(file_obj, content_type: str):
     """
-    Auto-formats and enhances uploaded invoice photographs:
-    1. EXIF Orientation Normalization: Automatically rotates camera photos right-side up based on smartphone sensor metadata.
-    2. Background Illumination Leveling: Removes harsh shadows and uneven lighting gradients (e.g. driver hands, steering wheels).
-    3. Adaptive Contrast Enhancement (CLAHE): Intensifies faint blue/red carbon ink, handwritten digits, rubber stamps, and dot-matrix receipts.
-    4. Text Sharpening: Unsharp masking ensures small digits (voucher numbers, GSTIN, decimals) are crisp for both Naveen and RapidOCR.
-    5. Color standardization to high-quality RGB JPEG.
+    Preserve original uploaded invoice file exactly as it is without any
+    filtering, contrast alteration, downsampling, or compression.
     """
-    if content_type not in ('image/jpeg', 'image/png'):
-        return file_obj
-
-    try:
-        from PIL import Image, ImageOps, ImageEnhance
-        import io
-        from django.core.files.uploadedfile import SimpleUploadedFile
-
-        configure_pillow_limits()
-        file_obj.seek(0)
-        with warnings.catch_warnings():
-            warnings.simplefilter('error', Image.DecompressionBombWarning)
-            img = Image.open(file_obj)
-            w, h = img.size
-            if w > MAX_IMAGE_DIMENSION or h > MAX_IMAGE_DIMENSION or (w * h) > MAX_IMAGE_PIXELS:
-                raise ValidationError("Uploaded image exceeds safe dimension limits.")
-
-        # 1. Rotate physically according to EXIF orientation tag
-        img = ImageOps.exif_transpose(img)
-
-        # 2. Standardize color channels to RGB
-        if img.mode in ('RGBA', 'P', 'LA'):
-            bg = Image.new('RGB', img.size, (255, 255, 255))
-            if img.mode == 'RGBA':
-                bg.paste(img, mask=img.split()[3])
-            else:
-                bg.paste(img.convert('RGB'))
-            img = bg
-        elif img.mode != 'RGB':
-            img = img.convert('RGB')
-
-        # 3. High-Quality Computer Vision Illumination & Contrast Enhancement
-        try:
-            import cv2
-            import numpy as np
-
-            bgr = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
-            h, w = bgr.shape[:2]
-            max_dim = max(h, w)
-            if max_dim > 2200:
-                scale = 2200.0 / max_dim
-                bgr = cv2.resize(bgr, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
-
-            # Shadow removal & background illumination leveling in LAB space
-            lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)
-            l_ch, a_ch, b_ch = cv2.split(lab)
-            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
-            dilated = cv2.dilate(l_ch, kernel)
-            bg_illum = cv2.medianBlur(dilated, 21)
-            diff = 255 - cv2.absdiff(l_ch, bg_illum)
-            norm = cv2.normalize(diff, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-
-            # Adaptive Contrast Enhancement (CLAHE) for handwritten & carbon ink
-            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-            enhanced_l = clahe.apply(norm)
-
-            enhanced_lab = cv2.merge([enhanced_l, a_ch, b_ch])
-            result_bgr = cv2.cvtColor(enhanced_lab, cv2.COLOR_LAB2BGR)
-
-            # Mild text sharpening (unsharp mask)
-            gaussian = cv2.GaussianBlur(result_bgr, (0, 0), 2.0)
-            sharpened = cv2.addWeighted(result_bgr, 1.25, gaussian, -0.25, 0)
-
-            img = Image.fromarray(cv2.cvtColor(sharpened, cv2.COLOR_BGR2RGB))
-        except Exception:
-            # Fallback to Pillow enhancement
-            enhancer = ImageEnhance.Contrast(img)
-            img = enhancer.enhance(1.25)
-            sharpener = ImageEnhance.Sharpness(img)
-            img = sharpener.enhance(1.20)
-
-        out_buf = io.BytesIO()
-        img.save(out_buf, format='JPEG', quality=95, optimize=True)
-        out_buf.seek(0)
-
-        filename = sanitize_filename(getattr(file_obj, 'name', 'invoice_photo.jpg'))
-        if not filename.lower().endswith(('.jpg', '.jpeg')):
-            filename = os.path.splitext(filename)[0] + '.jpg'
-
-        formatted_file = SimpleUploadedFile(
-            name=filename,
-            content=out_buf.getvalue(),
-            content_type='image/jpeg'
-        )
-        return formatted_file
-    except ValidationError:
-        raise
-    except Exception:
-        file_obj.seek(0)
-        return file_obj
+    file_obj.seek(0)
+    return file_obj
 
 
 def validate_uploaded_files(files: List[Any]) -> List[Dict[str, Any]]:
@@ -282,11 +190,10 @@ def validate_uploaded_files(files: List[Any]) -> List[Dict[str, Any]]:
                 f"File '{safe_name}' extension does not match its detected content type ({mime_type})."
             )
 
-        # Automatically format, auto-orient and enhance uploaded pictures
+        # Validate image safety and preserve original uploaded file as-is
         if mime_type in ('image/jpeg', 'image/png'):
             _validate_image_safety(f, header, size, safe_name)
-            f = format_and_orient_image(f, mime_type)
-            mime_type = 'image/jpeg'
+            f.seek(0)
             size = f.size
 
         total_size += size
@@ -664,28 +571,11 @@ def create_invoice_submissions(
                     invoice_number='',
                 )
 
-                # Auto-crop document boundary, deskew & preserve 300 DPI for paper printing
-                from apps.invoices.image_processing import auto_crop_invoice_image
 
                 doc_file = uploaded_doc.original_file
                 doc_sha256 = file_sha256
                 doc_size = file_size
                 doc_mime = mime_type
-
-                try:
-                    if uploaded_doc.original_file and uploaded_doc.original_file.storage.exists(uploaded_doc.original_file.name):
-                        with uploaded_doc.original_file.open('rb') as raw_f:
-                            raw_bytes = raw_f.read()
-                        processed_bytes, was_cropped, crop_meta = auto_crop_invoice_image(raw_bytes)
-                        if was_cropped and processed_bytes:
-                            cropped_name = f"autocrop_{file_name}"
-                            doc_file = ContentFile(processed_bytes, name=cropped_name)
-                            doc_sha256 = hashlib.sha256(processed_bytes).hexdigest()
-                            doc_size = len(processed_bytes)
-                            doc_mime = 'image/jpeg'
-                            logger.info("Auto-cropped invoice image for submission %s: %s", sub_id, crop_meta.get('method'))
-                except Exception as crop_err:
-                    logger.warning("Auto-crop processing skipped for %s: %s", file_name, crop_err)
 
                 doc_rec = InvoiceDocument.objects.create(
                     submission=sub,
@@ -994,28 +884,13 @@ def resubmit_returned_invoice(
         # Deactivate previous active documents (preserve in storage and db)
         submission.documents.filter(is_active_version=True).update(is_active_version=False)
 
-        # Add new active documents with incremented version
-        from apps.invoices.image_processing import auto_crop_invoice_image
+
 
         for item in validated_files:
             item_file = item['file']
             item_sha256 = item['sha256']
             item_size = item['size']
             item_mime = item['content_type']
-
-            if item_mime.startswith('image/'):
-                try:
-                    item_file.seek(0)
-                    raw_bytes = item_file.read()
-                    item_file.seek(0)
-                    processed_bytes, was_cropped, _ = auto_crop_invoice_image(raw_bytes)
-                    if was_cropped and processed_bytes:
-                        item_file = ContentFile(processed_bytes, name=f"autocrop_{item['filename']}")
-                        item_sha256 = hashlib.sha256(processed_bytes).hexdigest()
-                        item_size = len(processed_bytes)
-                        item_mime = 'image/jpeg'
-                except Exception as crop_err:
-                    logger.warning("Auto-crop resubmit skipped: %s", crop_err)
 
             InvoiceDocument.objects.create(
                 submission=submission,

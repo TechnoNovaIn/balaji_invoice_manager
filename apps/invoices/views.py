@@ -685,6 +685,9 @@ def batch_download_invoices(request):
     elif scope == 'pending':
         qs = qs.filter(is_entered_in_tally=False).order_by('created_at')
         archive_name_suffix = f"all_pending_{today.strftime('%Y%m%d')}"
+    elif scope == 'all':
+        qs = qs.order_by('-created_at')
+        archive_name_suffix = f"all_invoices_{today.strftime('%Y%m%d')}"
     else:
         qs = qs.filter(is_entered_in_tally=False).order_by('created_at')
         archive_name_suffix = f"invoices_{today.strftime('%Y%m%d')}"
@@ -694,7 +697,7 @@ def batch_download_invoices(request):
         messages.warning(request, "No matching invoices found to download.")
         return redirect('core:naveen_dashboard')
 
-    req_format = request.GET.get('format', 'pdf').strip().lower()
+    req_format = request.GET.get('format', 'images').strip().lower()
     zip_buffer = io.BytesIO()
 
     with zipfile.ZipFile(zip_buffer, mode='w', compression=zipfile.ZIP_DEFLATED) as zf:
@@ -702,49 +705,78 @@ def batch_download_invoices(request):
         for idx, sub in enumerate(submissions, 1):
             safe_vendor = re.sub(r'[^a-zA-Z0-9_\-]', '_', sub.party_name or 'Vendor')[:30].strip('_')
             safe_inv = re.sub(r'[^a-zA-Z0-9_\-]', '_', sub.invoice_number or '').strip('_')
-            
-            # Organize each invoice into a folder prefixed with the invoice number
-            if safe_inv:
-                folder_name = f"INV_{safe_inv}_{sub.submission_id}"
-            else:
-                folder_name = f"INV_PENDING_{sub.submission_id}"
-            if safe_vendor:
-                folder_name += f"_{safe_vendor}"
+            inv_part = f"_INV_{safe_inv}" if safe_inv else ""
+            vendor_part = f"_{safe_vendor}" if safe_vendor else ""
 
-            if req_format == 'original':
-                active_docs = list(sub.documents.filter(is_active_version=True).order_by('page_number'))
-                written_any = False
-                for doc_idx, doc in enumerate(active_docs, 1):
-                    if doc.original_file and doc.original_file.storage.exists(doc.original_file.name):
-                        ext = os.path.splitext(doc.original_file.name)[1] or '.jpg'
-                        inv_tag = f"INV_{safe_inv}_" if safe_inv else ""
-                        fname = f"{folder_name}/{inv_tag}page_{doc_idx}{ext}"
-                        dedup_fname = fname
-                        k = 1
-                        while dedup_fname in used_filenames:
-                            dedup_fname = f"{folder_name}/{inv_tag}page_{doc_idx}_{k}{ext}"
-                            k += 1
-                        used_filenames.add(dedup_fname)
+            if req_format == 'pdf':
+                # Explicit PDF voucher request
+                try:
+                    pdf_bytes = generate_print_ready_pdf(sub)
+                    fname = f"{sub.submission_id}{inv_part}{vendor_part}_voucher.pdf"
+                    dedup_fname = fname
+                    k = 1
+                    while dedup_fname in used_filenames:
+                        dedup_fname = f"{sub.submission_id}{inv_part}{vendor_part}_voucher_{k}.pdf"
+                        k += 1
+                    used_filenames.add(dedup_fname)
+                    zf.writestr(dedup_fname, pdf_bytes)
+                except Exception as e:
+                    logger.warning("Could not generate PDF for submission %s in batch zip: %s", sub.submission_id, e)
+                continue
+
+            # Default: Direct invoice image files (.jpg / .jpeg / .png) so Windows displays image thumbnails
+            active_docs = list(sub.documents.filter(is_active_version=True).order_by('page_number'))
+            total_docs = len(active_docs)
+            written_any = False
+
+            for doc_idx, doc in enumerate(active_docs, 1):
+                page_part = f"_pg{doc_idx}" if total_docs > 1 else ""
+                base_fname = f"{sub.submission_id}{inv_part}{vendor_part}{page_part}"
+
+                if doc.original_file and doc.original_file.storage.exists(doc.original_file.name):
+                    ext = os.path.splitext(doc.original_file.name)[1].lower()
+                    try:
                         with doc.original_file.open('rb') as f:
-                            zf.writestr(dedup_fname, f.read())
-                        written_any = True
-                if written_any:
-                    continue
+                            file_bytes = f.read()
 
-            # Default: Print-ready official A4 voucher PDF with auto-cropped image & metadata
-            try:
-                pdf_bytes = generate_print_ready_pdf(sub)
-                inv_tag = f"INV_{safe_inv}_" if safe_inv else ""
-                fname = f"{folder_name}/{inv_tag}{sub.submission_id}_voucher.pdf"
-                dedup_fname = fname
-                k = 1
-                while dedup_fname in used_filenames:
-                    dedup_fname = f"{folder_name}/{inv_tag}{sub.submission_id}_voucher_{k}.pdf"
-                    k += 1
-                used_filenames.add(dedup_fname)
-                zf.writestr(dedup_fname, pdf_bytes)
-            except Exception as e:
-                logger.warning("Could not generate PDF for submission %s in batch zip: %s", sub.submission_id, e)
+                        if ext in ('.jpg', '.jpeg', '.png', '.webp', '.bmp'):
+                            out_fname = f"{base_fname}{ext}"
+                            k = 1
+                            while out_fname in used_filenames:
+                                out_fname = f"{base_fname}_{k}{ext}"
+                                k += 1
+                            used_filenames.add(out_fname)
+                            zf.writestr(out_fname, file_bytes)
+                            written_any = True
+                        elif ext == '.pdf':
+                            # Render PDF pages to high-resolution JPEG images so Windows displays image thumbnails
+                            import pymupdf
+                            doc_pdf = pymupdf.open(stream=file_bytes, filetype='pdf')
+                            for p_num, page in enumerate(doc_pdf, 1):
+                                pix = page.get_pixmap(dpi=200)
+                                jpg_bytes = pix.tobytes(output='jpg')
+                                p_ext = f"_pg{p_num}.jpg" if len(doc_pdf) > 1 else ".jpg"
+                                out_fname = f"{base_fname}{p_ext}"
+                                k = 1
+                                while out_fname in used_filenames:
+                                    out_fname = f"{base_fname}_{k}.jpg"
+                                    k += 1
+                                used_filenames.add(out_fname)
+                                zf.writestr(out_fname, jpg_bytes)
+                                written_any = True
+                            doc_pdf.close()
+                    except Exception as err:
+                        logger.warning("Error adding doc %s to batch zip: %s", doc.id, err)
+
+            # Fallback if no image file could be read from disk
+            if not written_any:
+                try:
+                    pdf_bytes = generate_print_ready_pdf(sub)
+                    out_fname = f"{sub.submission_id}{inv_part}{vendor_part}.pdf"
+                    used_filenames.add(out_fname)
+                    zf.writestr(out_fname, pdf_bytes)
+                except Exception:
+                    pass
 
     zip_buffer.seek(0)
     zip_filename = f"Balaji_Invoices_{archive_name_suffix}.zip"
@@ -1311,14 +1343,6 @@ def tally_workspace(request, submission_id):
 
         # Already in Tally and staying there: financial fields are locked (only voucher no / GST status change).
         keep_financials_locked = submission.is_financially_locked and is_in_tally
-        # Only verified invoices may be marked as entered in Tally.
-        if is_in_tally and not submission.is_entered_in_tally and submission.status != InvoiceSubmission.STATUS_VERIFIED:
-            is_in_tally = False
-            messages.warning(
-                request,
-                f"Invoice {submission.submission_id} is not verified yet, so it was not marked as entered in Tally. "
-                "Verify it on the Verification Desk first."
-            )
 
         new_data = {
             'party_name': party_name,
@@ -1396,9 +1420,6 @@ def toggle_tally_status(request, submission_id):
         return HttpResponseForbidden("POST required")
 
     submission = get_object_or_404(InvoiceSubmission, submission_id=submission_id)
-    if not submission.is_entered_in_tally and submission.status != InvoiceSubmission.STATUS_VERIFIED:
-        messages.error(request, f"Invoice {submission.submission_id} must be verified before it can be marked as entered in Tally.")
-        return redirect(_safe_next_url(request, 'core:naveen_dashboard'))
     submission.is_entered_in_tally = not submission.is_entered_in_tally
     if submission.is_entered_in_tally:
         submission.tally_entered_at = timezone.now()
@@ -1536,7 +1557,6 @@ def batch_complete_tally(request):
     with transaction.atomic():
         selected_qs = InvoiceSubmission.objects.filter(submission_id__in=selected_ids)
         eligible_qs = selected_qs.filter(
-            status=InvoiceSubmission.STATUS_VERIFIED,
             is_entered_in_tally=False,
         )
         eligible_ids = list(eligible_qs.values_list('submission_id', flat=True))
@@ -1558,7 +1578,7 @@ def batch_complete_tally(request):
         messages.warning(
             request,
             f"{skipped_count} selected invoice{'s were' if skipped_count != 1 else ' was'} skipped: "
-            "only verified invoices not already in Tally can be marked as completed."
+            "already marked as completed in Tally."
         )
     return redirect('core:naveen_dashboard')
 
@@ -1662,9 +1682,8 @@ def export_tally_xml(request):
     force = request.GET.get('force', '').lower() in ('1', 'true', 'yes')
     filter_type = request.GET.get('filter', 'pending_tally')
 
-    submissions = InvoiceSubmission.objects.filter(
-        status=InvoiceSubmission.STATUS_VERIFIED,
-        requires_manual_review=False
+    submissions = InvoiceSubmission.objects.exclude(
+        status=InvoiceSubmission.STATUS_REJECTED
     ).select_related('employee').prefetch_related('documents')
 
     if not force:
@@ -2117,7 +2136,7 @@ def export_tally_excel(request):
     base_qs = InvoiceSubmission.objects.all().select_related('employee').order_by('-invoice_date')
 
     if filter_type == 'verified_only':
-        base_qs = base_qs.filter(status=InvoiceSubmission.STATUS_VERIFIED)
+        base_qs = base_qs.exclude(status=InvoiceSubmission.STATUS_REJECTED)
     elif filter_type == 'pending_tally':
         base_qs = base_qs.filter(is_entered_in_tally=False)
     elif filter_type == 'entered_tally':

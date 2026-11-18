@@ -240,6 +240,11 @@ CRITICAL RULES:
    - Set `has_handwritten_amounts` to true ONLY if primary billed items, rates, taxes, or totals are handwritten (not just a pen signature or post-print payment remark).
    - Never classify a handwritten bill as `is_e_invoice: false` unless explicit non-e-invoice text says so.
 
+8. PHYSICAL SPARE PARTS & TOOLS IN THE PHOTO:
+   - Field employees often photograph bills alongside physical hardware/spare parts (e.g. hydraulic hoses, metallic fittings, bolts, bearings, mechanical components, filters, oil cans, or tools) resting on a table, counter, or workshop floor.
+   - Completely IGNORE all physical objects, spare parts, tools, hoses, hands, background furniture, and counter surfaces.
+   - Locate and focus exclusively on the paper invoice / receipt document in the photograph to extract the supplier, date, bill number, amounts, and taxes.
+
 Return strictly the structured JSON object.
 """
 

@@ -213,9 +213,9 @@ class TallyGstWorkflowTests(TestCase):
         self.assertIsNotNone(self.submission.tally_entered_at)
         self.assertTrue(sub2.is_entered_in_tally)
         self.assertIsNotNone(sub2.tally_entered_at)
-        # Unverified invoices are skipped even when selected
+        # Selected invoices can be marked completed in Tally without verification gating
         sub4_unverified.refresh_from_db()
-        self.assertFalse(sub4_unverified.is_entered_in_tally)
+        self.assertTrue(sub4_unverified.is_entered_in_tally)
         # sub3 was not selected, remains False
         self.assertFalse(sub3.is_entered_in_tally)
         self.assertIsNone(sub3.tally_entered_at)
@@ -298,13 +298,13 @@ class TallyGstWorkflowTests(TestCase):
         self.assertEqual(split_inter['igst'], 1800.0)
 
     def test_tally_xml_blocks_unverified_and_duplicate_export(self):
-        """Exporting Tally XML strictly requires VERIFIED status and blocks unforced duplicate exports."""
+        """Exporting Tally XML blocks rejected invoices and blocks unforced duplicate exports."""
         from apps.invoices.models import ExportAuditLog
 
         self.client.login(username="naveen_acc", password="TestPassword@123")
 
-        # Unverified invoice must not be exported
-        self.submission.status = InvoiceSubmission.STATUS_SUBMITTED
+        # Rejected invoice must not be exported
+        self.submission.status = InvoiceSubmission.STATUS_REJECTED
         self.submission.tally_export_batch = ''
         self.submission.is_entered_in_tally = False
         self.submission.save()
@@ -313,8 +313,8 @@ class TallyGstWorkflowTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertNotIn(self.submission.submission_id, resp.content.decode('utf-8'))
 
-        # Once verified and review cleared, it is included in export batch
-        self.submission.status = InvoiceSubmission.STATUS_VERIFIED
+        # Once active, it is included in export batch
+        self.submission.status = InvoiceSubmission.STATUS_SUBMITTED
         self.submission.requires_manual_review = False
         self.submission.save()
 
