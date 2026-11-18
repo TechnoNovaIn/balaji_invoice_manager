@@ -53,6 +53,7 @@ class TallyGstWorkflowTests(TestCase):
     def test_save_tally_voucher_details(self):
         """Naveen enters party, GSTIN, invoice details, and marks as entered in Tally."""
         self.client.login(username="naveen_acc", password="TestPassword@123")
+        InvoiceSubmission.objects.filter(pk=self.submission.pk).update(status=InvoiceSubmission.STATUS_VERIFIED)
 
         url = reverse('invoices:tally_workspace', kwargs={'submission_id': self.submission.submission_id})
         response = self.client.post(url, {
@@ -86,6 +87,7 @@ class TallyGstWorkflowTests(TestCase):
     def test_quick_toggle_tally_and_gst_status(self):
         """1-click toggle buttons directly flip Tally and GST flags."""
         self.client.login(username="naveen_acc", password="TestPassword@123")
+        InvoiceSubmission.objects.filter(pk=self.submission.pk).update(status=InvoiceSubmission.STATUS_VERIFIED)
 
         # Toggle Tally
         toggle_tally_url = reverse('invoices:toggle_tally', kwargs={'submission_id': self.submission.submission_id})
@@ -186,13 +188,20 @@ class TallyGstWorkflowTests(TestCase):
             user=self.emp,
             files=[create_dummy_jpeg("bill_3.jpg", content_tag="unique_bill_3")]
         )
+        sub4_unverified = create_invoice_submission(
+            user=self.emp,
+            files=[create_dummy_jpeg("bill_4.jpg", content_tag="unique_bill_4")]
+        )
+        InvoiceSubmission.objects.filter(
+            pk__in=[self.submission.pk, sub2.pk, sub3.pk]
+        ).update(status=InvoiceSubmission.STATUS_VERIFIED)
 
         self.client.login(username="naveen_acc", password="TestPassword@123")
 
         # Mark sub1 and sub2 as completed in Tally via batch endpoint
         batch_url = reverse('invoices:batch_complete_tally')
         resp = self.client.post(batch_url, {
-            'selected_invoices': [self.submission.submission_id, sub2.submission_id]
+            'selected_invoices': [self.submission.submission_id, sub2.submission_id, sub4_unverified.submission_id]
         })
         self.assertEqual(resp.status_code, 302)
 
@@ -204,6 +213,9 @@ class TallyGstWorkflowTests(TestCase):
         self.assertIsNotNone(self.submission.tally_entered_at)
         self.assertTrue(sub2.is_entered_in_tally)
         self.assertIsNotNone(sub2.tally_entered_at)
+        # Unverified invoices are skipped even when selected
+        sub4_unverified.refresh_from_db()
+        self.assertFalse(sub4_unverified.is_entered_in_tally)
         # sub3 was not selected, remains False
         self.assertFalse(sub3.is_entered_in_tally)
         self.assertIsNone(sub3.tally_entered_at)
