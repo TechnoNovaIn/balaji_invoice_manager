@@ -70,3 +70,19 @@ class SensitiveResponseNoCacheMiddleware:
 
         return response
 
+
+class LoopbackSSLBypassMiddleware:
+    """
+    Allows local loopback development and testing on http://127.0.0.1:8000 and http://localhost:8000
+    without triggering production HTTPS redirection loops when direct HTTP access is used.
+    Public domain traffic (invoicehub.balajitransports.com) strictly enforces HTTPS.
+    """
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        host = request.get_host().split(':')[0].lower()
+        if host in ('127.0.0.1', 'localhost', 'testserver') and not request.is_secure():
+            request.META['HTTP_X_FORWARDED_PROTO'] = 'https'
+        return self.get_response(request)
+

@@ -416,7 +416,7 @@
                             <label class="form-label small fw-bold text-dark mb-1">
                                 Bill Date <span class="text-danger">*</span>
                             </label>
-                            <input type="date" name="invoice_date" id="fieldInvoiceDate" value="{{ submission.invoice_date|date:'Y-m-d'|default:submission.created_at|date:'Y-m-d' }}" class="form-control form-control-sm" required>
+                            <input type="date" name="invoice_date" id="fieldInvoiceDate" value="{% if submission.invoice_date %}{{ submission.invoice_date|date:'Y-m-d' }}{% endif %}" class="form-control form-control-sm" required>
                         </div>
 
                         <!-- HSN / SAC Code -->

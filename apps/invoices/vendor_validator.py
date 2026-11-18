@@ -36,6 +36,21 @@ def is_valid_gstin(gstin: str) -> bool:
     return bool(GSTIN_REGEX.match(clean_gstin(gstin)))
 
 
+_GSTIN_CHARSET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+
+def gstin_checksum_valid(gstin: str) -> bool:
+    """Verify the 15th (check) character of a GSTIN using the official mod-36 algorithm."""
+    g = clean_gstin(gstin)
+    if len(g) != 15 or any(c not in _GSTIN_CHARSET for c in g):
+        return False
+    total = 0
+    for idx, char in enumerate(g[:14]):
+        product = _GSTIN_CHARSET.index(char) * (2 if idx % 2 else 1)
+        total += product // 36 + product % 36
+    return _GSTIN_CHARSET[(36 - total % 36) % 36] == g[14]
+
+
 def extract_pan_from_gstin(gstin: str) -> str:
     """Extracts 10-character PAN embedded within statutory GSTIN (chars 3 to 12)."""
     cleaned = clean_gstin(gstin)

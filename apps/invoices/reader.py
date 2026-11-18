@@ -1,4 +1,5 @@
 import re
+import logging
 import os
 from typing import Dict, Any, Optional, Tuple, List
 from datetime import datetime
@@ -7,6 +8,8 @@ from pathlib import Path
 
 # Shared singleton OCR engine instance to prevent reloading ONNX models on every page
 _SHARED_OCR_ENGINE = None
+
+logger = logging.getLogger(__name__)
 
 def get_shared_ocr_engine():
     global _SHARED_OCR_ENGINE
@@ -254,6 +257,49 @@ def extract_text_from_pdf_page(page, ocr_engine=None, return_details: bool = Fal
     return final_text.strip()
 
 
+# Buyer (our own company) GSTINs, including common OCR misreads. Never treated as the supplier.
+OWN_COMPANY_GSTINS = {'29AAWFB0395H1ZX', '29AAWFR03951I2X', '29AAWFB0395HIZX'}
+_GSTIN_IN_TEXT = re.compile(r'([0-9]{2}[A-Za-z]{5}[0-9]{4}[A-Za-z][1-9A-Za-z][A-Za-z0-9][0-9A-Za-z])')
+# Lines describing the buyer / consignee rather than the supplier.
+_BUYER_LINE = re.compile(
+    r'\b(?:bill(?:ed)?\s*to|buyer|ship(?:ped)?\s*to|consignee|customer|recipient|sold\s*to|'
+    r'party\s*details|balaji\s*transports?)\b',
+    re.I,
+)
+
+
+def _strip_buyer_lines(lines):
+    """Drop buyer/consignee lines (and the 2 lines following a bare 'Bill To:' heading)."""
+    kept, skip = [], 0
+    for line in lines:
+        if skip:
+            skip -= 1
+            continue
+        if _BUYER_LINE.search(line):
+            # A heading alone on its line ("Bill To:") is usually followed by the buyer's name/address.
+            if len(re.sub(r'[^A-Za-z]', '', _BUYER_LINE.sub('', line))) < 3:
+                skip = 2
+            continue
+        kept.append(line)
+    return kept
+
+
+def _find_supplier_gstin(lines) -> str:
+    """Return the first GSTIN printed outside buyer lines that is not our own company GSTIN."""
+    for line in _strip_buyer_lines(lines):
+        for raw in _GSTIN_IN_TEXT.findall(line):
+            g = raw.upper()
+            if g not in OWN_COMPANY_GSTINS:
+                return g
+    return ''
+
+
+def _last_amount(line: str):
+    """Last money-looking number on a line (totals are printed at the right-hand end)."""
+    found = re.findall(r'([0-9]{1,3}(?:,[0-9]{2,3})+(?:\.[0-9]{1,2})?|[0-9]+\.[0-9]{1,2}|[0-9]{3,})', line)
+    return found[-1] if found else None
+
+
 def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
     """
     Extracts structured invoice metadata from text (OCR or digital):
@@ -416,11 +462,33 @@ def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
                             break
 
         # --- B. Party / Vendor Name Extraction ---
+        vendor_source = 'karnataka_tyre' if result['party_name'] else ''
+
+        # 1. A supplier GSTIN printed on the invoice is the most reliable vendor signal; use it before
+        #    any fuzzy name matching (which can latch onto the buyer's own name in the Bill-To block).
         if not result['party_name']:
+            supplier_gstin = _find_supplier_gstin(lines)
+            if supplier_gstin:
+                result['party_gstin'] = supplier_gstin
+                vendor_source = 'gstin'
+                try:
+                    from .vendor_directory import find_vendor_by_gstin
+                    v_info = find_vendor_by_gstin(supplier_gstin)
+                    if v_info:
+                        result['party_name'] = v_info['name']
+                        vendor_source = 'gstin_master'
+                        if v_info.get('ledger'):
+                            result['expense_ledger'] = v_info['ledger']
+                except Exception:
+                    logger.debug("Vendor lookup by GSTIN failed", exc_info=True)
+
+        # 2. Vendor-master name matching, only when no supplier GSTIN was printed. Buyer lines are removed
+        #    first so our own company name ("Balaji Transports") cannot match a vendor.
+        if not result['party_name'] and not result['party_gstin']:
             try:
                 from .vendor_directory import get_active_vendor_directory
                 # Strip bank account and payment details before vendor matching to avoid false bank name matches
-                raw_for_vendor = re.sub(r'(?:Bank|Branch|IFSC|A\/c|Account|Co-op).*', '', raw_text, flags=re.I)
+                raw_for_vendor = re.sub(r'(?:Bank|Branch|IFSC|A\/c|Account|Co-op).*', '', '\n'.join(_strip_buyer_lines(lines)), flags=re.I)
                 raw_lower = raw_for_vendor.lower()
                 raw_no_space = re.sub(r'[^a-z0-9]', '', raw_lower)
                 sorted_vendors = sorted(get_active_vendor_directory().items(), key=lambda x: len(x[1]['name']), reverse=True)
@@ -431,6 +499,7 @@ def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
                     if len(v_name) >= 4 and v_name in raw_lower:
                         result['party_name'] = info['name']
                         result['party_gstin'] = gstin
+                        vendor_source = 'name_exact'
                         if info.get('ledger'):
                             result['expense_ledger'] = info['ledger']
                         break
@@ -445,7 +514,7 @@ def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
                         'commercial', 'supplies', 'supply', 'fuels', 'fuel', 'petrol', 'diesel', 'diesels',
                         'auto', 'mobiles', 'road', 'express', 'national', 'south', 'north', 'bharat',
                         'tumkur', 'bangalore', 'hosur', 'mysore', 'bank', 'grain', 'merchants', 'service',
-                        'eservice', 'care', 'works'
+                        'eservice', 'care', 'works', 'balaji'
                     }
                     for gstin, info in sorted_vendors:
                         name = info['name'].lower()
@@ -457,6 +526,7 @@ def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
                             if t in raw_no_space:
                                 result['party_name'] = info['name']
                                 result['party_gstin'] = gstin
+                                vendor_source = 'name_token'
                                 if info.get('ledger'):
                                     result['expense_ledger'] = info['ledger']
                                 break
@@ -465,8 +535,8 @@ def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
             except Exception:
                 pass
 
-        # 2. Check for explicit 15-character Indian GSTIN (excluding buyer Balaji Transports: 29AAWFB0395H1ZX)
-        if not result['party_name']:
+        # 3. Any other explicit 15-character GSTIN (excluding our own company GSTIN)
+        if not result['party_name'] and not result['party_gstin']:
             all_gstins = re.findall(r'(?:\b|GSTIN[.:\s]*)([0-9]{2}[A-Za-z]{5}[0-9]{4}[A-Za-z]{1}[1-9A-Za-z]{1}[A-Za-z0-9]{1}[0-9A-Za-z]{1})', raw_text, re.IGNORECASE)
             for raw_g in all_gstins:
                 g = raw_g.upper()
@@ -531,6 +601,8 @@ def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
             try:
                 from .vendor_directory import find_vendor_by_name
                 matched = find_vendor_by_name(result['party_name'])
+                if matched and result['party_gstin'] and matched.get('gstin') and matched['gstin'] != result['party_gstin']:
+                    matched = None  # header name resembles another vendor; trust the printed GSTIN
                 if matched:
                     if not result['party_gstin']:
                         result['party_gstin'] = matched['gstin']
@@ -765,16 +837,20 @@ def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
                     if igst_val > 0:
                         break
 
-        # 5. Extract Grand Total (G.TOTAL / Net Amount / Total)
+        # 5. Extract Grand Total (G.TOTAL / Net Amount / Total Invoice Value)
         for i, line in enumerate(lines):
-            if re.search(r'\b(?:G\.?TOTAL|Grand\s*Total|Net\s*Amount|Net\s*Payable|Total\s*Payable|Invoice\s*Total|Bill\s*Amount)\b', line, re.I):
+            if re.search(r'\b(?:G\.?TOTAL|Grand\s*Total|Net\s*Amount|Net\s*Payable|Total\s*Payable|Invoice\s*Total|Bill\s*Amount|(?:Total\s*)?Invoice\s*(?:Value|Amount)|Amount\s*Payable)\b', line, re.I):
                 for off in [0, -1, 1, -2, -3, 2]:
                     idx = i + off
                     if 0 <= idx < len(lines):
                         cand_l = lines[idx]
-                        m = re.search(r'([0-9]+(?:[.,][0-9]+)+)', cand_l)
-                        if m:
-                            d = parse_amt_str(m.group(1))
+                        if off == 0:
+                            raw_amt = _last_amount(cand_l)
+                        else:
+                            m = re.search(r'([0-9]+(?:[.,][0-9]+)+)', cand_l)
+                            raw_amt = m.group(1) if m else None
+                        if raw_amt:
+                            d = parse_amt_str(raw_amt)
                             if d and d > 0:
                                 gtotal_val = d
                                 break
@@ -862,6 +938,12 @@ def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
 
             for i, line in enumerate(lines):
                 if re.search(r'\b(?:Net\s*Amount|Grand\s*Total|G\.?TOTAL|Total\s*Payable|Total\s*Amount|Total|Gross\s*Amount)\b', line, re.I):
+                    same_line_amt = _last_amount(line)
+                    if same_line_amt:
+                        d = parse_amt_str(same_line_amt)
+                        if d and d > 0:
+                            numeric_candidates.append(d)
+                            continue
                     for offset in [1, -1, 2, -2]:
                         idx = i + offset
                         if 0 <= idx < len(lines):
@@ -908,6 +990,13 @@ def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
         elif taxable_val == 0 and gtotal_val > 0:
             taxable_val = gtotal_val
 
+        # 10. A grand total below the taxable value is impossible; it was a tax line picked up by mistake.
+        tax_sum = cgst_val + sgst_val + igst_val
+        computed_total = (taxable_val + tax_sum).quantize(Decimal('0.01'))
+        if taxable_val > 0 and tax_sum > 0 and gtotal_val < taxable_val:
+            gtotal_val = computed_total
+        amounts_reconcile = not (taxable_val > 0 and tax_sum > 0 and abs(gtotal_val - computed_total) > Decimal('1.00'))
+
         result['taxable_amount'] = taxable_val
         result['cgst_amount'] = cgst_val
         result['sgst_amount'] = sgst_val
@@ -929,7 +1018,18 @@ def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
         if result['total_amount'] > Decimal('0.00'):
             score += 0.15
 
-        result['confidence'] = round(score, 2)
+        # Penalise results that are present but unreliable, so confidence reflects correctness, not just presence.
+        from .vendor_validator import gstin_checksum_valid
+        if not amounts_reconcile:
+            score -= 0.30
+        if result['party_gstin'] and not gstin_checksum_valid(result['party_gstin']):
+            score -= 0.15
+        if vendor_source in ('name_token', ''):
+            score -= 0.20  # vendor guessed from a fuzzy name match or a header line, not a printed GSTIN
+        if not result.get('invoice_date'):
+            score -= 0.10
+
+        result['confidence'] = round(max(score, 0.0), 2)
         # Financial policy: OCR is advisory only. Naveen's approval is always required before Tally posting.
         result['requires_manual_review'] = True
 
