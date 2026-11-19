@@ -588,14 +588,15 @@ def download_invoice(request, submission_id):
 
     active_docs = list(submission.documents.filter(is_active_version=True).order_by('page_number'))
 
-    safe_vendor = re.sub(r'[^a-zA-Z0-9_\-]', '_', submission.party_name or 'Vendor')[:30].strip('_')
     safe_inv = re.sub(r'[^a-zA-Z0-9_\-]', '_', submission.invoice_number or '').strip('_')
+    inv_date = submission.invoice_date or submission.created_at.date()
+    date_str = inv_date.strftime('%Y-%m-%d')
+
     if safe_inv:
-        base_name = f"INV_{safe_inv}_{submission.submission_id}"
+        inv_part = safe_inv if safe_inv.upper().startswith('INV') else f"INV_{safe_inv}"
+        base_name = f"{inv_part}_{date_str}"
     else:
-        base_name = f"INV_PENDING_{submission.submission_id}"
-    if safe_vendor:
-        base_name += f"_{safe_vendor}"
+        base_name = f"{submission.submission_id}_{date_str}"
 
     if req_format == 'pdf' or len(active_docs) > 1 or not active_docs:
         from apps.invoices.image_processing import generate_print_ready_pdf
@@ -703,20 +704,25 @@ def batch_download_invoices(request):
     with zipfile.ZipFile(zip_buffer, mode='w', compression=zipfile.ZIP_DEFLATED) as zf:
         used_filenames = set()
         for idx, sub in enumerate(submissions, 1):
-            safe_vendor = re.sub(r'[^a-zA-Z0-9_\-]', '_', sub.party_name or 'Vendor')[:30].strip('_')
             safe_inv = re.sub(r'[^a-zA-Z0-9_\-]', '_', sub.invoice_number or '').strip('_')
-            inv_part = f"_INV_{safe_inv}" if safe_inv else ""
-            vendor_part = f"_{safe_vendor}" if safe_vendor else ""
+            inv_date = sub.invoice_date or sub.created_at.date()
+            date_str = inv_date.strftime('%Y-%m-%d')
+
+            if safe_inv:
+                inv_part = safe_inv if safe_inv.upper().startswith('INV') else f"INV_{safe_inv}"
+                inv_base = f"{inv_part}_{date_str}"
+            else:
+                inv_base = f"{sub.submission_id}_{date_str}"
 
             if req_format == 'pdf':
                 # Explicit PDF voucher request
                 try:
                     pdf_bytes = generate_print_ready_pdf(sub)
-                    fname = f"{sub.submission_id}{inv_part}{vendor_part}_voucher.pdf"
+                    fname = f"{inv_base}_voucher.pdf"
                     dedup_fname = fname
                     k = 1
                     while dedup_fname in used_filenames:
-                        dedup_fname = f"{sub.submission_id}{inv_part}{vendor_part}_voucher_{k}.pdf"
+                        dedup_fname = f"{inv_base}_voucher_{k}.pdf"
                         k += 1
                     used_filenames.add(dedup_fname)
                     zf.writestr(dedup_fname, pdf_bytes)
@@ -731,7 +737,7 @@ def batch_download_invoices(request):
 
             for doc_idx, doc in enumerate(active_docs, 1):
                 page_part = f"_pg{doc_idx}" if total_docs > 1 else ""
-                base_fname = f"{sub.submission_id}{inv_part}{vendor_part}{page_part}"
+                base_fname = f"{inv_base}{page_part}"
 
                 if doc.original_file and doc.original_file.storage.exists(doc.original_file.name):
                     ext = os.path.splitext(doc.original_file.name)[1].lower()
