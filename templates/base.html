@@ -81,10 +81,6 @@
                 <i class="bi bi-inboxes-fill"></i>
                 <span>Accounts Dashboard</span>
             </a>
-            <a href="{% url 'invoices:bank_reconciliation' %}" class="sidebar-link {% if request.resolver_match.url_name == 'bank_reconciliation' %}active{% endif %}">
-                <i class="bi bi-bank2"></i>
-                <span>Bank Reconciliation</span>
-            </a>
             <a href="{% url 'invoices:analytics_dashboard' %}" class="sidebar-link {% if request.resolver_match.url_name == 'analytics_dashboard' %}active{% endif %}">
                 <i class="bi bi-graph-up-arrow"></i>
                 <span>Analytics & Reports</span>
@@ -190,10 +186,6 @@
                 <a href="{% url 'core:naveen_dashboard' %}" class="sidebar-link {% if request.resolver_match.url_name == 'naveen_dashboard' %}active{% endif %}">
                     <i class="bi bi-inboxes-fill"></i>
                     <span>Accounts Dashboard</span>
-                </a>
-                <a href="{% url 'invoices:bank_reconciliation' %}" class="sidebar-link {% if request.resolver_match.url_name == 'bank_reconciliation' %}active{% endif %}">
-                    <i class="bi bi-bank2"></i>
-                    <span>Bank Reconciliation</span>
                 </a>
                 <a href="{% url 'invoices:analytics_dashboard' %}" class="sidebar-link {% if request.resolver_match.url_name == 'analytics_dashboard' %}active{% endif %}">
                     <i class="bi bi-graph-up-arrow"></i>

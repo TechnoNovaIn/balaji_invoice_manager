@@ -46,12 +46,5 @@ urlpatterns = [
     # Phase 7: Executive Analytics & Reports
     path('analytics/', views.analytics_dashboard, name='analytics_dashboard'),
     path('reports/<str:report_type>/', views.download_executive_report, name='download_executive_report'),
-
-    # Bank Statement Reconciliation & Missing Invoices Tracker
-    path('reconciliation/', views.bank_reconciliation_dashboard, name='bank_reconciliation'),
-    path('reconciliation/upload/', views.upload_bank_statement, name='upload_bank_statement'),
-    path('reconciliation/link/<int:txn_id>/', views.link_bank_transaction, name='link_bank_transaction'),
-    path('reconciliation/ignore/<int:txn_id>/', views.ignore_bank_transaction, name='ignore_bank_transaction'),
-    path('reconciliation/delete-statement/<int:statement_id>/', views.delete_bank_statement, name='delete_bank_statement'),
 ]
 
