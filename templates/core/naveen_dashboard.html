@@ -16,6 +16,10 @@
             </p>
         </div>
         <div class="d-flex gap-2 align-items-center flex-wrap">
+            <!-- ICICI Bank Reconciliation & Missing Invoices -->
+            <a href="{% url 'invoices:bank_reconciliation' %}" class="btn btn-sm btn-outline-danger fw-bold shadow-sm" title="Reconcile ICICI Bank payments and find missing vendor invoices">
+                <i class="bi bi-bank2 me-1"></i> Bank Match
+            </a>
             <!-- Tally Structured Excel Export -->
             <a href="{% url 'invoices:export_tally_excel' %}?filter=all" class="btn btn-sm btn-outline-success fw-bold shadow-sm" title="Structured Tally purchase voucher export">
                 <i class="bi bi-file-earmark-excel-fill me-1"></i> Tally Excel

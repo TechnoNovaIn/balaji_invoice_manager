@@ -1,0 +1,363 @@
+{% extends 'base.html' %}
+
+{% block title %}Bank Reconciliation & Missing Invoices - Balaji InvoiceHub{% endblock %}
+{% block page_heading %}Bank Reconciliation & Missing Invoices Tracker{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+    <!-- Top Action & Navigation Bar -->
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+        <div>
+            <h4 class="fw-bold text-dark mb-1">
+                <i class="bi bi-bank2 me-2 text-teal"></i>ICICI Bank vs Invoice Reconciliation
+            </h4>
+            <p class="text-secondary small mb-0">
+                Track payments made from ICICI Bank account and instantly identify advances or settlements where the vendor has <strong>not sent the invoice</strong>.
+            </p>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+            <a href="{% url 'core:naveen_dashboard' %}" class="btn btn-outline-secondary btn-sm">
+                <i class="bi bi-arrow-left me-1"></i>Back to Daily Feed
+            </a>
+            <button type="button" class="btn btn-teal btn-sm fw-semibold shadow-sm" data-bs-toggle="modal" data-bs-target="#uploadStatementModal">
+                <i class="bi bi-cloud-arrow-up-fill me-1"></i>Upload ICICI Statement
+            </button>
+        </div>
+    </div>
+
+    <!-- 4 Summary KPI Cards -->
+    <div class="row g-3 mb-4">
+        <!-- Card 1: Missing Invoices Count (Critical) -->
+        <div class="col-12 col-sm-6 col-lg-3">
+            <div class="card card-enterprise shadow-sm p-3 border-start border-4 border-danger h-100 bg-white">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <div class="text-muted small fw-bold text-uppercase">Missing Invoices</div>
+                        <h3 class="fw-bold text-danger mb-0 mt-1">{{ unmatched_count }}</h3>
+                        <small class="text-danger fw-semibold">Paid but no bill uploaded</small>
+                    </div>
+                    <div class="rounded-circle p-3 bg-danger bg-opacity-10 text-danger">
+                        <i class="bi bi-exclamation-triangle-fill fs-3"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Card 2: Value of Missing Invoices -->
+        <div class="col-12 col-sm-6 col-lg-3">
+            <div class="card card-enterprise shadow-sm p-3 border-start border-4 border-warning h-100 bg-white">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <div class="text-muted small fw-bold text-uppercase">Unbilled Amount</div>
+                        <h3 class="fw-bold text-dark mb-0 mt-1">&#8377;{{ unmatched_val|floatformat:2 }}</h3>
+                        <small class="text-muted">GST Credit at risk</small>
+                    </div>
+                    <div class="rounded-circle p-3 bg-warning bg-opacity-15 text-warning">
+                        <i class="bi bi-currency-rupee fs-3"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Card 3: Reconciled Invoices -->
+        <div class="col-12 col-sm-6 col-lg-3">
+            <div class="card card-enterprise shadow-sm p-3 border-start border-4 border-success h-100 bg-white">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <div class="text-muted small fw-bold text-uppercase">Reconciled Payments</div>
+                        <h3 class="fw-bold text-success mb-0 mt-1">{{ matched_count }}</h3>
+                        <small class="text-success fw-semibold">&#8377;{{ matched_val|floatformat:2 }} matched</small>
+                    </div>
+                    <div class="rounded-circle p-3 bg-success bg-opacity-10 text-success">
+                        <i class="bi bi-check2-circle fs-3"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Card 4: Total Tracked Payments -->
+        <div class="col-12 col-sm-6 col-lg-3">
+            <div class="card card-enterprise shadow-sm p-3 border-start border-4 border-primary h-100 bg-white">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <div class="text-muted small fw-bold text-uppercase">Total Bank Debits</div>
+                        <h3 class="fw-bold text-primary mb-0 mt-1">{{ total_payments_count }}</h3>
+                        <small class="text-muted">&#8377;{{ total_payments_val|floatformat:2 }} total paid</small>
+                    </div>
+                    <div class="rounded-circle p-3 bg-primary bg-opacity-10 text-primary">
+                        <i class="bi bi-wallet2 fs-3"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Content Card -->
+    <div class="card card-enterprise shadow-sm">
+        <div class="card-enterprise-header d-flex justify-content-between align-items-center flex-wrap gap-2 py-2">
+            <!-- Filter Tabs -->
+            <ul class="nav nav-pills card-header-pills">
+                <li class="nav-item">
+                    <a class="nav-link py-1 px-3 {% if filter_status == 'unmatched' %}active bg-danger text-white{% endif %}" href="?status=unmatched">
+                        <i class="bi bi-exclamation-circle me-1"></i>Missing Invoices ({{ unmatched_count }})
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link py-1 px-3 {% if filter_status == 'matched' %}active bg-success text-white{% endif %}" href="?status=matched">
+                        <i class="bi bi-check2 me-1"></i>Reconciled ({{ matched_count }})
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link py-1 px-3 {% if filter_status == 'all' %}active bg-secondary text-white{% endif %}" href="?status=all">
+                        All Payments ({{ total_payments_count }})
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link py-1 px-3 {% if filter_status == 'ignored' %}active bg-dark text-white{% endif %}" href="?status=ignored">
+                        Non-Vendor / Ignored
+                    </a>
+                </li>
+            </ul>
+
+            <!-- Search Filter -->
+            <form method="GET" class="d-flex align-items-center gap-1" style="max-width: 280px;">
+                <input type="hidden" name="status" value="{{ filter_status }}">
+                <input type="text" name="q" value="{{ search_q }}" class="form-control form-control-sm" placeholder="Search vendor, UTR, remarks...">
+                <button type="submit" class="btn btn-sm btn-outline-secondary">
+                    <i class="bi bi-search"></i>
+                </button>
+            </form>
+        </div>
+
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light small">
+                    <tr>
+                        <th class="ps-3" style="width: 40px;">#</th>
+                        <th style="width: 120px;">Payment Date</th>
+                        <th style="width: 220px;">Beneficiary / Vendor</th>
+                        <th>Bank Narration & UTR</th>
+                        <th class="text-end" style="width: 130px;">Amount Paid (&#8377;)</th>
+                        <th class="text-center" style="width: 150px;">Invoice Status</th>
+                        <th class="text-center pe-3" style="width: 140px;">Action</th>
+                    </tr>
+                </thead>
+                <tbody class="small">
+                    {% for txn in transactions %}
+                    <tr class="{% if txn.match_status == 'UNMATCHED' %}table-danger table-opacity-10{% elif txn.match_status == 'MATCHED' %}table-success table-opacity-10{% endif %}">
+                        <td class="ps-3 text-muted">{{ forloop.counter }}</td>
+
+                        <!-- Payment Date -->
+                        <td>
+                            <div class="fw-bold text-dark">{{ txn.txn_date|date:"d M Y" }}</div>
+                            <small class="text-muted">{{ txn.statement.filename|truncatechars:20 }}</small>
+                        </td>
+
+                        <!-- Beneficiary / Vendor -->
+                        <td>
+                            <div class="fw-bold text-dark">
+                                {{ txn.extracted_party_name|default:"Payment" }}
+                            </div>
+                            {% if txn.matched_vendor %}
+                                <span class="badge bg-primary bg-opacity-15 text-primary border border-primary small" style="font-size: 0.68rem;">
+                                    <i class="bi bi-patch-check-fill me-1"></i>{{ txn.matched_vendor.name|truncatechars:25 }}
+                                </span>
+                            {% else %}
+                                <span class="text-muted small fst-italic">Unmapped vendor</span>
+                            {% endif %}
+                        </td>
+
+                        <!-- Bank Narration & Ref -->
+                        <td>
+                            <div class="text-truncate text-secondary" style="max-width: 380px;" title="{{ txn.narration }}">
+                                {{ txn.narration }}
+                            </div>
+                            {% if txn.reference_no %}
+                                <span class="badge bg-light text-dark border font-monospace mt-1" style="font-size: 0.7rem;">
+                                    Ref: {{ txn.reference_no }}
+                                </span>
+                            {% endif %}
+                        </td>
+
+                        <!-- Amount Paid -->
+                        <td class="text-end">
+                            <span class="fw-bold fs-6 text-dark">&#8377;{{ txn.debit_amount|floatformat:2 }}</span>
+                        </td>
+
+                        <!-- Match Status -->
+                        <td class="text-center">
+                            {% if txn.match_status == 'MATCHED' %}
+                                <span class="badge bg-success text-white py-1 px-2 d-inline-block">
+                                    <i class="bi bi-check-circle-fill me-1"></i>Invoice Linked
+                                </span>
+                                {% if txn.matched_submission %}
+                                <div class="mt-1">
+                                    <a href="{% url 'invoices:submission_detail' txn.matched_submission.submission_id %}" class="small text-teal fw-semibold">
+                                        {{ txn.matched_submission.submission_id }}
+                                    </a>
+                                </div>
+                                {% endif %}
+                            {% elif txn.match_status == 'UNMATCHED' %}
+                                <span class="badge bg-danger text-white py-1 px-2 d-inline-block shadow-sm">
+                                    <i class="bi bi-exclamation-triangle-fill me-1"></i>MISSING INVOICE
+                                </span>
+                                <div class="text-danger small fw-semibold mt-1">Pending Bill</div>
+                            {% else %}
+                                <span class="badge bg-secondary text-white py-1 px-2">
+                                    Ignored
+                                </span>
+                                <div class="text-muted small mt-1">{{ txn.ignore_reason|truncatechars:20 }}</div>
+                            {% endif %}
+                        </td>
+
+                        <!-- Actions -->
+                        <td class="text-center pe-3">
+                            {% if txn.match_status == 'UNMATCHED' %}
+                            <div class="btn-group btn-group-sm">
+                                <button type="button" class="btn btn-outline-teal btn-sm fw-semibold" data-bs-toggle="modal" data-bs-target="#linkModal{{ txn.id }}" title="Link existing invoice">
+                                    <i class="bi bi-link-45deg me-1"></i>Link
+                                </button>
+                                <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#ignoreModal{{ txn.id }}" title="Mark as non-vendor / bank charge">
+                                    <i class="bi bi-slash-circle"></i>
+                                </button>
+                            </div>
+
+                            <!-- Link Modal -->
+                            <div class="modal fade text-start" id="linkModal{{ txn.id }}" tabindex="-1" aria-hidden="true">
+                                <div class="modal-dialog">
+                                    <div class="modal-content">
+                                        <form method="POST" action="{% url 'invoices:link_bank_transaction' txn.id %}">
+                                            {% csrf_token %}
+                                            <div class="modal-header">
+                                                <h6 class="modal-title fw-bold">Link Payment to Invoice</h6>
+                                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                                            </div>
+                                            <div class="modal-body">
+                                                <p class="small text-muted mb-2">
+                                                    Payment of <strong>&#8377;{{ txn.debit_amount }}</strong> on <strong>{{ txn.txn_date|date:"d M Y" }}</strong> to <strong>{{ txn.extracted_party_name }}</strong>.
+                                                </p>
+                                                <label class="form-label small fw-bold">Select Matching Invoice in InvoiceHub:</label>
+                                                <select name="submission_id" class="form-select form-select-sm" required>
+                                                    <option value="">-- Choose Invoice --</option>
+                                                    {% for inv in recent_invoices %}
+                                                    <option value="{{ inv.submission_id }}">
+                                                        {{ inv.submission_id }} - {{ inv.party_name|default:"Unknown" }} - &#8377;{{ inv.total_amount|floatformat:2 }} ({{ inv.invoice_date|default:inv.created_at|date:"d M Y" }})
+                                                    </option>
+                                                    {% endfor %}
+                                                </select>
+                                            </div>
+                                            <div class="modal-footer">
+                                                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                                <button type="submit" class="btn btn-sm btn-teal fw-semibold">Confirm Link</button>
+                                            </div>
+                                        </form>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Ignore Modal -->
+                            <div class="modal fade text-start" id="ignoreModal{{ txn.id }}" tabindex="-1" aria-hidden="true">
+                                <div class="modal-dialog">
+                                    <div class="modal-content">
+                                        <form method="POST" action="{% url 'invoices:ignore_bank_transaction' txn.id %}">
+                                            {% csrf_token %}
+                                            <div class="modal-header">
+                                                <h6 class="modal-title fw-bold">Ignore Non-Vendor Payment</h6>
+                                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                                            </div>
+                                            <div class="modal-body">
+                                                <p class="small text-muted mb-2">
+                                                    If this payment does not require an invoice (e.g. Bank charges, TDS, Salary, internal transfer), select reason:
+                                                </p>
+                                                <select name="ignore_reason" class="form-select form-select-sm">
+                                                    <option value="Bank Charges / Annual Fee">Bank Charges / Annual Fee</option>
+                                                    <option value="TDS / Government Tax Payment">TDS / Government Tax Payment</option>
+                                                    <option value="Staff Salary / Advance">Staff Salary / Advance</option>
+                                                    <option value="Internal Account Transfer">Internal Account Transfer</option>
+                                                    <option value="Loan EMI / Interest">Loan EMI / Interest</option>
+                                                </select>
+                                            </div>
+                                            <div class="modal-footer">
+                                                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                                <button type="submit" class="btn btn-sm btn-dark">Mark as Ignored</button>
+                                            </div>
+                                        </form>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {% elif txn.match_status == 'MATCHED' and txn.matched_submission %}
+                                <a href="{% url 'invoices:submission_detail' txn.matched_submission.submission_id %}" class="btn btn-xs btn-outline-teal py-1 px-2" style="font-size: 0.75rem;">
+                                    <i class="bi bi-eye me-1"></i>View Bill
+                                </a>
+                            {% else %}
+                                <span class="text-muted small">&mdash;</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="7" class="text-center py-5 text-muted">
+                            <i class="bi bi-bank display-4 d-block mb-2 text-secondary opacity-50"></i>
+                            {% if filter_status == 'unmatched' %}
+                                <h6 class="fw-bold text-dark">🎉 No Missing Invoices Found!</h6>
+                                <p class="small text-muted mb-3">All payments in the uploaded statement have corresponding invoices in InvoiceHub.</p>
+                            {% else %}
+                                <h6 class="fw-bold text-dark">No bank payments found in this view.</h6>
+                            {% endif %}
+                            <button type="button" class="btn btn-sm btn-teal" data-bs-toggle="modal" data-bs-target="#uploadStatementModal">
+                                <i class="bi bi-cloud-arrow-up-fill me-1"></i>Upload ICICI Bank Statement
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Upload ICICI Statement Modal -->
+<div class="modal fade" id="uploadStatementModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="POST" action="{% url 'invoices:upload_bank_statement' %}" enctype="multipart/form-data">
+                {% csrf_token %}
+                <div class="modal-header bg-teal text-white">
+                    <h5 class="modal-title fw-bold">
+                        <i class="bi bi-file-earmark-arrow-up me-2"></i>Upload ICICI Bank Statement
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body p-4">
+                    <div class="alert alert-info py-2 small mb-3">
+                        <i class="bi bi-info-circle-fill me-1"></i>
+                        Upload your <strong>ICICI Bank</strong> statement downloaded from internet banking.
+                        Accepted formats: <strong>PDF</strong>, <strong>Excel (.xlsx / .xls)</strong>, or <strong>CSV</strong>.
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold text-dark">Select Statement File:</label>
+                        <input type="file" name="statement_file" class="form-control" accept=".pdf,.xlsx,.xls,.csv" required>
+                    </div>
+
+                    <div class="p-3 bg-light rounded border small">
+                        <div class="fw-bold mb-1 text-dark">What happens after upload?</div>
+                        <ul class="mb-0 ps-3 text-secondary">
+                            <li>All debit payments (money sent to vendors) are automatically extracted.</li>
+                            <li>The system checks your InvoiceHub database for matching bills.</li>
+                            <li>Payments without bills are highlighted in red as <strong>Missing Invoices</strong>.</li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-teal fw-bold">
+                        <i class="bi bi-upload me-1"></i>Ingest & Reconcile
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
