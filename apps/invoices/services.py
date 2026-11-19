@@ -721,6 +721,26 @@ def create_invoice_submission(
                 submission.expense_ledger = meta['expense_ledger']
             if meta.get('confidence'):
                 submission.ocr_confidence = meta['confidence']
+
+            # Safe pure document crop: removes table/feet/background with zero sharpening, zero CLAHE, and 4% safe padding
+            if first_doc.content_type.startswith('image/'):
+                try:
+                    from apps.invoices.image_processing import safe_pure_document_crop
+                    from django.core.files.base import ContentFile
+                    import hashlib
+                    with first_doc.original_file.open('rb') as f:
+                        raw_bytes = f.read()
+                    crop_box = meta.get('crop_box')
+                    cropped_bytes, was_cropped, crop_meta = safe_pure_document_crop(raw_bytes, crop_box=crop_box)
+                    if was_cropped and cropped_bytes:
+                        crop_name = f"crop_{first_doc.original_filename}"
+                        first_doc.original_file.save(crop_name, ContentFile(cropped_bytes), save=True)
+                        first_doc.file_size_bytes = len(cropped_bytes)
+                        first_doc.file_sha256 = hashlib.sha256(cropped_bytes).hexdigest()
+                        first_doc.save(update_fields=['original_file', 'file_size_bytes', 'file_sha256'])
+                        logger.info("Safe pure crop applied to doc %s: %s", first_doc.id, crop_meta.get('method'))
+                except Exception as crop_err:
+                    logger.warning("Safe pure crop skipped: %s", crop_err)
         except Exception:
             pass
 

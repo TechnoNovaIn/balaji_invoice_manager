@@ -627,16 +627,32 @@ def process_uploaded_document_task(
                         page_images = sub_files.get('page_images', [])
 
                         if uploaded_doc.total_pages == 1 and len(segments) == 1:
+                            doc_f = uploaded_doc.original_file
+                            doc_sz = uploaded_doc.file_size_bytes
+                            doc_sha = file_sha256
+                            if mime_type.startswith('image/'):
+                                try:
+                                    from apps.invoices.image_processing import safe_pure_document_crop
+                                    with uploaded_doc.original_file.open('rb') as f:
+                                        raw_b = f.read()
+                                    c_bytes, was_c, _ = safe_pure_document_crop(raw_b, crop_box=meta.get('crop_box') if meta else None)
+                                    if was_c and c_bytes:
+                                        doc_f = ContentFile(c_bytes, name=f"crop_{file_name}")
+                                        doc_sz = len(c_bytes)
+                                        doc_sha = hashlib.sha256(c_bytes).hexdigest()
+                                except Exception:
+                                    pass
+
                             InvoiceDocument.objects.create(
                                 submission=sub,
                                 source_document=uploaded_doc,
                                 start_page=1,
                                 end_page=1,
                                 page_number=1,
-                                original_file=uploaded_doc.original_file,
+                                original_file=doc_f,
                                 original_filename=file_name,
-                                file_sha256=file_sha256,
-                                file_size_bytes=uploaded_doc.file_size_bytes,
+                                file_sha256=doc_sha,
+                                file_size_bytes=doc_sz,
                                 content_type=mime_type,
                                 version=1,
                                 is_active_version=True,

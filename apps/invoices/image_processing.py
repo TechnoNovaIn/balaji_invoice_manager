@@ -75,6 +75,126 @@ def four_point_transform(image: np.ndarray, pts: np.ndarray) -> np.ndarray:
     return warped
 
 
+def safe_pure_document_crop(
+    image_bytes: bytes,
+    crop_box: Optional[List[int]] = None,
+    safe_padding_pct: float = 0.04,
+) -> Tuple[bytes, bool, Dict[str, Any]]:
+    """
+    Safely crops around the physical invoice document to remove background tables,
+    floors, tools, or feet while strictly guaranteeing:
+    1. ZERO SHARPENING, ZERO CLAHE, ZERO CONTRAST CHANGES: preserves 100% natural pixels.
+    2. ZERO DISTORTION: uses pure rectangular slicing (no 4-point warping or shearing).
+    3. NO CLIPPED DETAILS: applies a safe 4% padding margin so headers, numbers,
+       and signatures are never cut off.
+    4. Conservative Fallback: if document covers >92% or is unclear, keeps full image.
+    """
+    if not image_bytes or len(image_bytes) < 100:
+        return image_bytes, False, {"method": "empty_or_too_small"}
+
+    try:
+        # Load via PIL to respect camera EXIF orientation tag
+        pil_img = Image.open(io.BytesIO(image_bytes))
+        pil_img = ImageOps.exif_transpose(pil_img)
+        if pil_img.mode != 'RGB':
+            pil_img = pil_img.convert('RGB')
+
+        im_np = np.array(pil_img)
+        im_bgr = cv2.cvtColor(im_np, cv2.COLOR_RGB2BGR)
+        h, w = im_bgr.shape[:2]
+        total_area = float(w * h)
+
+        if h < 120 or w < 120:
+            return image_bytes, False, {"method": "too_small"}
+
+        x1, y1, x2, y2 = 0, 0, w, h
+        was_cropped = False
+        method = "none"
+
+        # Strategy A: Gemini Vision AI Normalized Bounding Box [ymin, xmin, ymax, xmax] (0-1000)
+        if crop_box and len(crop_box) == 4:
+            ymin_n, xmin_n, ymax_n, xmax_n = crop_box
+            ymin = int(ymin_n * h / 1000.0)
+            xmin = int(xmin_n * w / 1000.0)
+            ymax = int(ymax_n * h / 1000.0)
+            xmax = int(xmax_n * w / 1000.0)
+
+            # 4% safe padding so no text, header, or signature is clipped
+            pad_x = int(safe_padding_pct * w)
+            pad_y = int(safe_padding_pct * h)
+            cx1 = max(0, xmin - pad_x)
+            cy1 = max(0, ymin - pad_y)
+            cx2 = min(w, xmax + pad_x)
+            cy2 = min(h, ymax + pad_y)
+
+            crop_area = float((cx2 - cx1) * (cy2 - cy1))
+            ratio = crop_area / total_area
+            # Only crop if removing surrounding clutter (coverage between 25% and 93%)
+            if 0.25 <= ratio <= 0.93 and (cx2 - cx1) >= 200 and (cy2 - cy1) >= 200:
+                x1, y1, x2, y2 = cx1, cy1, cx2, cy2
+                was_cropped = True
+                method = "gemini_vision_bbox"
+
+        # Strategy B: High-Contrast OpenCV Contour Detection (Fallback)
+        if not was_cropped:
+            gray = cv2.cvtColor(im_bgr, cv2.COLOR_BGR2GRAY)
+            blurred = cv2.GaussianBlur(gray, (7, 7), 0)
+            edges = cv2.Canny(blurred, 30, 150)
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+            dilated = cv2.dilate(edges, kernel, iterations=2)
+            contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+            best_area = 0
+            best_box = None
+            for c in contours:
+                area = cv2.contourArea(c)
+                ratio = area / total_area
+                if 0.28 <= ratio <= 0.93:
+                    if area > best_area:
+                        bx, by, bw, bh = cv2.boundingRect(c)
+                        aspect = bw / float(bh) if bh > 0 else 0
+                        if 0.35 <= aspect <= 2.2:
+                            best_area = area
+                            best_box = (bx, by, bx + bw, by + bh)
+
+            if best_box is not None:
+                bx1, by1, bx2, by2 = best_box
+                pad_x = int(safe_padding_pct * w)
+                pad_y = int(safe_padding_pct * h)
+                cx1 = max(0, bx1 - pad_x)
+                cy1 = max(0, by1 - pad_y)
+                cx2 = min(w, bx2 + pad_x)
+                cy2 = min(h, by2 + pad_y)
+
+                crop_area = float((cx2 - cx1) * (cy2 - cy1))
+                ratio = crop_area / total_area
+                if 0.25 <= ratio <= 0.93:
+                    x1, y1, x2, y2 = cx1, cy1, cx2, cy2
+                    was_cropped = True
+                    method = "opencv_contour_bbox"
+
+        # Check if already full image or invalid crop bounds
+        if not was_cropped or (x2 - x1) >= (w - 10) and (y2 - y1) >= (h - 10):
+            return image_bytes, False, {"method": "already_full_or_unclear"}
+
+        # PURE RECTANGULAR SLICE: 100% natural pixels, NO sharpening, NO filters, NO CLAHE
+        cropped_bgr = im_bgr[y1:y2, x1:x2]
+        # Encode at 98% quality (visually lossless preservation)
+        ok, enc = cv2.imencode('.jpg', cropped_bgr, [cv2.IMWRITE_JPEG_QUALITY, 98])
+        if not ok:
+            return image_bytes, False, {"method": "encode_error"}
+
+        return enc.tobytes(), True, {
+            "method": method,
+            "original_dims": [w, h],
+            "cropped_dims": [x2 - x1, y2 - y1],
+            "crop_box_pixels": [x1, y1, x2, y2],
+        }
+    except Exception as e:
+        logger.warning("safe_pure_document_crop error: %s", e)
+        return image_bytes, False, {"method": f"error: {str(e)}"}
+
+
 def auto_crop_invoice_image(
     image_bytes: bytes,
     min_coverage: float = 0.35,

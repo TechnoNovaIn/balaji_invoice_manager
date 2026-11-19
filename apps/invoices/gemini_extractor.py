@@ -198,6 +198,10 @@ class InvoiceSchema(BaseModel):
         default="",
         description="Brief transcription of key bill lines (vendor, bill no, date, line items, words)."
     )
+    crop_box: Optional[List[int]] = Field(
+        default=None,
+        description="The 4 bounding coordinates [ymin, xmin, ymax, xmax] of the main physical paper receipt/invoice normalized between 0 and 1000. Identify the physical boundaries of the paper document, strictly excluding surrounding background, table surfaces, hands, or feet. If the invoice already fills the entire image (>92%), return null or [0, 0, 1000, 1000]."
+    )
 
 
 PROMPT_INSTRUCTIONS = """You are an expert Indian Commercial Accounts & Tax Auditor for Balaji Transports (a major logistics firm in Karnataka, India).
@@ -244,6 +248,11 @@ CRITICAL RULES:
    - Field employees often photograph bills alongside physical hardware/spare parts (e.g. hydraulic hoses, metallic fittings, bolts, bearings, mechanical components, filters, oil cans, or tools) resting on a table, counter, or workshop floor.
    - Completely IGNORE all physical objects, spare parts, tools, hoses, hands, background furniture, and counter surfaces.
    - Locate and focus exclusively on the paper invoice / receipt document in the photograph to extract the supplier, date, bill number, amounts, and taxes.
+
+9. DOCUMENT BOUNDARY & CROP BOX:
+   - Identify the 4-sided bounding box [ymin, xmin, ymax, xmax] of the main paper receipt or invoice, normalized between 0 and 1000.
+   - Include the entire paper document from top header to bottom signature, strictly excluding surrounding background, table, desk, counter, floor, tools, hands, or feet.
+   - If the receipt already covers 92%+ of the image frame, set crop_box to null or [0, 0, 1000, 1000].
 
 Return strictly the structured JSON object.
 """
