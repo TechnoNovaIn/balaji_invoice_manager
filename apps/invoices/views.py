@@ -1344,6 +1344,7 @@ def tally_workspace(request, submission_id):
         # Already in Tally and staying there: financial fields are locked (only voucher no / GST status change).
         keep_financials_locked = submission.is_financially_locked and is_in_tally
 
+
         new_data = {
             'party_name': party_name,
             'party_gstin': party_gstin,
