@@ -393,12 +393,16 @@ def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
             for i, line_str in enumerate(lines):
                 clean_l = line_str.strip()
                 if re.search(r'^(?:(?:Tax\s*Invoice|Invoice|INV|Bill|Cash\s*Memo|Cash[\/I]?Credit\s*Bill|Challan|Receipt|Voucher)\s*)?(?:No|Num|#)\.?[:.-]*$', clean_l, re.I):
-                    for j in range(i + 1, min(i + 3, len(lines))):
+                    for j in range(i + 1, min(i + 4, len(lines))):
                         next_l = lines[j].strip(':.- \t')
+                        if re.search(r'\b(?:date|dated|total|gstin|for|amount|mob|mobile|phone|lorry|veh|m\/s|cash|credit|bill|memo|challan|tax|invoice|original|duplicate|triplicate|receipt|particulars|cashicreditbill)\b', next_l, re.I):
+                            continue
+                        alpha_only = re.sub(r'[^A-Za-z]', '', next_l).upper()
+                        if alpha_only in ['CASH', 'CREDIT', 'BILL', 'CASHCREDITBILL', 'CASHICREDITBILL', 'TAXINVOICE', 'ORIGINAL', 'DUPLICATE', 'MEMO', 'RECEIPT']:
+                            continue
                         if next_l and re.match(r'^[A-Za-z0-9\/-]{1,16}$', next_l):
-                            if not re.search(r'\b(?:date|dated|total|gstin|for|amount|mob|mobile|phone|lorry|veh|m\/s)\b', next_l, re.I):
-                                result['invoice_number'] = normalize_handwritten_number(next_l)
-                                break
+                            result['invoice_number'] = normalize_handwritten_number(next_l)
+                            break
                     if result['invoice_number']:
                         break
 
@@ -429,9 +433,13 @@ def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
                         candidate = inv_match.group(1).strip(':.- \t')
                         if re.match(r'^(?:KA|MH|DL|KL|TN|AP|TS|kAo|hAo|Kt)', candidate, re.I):
                             continue
+                        alpha_cand = re.sub(r'[^A-Za-z]', '', candidate).upper()
+                        if alpha_cand in ['CASH', 'CREDIT', 'BILL', 'CASHCREDITBILL', 'CASHICREDITBILL', 'TAXINVOICE', 'ORIGINAL', 'DUPLICATE', 'MEMO', 'RECEIPT']:
+                            continue
                         if candidate.lower() not in [
                             'date', 'dated', 'total', 'to', 'from', 'gstin', 'for', 'amount',
-                            'tax', 'invoice', 'bill', 'particulars', 'no', 'num', 'rate', 'qty'
+                            'tax', 'invoice', 'bill', 'particulars', 'no', 'num', 'rate', 'qty',
+                            'cash', 'credit', 'cashicreditbill'
                         ]:
                             result['invoice_number'] = normalize_handwritten_number(candidate)
                             break
@@ -717,6 +725,10 @@ def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
             parts = clean.split('.')
             if len(parts) > 2:
                 clean = ''.join(parts[:-1]) + '.' + parts[-1]
+            elif len(parts) == 2 and len(parts[1]) == 3:
+                # In Indian financial context and OCR scans, paise is always 2 digits (.00).
+                # A dot followed by 3 digits (e.g. 3,96.890 or 396.890) is an OCR misread comma/separator.
+                clean = parts[0] + parts[1]
             try:
                 d = Decimal(clean)
                 return d if d > 0 else None

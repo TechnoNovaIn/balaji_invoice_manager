@@ -251,17 +251,16 @@ class Phase4ValidationSuite(TestCase):
         self.assertFalse(sub.is_entered_in_tally)
         self.assertIsNone(sub.tally_entered_at)
 
-        # Only Naveen can manually approve after human verification
-        self.client.login(username="naveen_val", password="TestPassword@123")
+        # Non-accountant / employee cannot toggle Tally entry (strictly rejected)
+        self.client.login(username=self.emp.username, password="TestPassword@123")
         url = reverse('invoices:toggle_tally', kwargs={'submission_id': sub.submission_id})
-
-        # An unverified invoice can never be marked as entered in Tally
-        self.client.post(url)
+        resp = self.client.post(url)
+        self.assertEqual(resp.status_code, 403)
         sub.refresh_from_db()
         self.assertFalse(sub.is_entered_in_tally)
 
-        # After human verification it can be
-        InvoiceSubmission.objects.filter(pk=sub.pk).update(status=InvoiceSubmission.STATUS_VERIFIED)
+        # Only authorized accounts operator (Naveen) can enter invoice into Tally
+        self.client.login(username="naveen_val", password="TestPassword@123")
         self.client.post(url)
         sub.refresh_from_db()
         self.assertTrue(sub.is_entered_in_tally)

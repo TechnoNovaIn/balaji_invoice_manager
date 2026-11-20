@@ -317,7 +317,7 @@ LOGGING = {
             'formatter': 'simple',
         },
         'app_file': {
-            'class': 'logging.handlers.RotatingFileHandler',
+            'class': 'apps.core.logging_handlers.SafeRotatingFileHandler',
             'filename': str(LOG_DIR / 'invoicehub.log'),
             'maxBytes': 10 * 1024 * 1024,  # 10 MB
             'backupCount': 10,
@@ -325,7 +325,7 @@ LOGGING = {
             'formatter': 'verbose',
         },
         'security_file': {
-            'class': 'logging.handlers.RotatingFileHandler',
+            'class': 'apps.core.logging_handlers.SafeRotatingFileHandler',
             'filename': str(LOG_DIR / 'security.log'),
             'maxBytes': 10 * 1024 * 1024,  # 10 MB
             'backupCount': 10,
