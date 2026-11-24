@@ -1,0 +1,381 @@
+{% extends 'base.html' %}
+
+{% block title %}AI Vision Engine Security & Configuration - Balaji InvoiceHub{% endblock %}
+{% block page_heading %}AI Vision Engine Configuration{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+    <!-- Breadcrumb -->
+    <nav aria-label="breadcrumb" class="mb-2">
+        <ol class="breadcrumb small mb-0">
+            <li class="breadcrumb-item"><a href="{% url 'core:admin_dashboard' %}" class="text-decoration-none text-secondary">Admin Console</a></li>
+            <li class="breadcrumb-item text-secondary">System Integrations</li>
+            <li class="breadcrumb-item active text-dark fw-semibold" aria-current="page">AI Vision Engine</li>
+        </ol>
+    </nav>
+
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h4 class="fw-bold mb-1" style="color: var(--primary-navy); letter-spacing: -0.02em;">
+                <i class="bi bi-shield-lock-fill me-2 text-rose"></i>AI Vision Engine &amp; API Key Security
+            </h4>
+            <p class="text-secondary small mb-0">
+                Restricted server-side environment configuration for Google Gemini Vision AI with multi-key automatic failover.
+            </p>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+            <a href="{% url 'core:admin_dashboard' %}" class="btn btn-sm btn-outline-secondary fw-semibold">
+                <i class="bi bi-arrow-left me-1"></i>Back to Admin Console
+            </a>
+            <span class="role-badge role-badge-ADMIN py-1 px-3">
+                <i class="bi bi-shield-check"></i> Administrator Only
+            </span>
+        </div>
+    </div>
+</div>
+
+<!-- Security Architecture Guarantee Strip -->
+<div class="alert alert-light border border-secondary border-opacity-25 p-3 rounded-3 mb-4 shadow-sm">
+    <div class="d-flex align-items-start gap-3">
+        <div class="rounded-circle p-2 bg-success bg-opacity-10 text-success mt-1">
+            <i class="bi bi-shield-fill-check fs-5"></i>
+        </div>
+        <div class="small">
+            <div class="fw-bold text-dark mb-1">Server-Side Storage &amp; Zero Public Exposure Guarantee</div>
+            <div class="text-secondary">
+                All Gemini API keys are stored strictly on the server within the root <code>.env</code> file under restricted operating system file permissions.
+                Keys are <strong>never exposed in client HTML source</strong>, never transmitted to public URLs, never exposed to non-admin roles, and masked at all times.
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4 mb-4">
+    <!-- Current Status & Multi-Key Pool Telemetry Card -->
+    <div class="col-12 col-lg-7">
+        <div class="card card-enterprise h-100 p-4">
+            <div class="d-flex align-items-center justify-content-between mb-3">
+                <div class="d-flex align-items-center gap-2">
+                    <div class="rounded-2 p-2 bg-primary bg-opacity-10 text-primary">
+                        <i class="bi bi-cpu-fill fs-5"></i>
+                    </div>
+                    <div>
+                        <h6 class="fw-bold mb-0" style="color: var(--primary-navy);">Failover Key Pool Runtime</h6>
+                        <small class="text-secondary">{{ pool_count }} key{{ pool_count|pluralize }} configured &bull; {{ healthy_count }} healthy</small>
+                    </div>
+                </div>
+                {% if pool_count > 0 %}
+                <span class="badge bg-success-subtle text-success border border-success-subtle py-1 px-2 font-monospace">
+                    <i class="bi bi-circle-fill me-1 small"></i>{{ pool_count }} ACTIVE KEY{{ pool_count|pluralize:"S" }}
+                </span>
+                {% else %}
+                <span class="badge bg-warning-subtle text-warning border border-warning-subtle py-1 px-2">
+                    OFFLINE (RAPIDOCR ACTIVE)
+                </span>
+                {% endif %}
+            </div>
+
+            <!-- Key Pool Table -->
+            <div class="table-responsive mb-3">
+                <table class="table table-sm table-hover align-middle small mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="width: 45px;">#</th>
+                            <th>Role &amp; Masked Fingerprint</th>
+                            <th>Health &amp; Quota Status</th>
+                            <th class="text-end" style="width: 130px;">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for kp in key_pool %}
+                        <tr>
+                            <td class="fw-bold text-secondary">{{ kp.index }}</td>
+                            <td>
+                                <div class="d-flex align-items-center gap-2">
+                                    <span class="badge bg-light text-dark border font-monospace">{{ kp.masked }}</span>
+                                    {% if kp.is_primary %}
+                                    <span class="badge bg-primary text-white" style="font-size: 0.7rem;">Primary</span>
+                                    {% else %}
+                                    <span class="badge bg-secondary-subtle text-secondary" style="font-size: 0.7rem;">Backup {{ kp.index|add:"-1" }}</span>
+                                    {% endif %}
+                                </div>
+                            </td>
+                            <td>
+                                {% if not kp.health.is_exhausted %}
+                                <span class="badge bg-success-subtle text-success border border-success-subtle">
+                                    <i class="bi bi-check-circle-fill me-1"></i>Healthy
+                                </span>
+                                {% else %}
+                                <span class="badge bg-danger-subtle text-danger border border-danger-subtle" title="Key rate-limited / cooldown active">
+                                    <i class="bi bi-pause-circle-fill me-1"></i>Cooldown ({{ kp.health.cooldown_remaining_seconds }}s)
+                                </span>
+                                {% endif %}
+                            </td>
+                            <td class="text-end">
+                                <div class="btn-group btn-group-sm">
+                                    <button type="button" class="btn btn-outline-secondary btn-sm py-0 px-2" title="Test this key individually" onclick="testSingleKeyByIndex('{{ kp.key_suffix }}')">
+                                        <i class="bi bi-arrow-repeat"></i>
+                                    </button>
+                                    <form method="POST" action="{% url 'core:update_gemini_api_key' %}" class="d-inline" onsubmit="return confirm('Remove key #{{ kp.index }} (...{{ kp.key_suffix }}) from the failover pool?');">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="action" value="remove">
+                                        <input type="hidden" name="key_index" value="{{ kp.index }}">
+                                        <button type="submit" class="btn btn-outline-danger btn-sm py-0 px-2" title="Remove key from pool">
+                                            <i class="bi bi-trash"></i>
+                                        </button>
+                                    </form>
+                                </div>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="4" class="text-center text-muted py-3">
+                                <i class="bi bi-exclamation-triangle text-warning me-1"></i> No Gemini keys configured. Offline RapidOCR will be used.
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Pool Summary Parameters -->
+            <div class="row g-2 pt-2 border-top small text-secondary mb-3">
+                <div class="col-6">
+                    <span class="fw-semibold text-dark">Primary Model:</span> <code>{{ gemini_model }}</code>
+                </div>
+                <div class="col-6">
+                    <span class="fw-semibold text-dark">Est. Free Quota:</span> ~{{ daily_quota_estimate }} requests/day
+                </div>
+            </div>
+
+            <div class="d-flex align-items-center gap-2 pt-2 border-top">
+                <button type="button" class="btn btn-outline-primary btn-sm fw-semibold" id="btnTestPool" onclick="testEntirePool()">
+                    <i class="bi bi-lightning-charge me-1" id="iconTestPool"></i> Test All Keys in Pool
+                </button>
+                <div id="statusBadge" class="small text-secondary"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Free Quota Failover Guide -->
+    <div class="col-12 col-lg-5">
+        <div class="card card-enterprise h-100 p-4">
+            <div class="d-flex align-items-center gap-2 mb-3">
+                <div class="rounded-2 p-2 bg-info bg-opacity-10 text-info">
+                    <i class="bi bi-shuffle fs-5"></i>
+                </div>
+                <h6 class="fw-bold mb-0" style="color: var(--primary-navy);">Seamless Free Quota Multi-Key Failover</h6>
+            </div>
+            <p class="small text-secondary mb-3">
+                Google Gemini free tier grants <strong>1,500 requests/day</strong> per API project key. By configuring a pool of <strong>5 to 6 keys</strong>, Balaji InvoiceHub achieves <strong>7,500 to 9,000 free extractions/day</strong>.
+            </p>
+            <ul class="small text-secondary ps-3 mb-4">
+                <li class="mb-2"><strong>Zero-Error Failover:</strong> When Key 1 hits the rate limit (HTTP 429), the engine automatically switches to Key 2 with zero errors for invoices.</li>
+                <li class="mb-2"><strong>Thread-Safe Cooldown:</strong> Exhausted keys enter a cooldown period and recover automatically without blocking new bills.</li>
+                <li><strong>Generate Keys:</strong> Create free projects at <a href="https://aistudio.google.com/app/apikey" target="_blank" class="fw-semibold">Google AI Studio &nearr;</a>.</li>
+            </ul>
+
+            <div class="mt-auto">
+                <button type="button" class="btn btn-primary btn-sm fw-semibold w-100 py-2" data-bs-toggle="collapse" data-bs-target="#collapseEditor" aria-expanded="false" aria-controls="collapseEditor" id="btnUnlockEditor">
+                    <i class="bi bi-unlock-fill me-1"></i> Unlock Multi-Key Editor &amp; Manage Pool
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Test Feedback Box -->
+<div id="testFeedbackBox" class="alert d-none mb-4 py-2 px-3 small fade show" role="alert">
+    <div class="d-flex align-items-start justify-content-between">
+        <div id="testFeedbackContent" class="small"></div>
+        <button type="button" class="btn-close btn-sm ms-2" onclick="hideFeedback()"></button>
+    </div>
+</div>
+
+<!-- Protected Key Pool Update Section (Requires Deliberate Unlock Click) -->
+<div class="collapse mb-4" id="collapseEditor">
+    <div class="card card-enterprise border-2 border-primary border-opacity-25 shadow-sm p-4 bg-white">
+        <div class="d-flex align-items-center justify-content-between border-bottom pb-3 mb-3">
+            <div>
+                <h6 class="fw-bold mb-1 text-danger">
+                    <i class="bi bi-exclamation-triangle-fill me-1"></i> Administrative Key Pool Management
+                </h6>
+                <div class="text-secondary small">
+                    Add or replace keys in <code>GEMINI_API_KEYS</code> in the server's <code>.env</code> file. Runtime workers update instantly.
+                </div>
+            </div>
+            <button type="button" class="btn-close" data-bs-toggle="collapse" data-bs-target="#collapseEditor" aria-label="Close"></button>
+        </div>
+
+        <form id="keyUpdateForm" method="POST" action="{% url 'core:update_gemini_api_key' %}">
+            {% csrf_token %}
+            <div class="row g-3">
+                <div class="col-12 col-md-8">
+                    <label for="inputApiKeys" class="form-label small fw-bold text-dark mb-1">
+                        Gemini API Keys (Paste 1 to 6 Keys, one per line or comma-separated) <span class="text-danger">*</span>
+                    </label>
+                    <textarea class="form-control font-monospace small" id="inputApiKeys" name="api_keys_text" rows="5" placeholder="Paste full Google AI Studio keys here (one per line):&#10;AIzaSyA...Key1&#10;AIzaSyB...Key2&#10;AIzaSyC...Key3" required autocomplete="off"></textarea>
+                    <div class="form-text small">Each key is validated and safely stored server-side. Never exposed in URLs or client JavaScript.</div>
+                </div>
+
+                <div class="col-12 col-md-4">
+                    <div class="mb-3">
+                        <label for="inputModel" class="form-label small fw-bold text-dark mb-1">Vision Model</label>
+                        <select class="form-select font-monospace form-select-sm" id="inputModel" name="model">
+                            <option value="gemini-3.5-flash-lite" {% if gemini_model == 'gemini-3.5-flash-lite' %}selected{% endif %}>gemini-3.5-flash-lite (Fast &amp; High Free Quota)</option>
+                            <option value="gemini-3.8-flash" {% if gemini_model == 'gemini-3.8-flash' %}selected{% endif %}>gemini-3.8-flash (Latest Vision)</option>
+                            <option value="gemini-2.5-flash" {% if gemini_model == 'gemini-2.5-flash' %}selected{% endif %}>gemini-2.5-flash</option>
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold text-dark mb-1">Pool Update Mode</label>
+                        <div class="form-check small">
+                            <input class="form-check-input" type="radio" name="action" id="actionReplace" value="replace" checked>
+                            <label class="form-check-label" for="actionReplace">
+                                Replace Entire Pool (Recommended)
+                            </label>
+                        </div>
+                        <div class="form-check small">
+                            <input class="form-check-input" type="radio" name="action" id="actionAdd" value="add">
+                            <label class="form-check-label" for="actionAdd">
+                                Append to Existing Pool
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-12">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="checkVerify" name="skip_test" value="0">
+                        <label class="form-check-label small text-secondary" for="checkVerify">
+                            Validate keys against Google API before saving (ensures only active keys are saved)
+                        </label>
+                    </div>
+                </div>
+
+                <div class="col-12 d-flex align-items-center gap-2 pt-2 border-top">
+                    <button type="button" class="btn btn-outline-secondary btn-sm fw-semibold" id="btnTestCandidate" onclick="testCandidateKeys()">
+                        <i class="bi bi-play-circle me-1" id="iconCandidate"></i> Test Entered Keys
+                    </button>
+                    <button type="submit" class="btn btn-primary btn-sm fw-semibold" id="btnSaveKey">
+                        <i class="bi bi-check-circle-fill me-1"></i> Verify &amp; Save Key Pool to Server (.env)
+                    </button>
+                    <button type="button" class="btn btn-light btn-sm text-secondary" data-bs-toggle="collapse" data-bs-target="#collapseEditor">
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+function hideFeedback() {
+    document.getElementById('testFeedbackBox').classList.add('d-none');
+}
+
+function showFeedback(isSuccess, htmlContent) {
+    const box = document.getElementById('testFeedbackBox');
+    const content = document.getElementById('testFeedbackContent');
+    box.className = 'alert mb-4 py-2 px-3 small fade show ' + (isSuccess ? 'alert-success border-success-subtle' : 'alert-danger border-danger-subtle');
+    content.innerHTML = htmlContent;
+    box.classList.remove('d-none');
+}
+
+function testEntirePool() {
+    const btn = document.getElementById('btnTestPool');
+    const originalText = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status"></span> Testing Pool in Parallel...';
+
+    const formData = new FormData();
+    formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+    formData.append('test_all', '1');
+
+    fetch("{% url 'core:test_gemini_api_key' %}", {
+        method: 'POST',
+        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+        body: formData
+    })
+    .then(r => r.json().then(data => ({ status: r.status, data })))
+    .then(res => {
+        btn.disabled = false;
+        btn.innerHTML = originalText;
+        if (res.data.results && res.data.results.length > 0) {
+            let listHtml = `<div class="fw-bold mb-2"><i class="bi bi-activity me-1"></i> ${res.data.message}</div><ul class="mb-0 ps-3">`;
+            res.data.results.forEach(r => {
+                const statusBadge = r.success 
+                    ? `<span class="badge bg-success font-monospace">${r.latency_ms}ms OK</span>` 
+                    : `<span class="badge bg-danger">FAILED</span>`;
+                const desc = r.success ? r.message : (r.error || 'Connection failed');
+                listHtml += `<li class="mb-1"><strong>Key #${r.key_index} (${r.masked_key}):</strong> ${statusBadge} <span class="text-secondary">${desc}</span></li>`;
+            });
+            listHtml += '</ul>';
+            showFeedback(res.data.success, listHtml);
+        } else {
+            showFeedback(res.data.success, res.data.message || res.data.error || 'No keys tested.');
+        }
+    })
+    .catch(err => {
+        btn.disabled = false;
+        btn.innerHTML = originalText;
+        showFeedback(false, '<i class="bi bi-exclamation-octagon text-danger me-1"></i> Network error: ' + err.message);
+    });
+}
+
+function testCandidateKeys() {
+    const keysInput = document.getElementById('inputApiKeys');
+    const modelInput = document.getElementById('inputModel');
+    const text = keysInput.value.trim();
+    if (!text) {
+        alert('Please paste at least one API key first before testing.');
+        keysInput.focus();
+        return;
+    }
+
+    const btn = document.getElementById('btnTestCandidate');
+    const originalHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status"></span> Pinging Google API...';
+
+    const formData = new FormData();
+    formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+    formData.append('api_keys_text', text);
+    formData.append('model', modelInput.value);
+
+    fetch("{% url 'core:test_gemini_api_key' %}", {
+        method: 'POST',
+        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+        body: formData
+    })
+    .then(r => r.json().then(data => ({ status: r.status, data })))
+    .then(res => {
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+        if (res.data.results && res.data.results.length > 0) {
+            let listHtml = `<div class="fw-bold mb-2"><i class="bi bi-activity me-1"></i> Candidate Keys Test: ${res.data.message}</div><ul class="mb-0 ps-3">`;
+            res.data.results.forEach(r => {
+                const statusBadge = r.success 
+                    ? `<span class="badge bg-success font-monospace">${r.latency_ms}ms OK</span>` 
+                    : `<span class="badge bg-danger">FAILED</span>`;
+                const desc = r.success ? r.message : (r.error || 'Connection failed');
+                listHtml += `<li class="mb-1"><strong>Key #${r.key_index} (${r.masked_key}):</strong> ${statusBadge} <span class="text-secondary">${desc}</span></li>`;
+            });
+            listHtml += '</ul>';
+            showFeedback(res.data.success, listHtml);
+        } else {
+            const isOk = res.data.success;
+            const msg = isOk ? res.data.message : (res.data.error || 'Validation error');
+            const latency = res.data.latency_ms ? ` (${res.data.latency_ms}ms)` : '';
+            showFeedback(isOk, `<i class="bi ${isOk ? 'bi-check-circle-fill text-success' : 'bi-exclamation-octagon text-danger'} me-1"></i> ${msg}${latency}`);
+        }
+    })
+    .catch(err => {
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+        showFeedback(false, '<i class="bi bi-exclamation-octagon text-danger me-1"></i> Testing error: ' + err.message);
+    });
+}
+</script>
+{% endblock %}

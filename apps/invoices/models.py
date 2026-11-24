@@ -247,6 +247,16 @@ class InvoiceSubmission(models.Model):
         (EINV_STATUS_NEEDS_VERIFICATION, 'NEEDS VERIFICATION'),
     ]
 
+    INVOICE_TYPE_REGULAR = 'REGULAR'
+    INVOICE_TYPE_VEHICLE_INSURANCE = 'VEHICLE_INSURANCE'
+    INVOICE_TYPE_VEHICLE_SERVICE = 'VEHICLE_SERVICE'
+
+    INVOICE_TYPE_CHOICES = [
+        (INVOICE_TYPE_REGULAR, 'Regular / Spares / Goods'),
+        (INVOICE_TYPE_VEHICLE_INSURANCE, 'Vehicle Insurance'),
+        (INVOICE_TYPE_VEHICLE_SERVICE, 'Vehicle Service / Garage'),
+    ]
+
     submission_id = models.CharField(
         max_length=30,
         unique=True,
@@ -348,6 +358,33 @@ class InvoiceSubmission(models.Model):
     gst_filed_at = models.DateTimeField(null=True, blank=True)
 
     # Core Invoice Details for Tally & GST Entry
+    invoice_type = models.CharField(
+        max_length=30,
+        choices=INVOICE_TYPE_CHOICES,
+        default=INVOICE_TYPE_REGULAR,
+        db_index=True,
+        help_text="Classification: Regular, Vehicle Insurance, or Vehicle Service/Garage"
+    )
+    policy_number = models.CharField(
+        max_length=100,
+        blank=True,
+        default='',
+        db_index=True,
+        help_text="Insurance Policy / Certificate Number if vehicle insurance"
+    )
+    vehicle_number = models.CharField(
+        max_length=30,
+        blank=True,
+        default='',
+        db_index=True,
+        help_text="Vehicle / Lorry Registration Number (e.g. KA-01-AB-1234)"
+    )
+    labour_charges = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Labour / Service Charges for vehicle service/repairs"
+    )
     party_name = models.CharField(max_length=255, blank=True, default='')
     party_gstin = models.CharField(max_length=15, blank=True, default='')
     invoice_number = models.CharField(max_length=100, blank=True, default='')
@@ -451,6 +488,43 @@ class InvoiceSubmission(models.Model):
 
     def __str__(self):
         return f"{self.submission_id} - {self.employee.get_full_name() or self.employee.username}"
+
+    @property
+    def display_document_identifier(self):
+        """
+        For Vehicle Insurance, displays Policy Number if available, otherwise Invoice Number.
+        For regular or service invoices, displays Invoice Number.
+        """
+        if self.invoice_type == self.INVOICE_TYPE_VEHICLE_INSURANCE and self.policy_number:
+            return self.policy_number
+        return self.invoice_number or self.submission_id
+
+    @property
+    def is_vehicle_insurance(self):
+        """
+        True ONLY if this invoice is explicitly categorized as a Vehicle Insurance policy,
+        or has an explicit policy number recorded.
+        Strictly returns False for REGULAR invoices to prevent mixing up normal vendor bills.
+        """
+        if self.invoice_type == self.INVOICE_TYPE_REGULAR:
+            return False
+        if self.invoice_type == self.INVOICE_TYPE_VEHICLE_INSURANCE:
+            return True
+        return bool(self.policy_number)
+
+    @property
+    def is_vehicle_service(self):
+        """
+        True ONLY if this invoice is explicitly categorized as a Vehicle Service / Garage bill,
+        or has explicit labour charges alongside a detected vehicle number.
+        Strictly returns False for REGULAR invoices (such as hardware, diesel, building maintenance)
+        to prevent normal vendor invoices from showing vehicle/lorry fields.
+        """
+        if self.invoice_type == self.INVOICE_TYPE_REGULAR:
+            return False
+        if self.invoice_type == self.INVOICE_TYPE_VEHICLE_SERVICE:
+            return True
+        return bool(self.labour_charges and self.labour_charges > Decimal('0.00') and self.vehicle_number)
 
     @property
     def accounting_status(self):

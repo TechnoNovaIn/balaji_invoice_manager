@@ -22,7 +22,8 @@ from pydantic import BaseModel, Field
 from .vendor_validator import validate_vendor_and_financials, is_valid_gstin, clean_gstin
 from .e_invoice_utils import evaluate_e_invoice_status, extract_qr_e_invoice_data
 
-os.environ.setdefault('GOOGLE_GENAI_HTTP_CLIENT', 'httpx')
+# Force modern httpx2 client for google-genai 3.0.0
+os.environ['GOOGLE_GENAI_HTTP_CLIENT'] = 'httpx2'
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,8 @@ _CLIENT_LOCK = threading.Lock()
 _RETRYABLE_CODES = {429, 500, 502, 503, 504}
 # Codes meaning "this model is unavailable for this key" -> try the next configured model.
 _MODEL_UNAVAILABLE_CODES = {404}
+# Codes indicating key quota exhaustion or free-tier project disabled -> fail over to next key
+_KEY_EXHAUSTED_CODES = {429, 403}
 
 
 def _get_gemini_client(api_key: str):
@@ -102,6 +105,22 @@ class InvoiceItemSchema(BaseModel):
 
 
 class InvoiceSchema(BaseModel):
+    invoice_type: Optional[str] = Field(
+        default="REGULAR",
+        description="Document category: 'VEHICLE_INSURANCE' for insurance policy certificates / schedules / premium receipts; 'VEHICLE_SERVICE' for vehicle garage / workshop / repair / maintenance bills; 'REGULAR' for general supplier invoices, diesel, parts, consumables."
+    )
+    policy_number: Optional[str] = Field(
+        default=None,
+        description="Insurance Policy Number, Certificate Number, or Cover Note Number if this is a Vehicle Insurance document (e.g. 'OG-25-1801-1802-00001234', '123456/31/2026/123')."
+    )
+    vehicle_number: Optional[str] = Field(
+        default=None,
+        description="Commercial Vehicle / Lorry / Truck Registration Number (e.g. 'KA-01-AB-1234', 'KA04D1234', 'NL01AD1234', 'MH12CD5678'). Look for labels like 'Veh No', 'Vehicle No', 'Reg No', 'Regn No', 'Lorry No', 'Truck No'."
+    )
+    labour_charges: Optional[float] = Field(
+        default=0.0,
+        description="Total labour charges, service charges, fitting charges, or repair labour amount if itemized on a vehicle service / garage bill."
+    )
     party_name: Optional[str] = Field(
         default=None,
         description="Name of the vendor/supplier business issuing the bill. Do NOT extract 'BALAJI TRANSPORTS' as party_name because Balaji Transports is the buyer/recipient."
@@ -254,6 +273,34 @@ CRITICAL RULES:
    - Include the entire paper document from top header to bottom signature, strictly excluding surrounding background, table, desk, counter, floor, tools, hands, or feet.
    - If the receipt already covers 92%+ of the image frame, set crop_box to null or [0, 0, 1000, 1000].
 
+10. VEHICLE INSURANCE POLICIES & INVOICES:
+    - If this document is a Motor / Vehicle Insurance Policy Schedule, Certificate of Insurance, or Premium Receipt (from insurers such as New India Assurance, United India, ICICI Lombard, Tata AIG, Go Digit, HDFC ERGO, Oriental, National, Cholamandalam MS, Shriram General, etc.):
+      * Set `invoice_type` to "VEHICLE_INSURANCE".
+      * Set `expense_ledger` to "Lorry Insurance".
+      * Extract `policy_number` from fields labeled 'Policy No.', 'Policy Number', 'Certificate No.', 'Cover Note No.'.
+      * If a separate Tax Invoice / Receipt No is printed, extract that into `invoice_number`; if no separate invoice number is printed, duplicate the Policy Number into `invoice_number`.
+      * Extract `vehicle_number` from 'Vehicle No.', 'Registration No.', 'Regn. No.', 'Lorry No.'.
+      * CRITICAL FOR INSURANCE: Do NOT extract IDV (Insured Declared Value, e.g. ₹15,00,000) as the bill amount!
+        - `total_amount` is the Total Premium / Gross Premium Payable (typically ₹5,000 to ₹90,000).
+        - `taxable_amount` is the Net Premium before GST.
+
+11. VEHICLE SERVICE & GARAGE INVOICES:
+    - If this document is a vehicle service bill, workshop job card/invoice, garage cash memo, or mechanic repair voucher (e.g. Tata Motors, Ashok Leyland, BharatBenz, tyre retreading, local garage/mechanic, body building, lathe work):
+      * Set `invoice_type` to "VEHICLE_SERVICE".
+      * Set `expense_ledger` to "Labour Charges / Vehicle Service" (or "Vehicle Repairs & Maintenance").
+      * Extract `vehicle_number` from 'Vehicle No', 'Veh Reg No', 'Reg. No.', 'Lorry No'.
+      * Extract `labour_charges`: sum any charges specifically labeled as Labour, Service Charge, Fitting, Lathe Work, Washing, Greasing, or Alignment.
+
+12. TAX AMOUNTS & GST ANTI-MIXUP RULES:
+    - `taxable_amount`: Value of supply BEFORE tax (Subtotal / Basic / Taxable Value).
+    - `cgst_amount` & `sgst_amount`: Central and State GST. For intra-state supply within Karnataka (Supplier GSTIN starts with 29), CGST and SGST MUST be equal in amount and rate (e.g. 9% + 9% or 14% + 14%). IGST must be 0.
+    - `igst_amount`: Integrated GST. Applies ONLY when supplier is OUTSIDE Karnataka (Supplier GSTIN starts with a code other than 29, e.g. 27, 33, 06). CGST and SGST must be 0.
+    - `total_amount`: Grand Total / Net Payable (Taxable + CGST + SGST + IGST + Cess + RoundOff).
+    - ANTI-MIXUP RULES:
+      * NEVER swap `taxable_amount` with `total_amount`. Total Amount is always greater than or equal to Taxable Amount.
+      * NEVER extract total GST or individual tax line into `taxable_amount`.
+      * If tax is not itemized or bill is from an unregistered supplier / bill of supply, set `cgst_amount = 0`, `sgst_amount = 0`, `igst_amount = 0`, and `taxable_amount = total_amount`.
+
 Return strictly the structured JSON object.
 """
 
@@ -307,10 +354,13 @@ def _parse_indian_amount_words(words_text: Optional[str]) -> Optional[Decimal]:
     return Decimal(total).quantize(Decimal('0.01')) if total > 0 else None
 
 
-def _reconcile_extracted_amounts(data: Dict[str, Any]) -> tuple[Dict[str, Decimal], list[str]]:
+def _reconcile_extracted_amounts(
+    data: Dict[str, Any],
+    party_gstin: Optional[str] = None
+) -> tuple[Dict[str, Decimal], list[str]]:
     """
-    Reconcile extracted amounts against Rupees-in-words, line items, and GST arithmetic.
-    Recovers clear 10x/100x dropped trailing zeros and returns explicit discrepancy warnings.
+    Rigorously reconcile extracted amounts against Rupees-in-words, line items, and GST arithmetic.
+    Prevents tax mix-ups, inversions, and state-mismatches between CGST/SGST and IGST.
     """
     def to_decimal(val) -> Decimal:
         if val is None:
@@ -332,13 +382,56 @@ def _reconcile_extracted_amounts(data: Dict[str, Any]) -> tuple[Dict[str, Decima
     except (InvalidOperation, ValueError, TypeError):
         round_off_amt = Decimal('0.00')
     total_amt = to_decimal(data.get('total_amount'))
-
-    if total_amt == Decimal('0.00') and taxable_amt > 0:
-        total_amt = taxable_amt + cgst_amt + sgst_amt + igst_amt + cess_amt + round_off_amt
-    if taxable_amt == Decimal('0.00') and total_amt > 0:
-        taxable_amt = total_amt
-
     warnings: list[str] = []
+
+    # 1. State-aware GST Alignment (Intra-State vs Inter-State)
+    clean_gst = clean_gstin(party_gstin or data.get('party_gstin'))
+    if clean_gst and len(clean_gst) == 15:
+        if clean_gst.startswith('29'):
+            # Karnataka Intra-state supply: IGST is legally 0; tax is CGST + SGST
+            if igst_amt > Decimal('0.00') and cgst_amt == Decimal('0.00') and sgst_amt == Decimal('0.00'):
+                half = (igst_amt / Decimal('2')).quantize(Decimal('0.01'))
+                cgst_amt = half
+                sgst_amt = (igst_amt - half).quantize(Decimal('0.01'))
+                igst_amt = Decimal('0.00')
+                warnings.append(f"Auto-aligned Karnataka intra-state tax to CGST ₹{cgst_amt:,.2f} + SGST ₹{sgst_amt:,.2f}.")
+        else:
+            # Inter-state supply: CGST/SGST are 0; tax is IGST
+            if (cgst_amt > Decimal('0.00') or sgst_amt > Decimal('0.00')) and igst_amt == Decimal('0.00'):
+                igst_amt = (cgst_amt + sgst_amt).quantize(Decimal('0.01'))
+                cgst_amt = Decimal('0.00')
+                sgst_amt = Decimal('0.00')
+                warnings.append(f"Auto-aligned inter-state tax to IGST ₹{igst_amt:,.2f}.")
+
+    tax_sum = cgst_amt + sgst_amt + igst_amt + cess_amt
+
+    # 2. Anti-Inversion Check: Grand Total cannot be strictly less than Taxable Base
+    if taxable_amt > total_amt and total_amt > Decimal('0.00'):
+        taxable_amt, total_amt = total_amt, taxable_amt
+        warnings.append(f"Auto-corrected inverted amounts: Taxable Base set to ₹{taxable_amt:,.2f}, Total set to ₹{total_amt:,.2f}.")
+
+    # 3. Missing Taxable with Positive Taxes: derive Taxable = Total - Taxes - RoundOff
+    if taxable_amt == Decimal('0.00') and total_amt > Decimal('0.00'):
+        if tax_sum > Decimal('0.00'):
+            derived_taxable = max(Decimal('0.00'), total_amt - tax_sum - round_off_amt)
+            taxable_amt = derived_taxable
+        else:
+            taxable_amt = total_amt
+
+    # 4. Missing Total with Positive Taxable: derive Total = Taxable + Taxes + RoundOff
+    if total_amt == Decimal('0.00') and taxable_amt > Decimal('0.00'):
+        total_amt = (taxable_amt + tax_sum + round_off_amt).quantize(Decimal('0.01'))
+
+    # 5. Fix Tax Amount accidentally assigned to Taxable Base
+    if tax_sum > Decimal('0.00') and total_amt > tax_sum:
+        calc_taxable = (total_amt - tax_sum - round_off_amt).quantize(Decimal('0.01'))
+        if abs((taxable_amt + tax_sum + round_off_amt) - total_amt) > Decimal('2.00') and calc_taxable > Decimal('0.00'):
+            # If taxable_amt was extracted as total_amt or as tax_sum, correct it to calc_taxable
+            if abs(taxable_amt - total_amt) <= Decimal('1.00') or abs(taxable_amt - tax_sum) <= Decimal('1.00'):
+                taxable_amt = calc_taxable
+                warnings.append(f"Auto-reconciled Taxable Base to ₹{taxable_amt:,.2f} based on Total (₹{total_amt:,.2f}) minus Taxes (₹{tax_sum:,.2f}).")
+
+    # 6. Word-based magnitude recovery
     words_total = _parse_indian_amount_words(data.get('amount_in_words'))
     if words_total and total_amt > 0:
         tol_scale = max(Decimal('5.00'), words_total * Decimal('0.015'))
@@ -363,7 +456,7 @@ def _reconcile_extracted_amounts(data: Dict[str, Any]) -> tuple[Dict[str, Decima
                 f"Rupees-in-words (₹{words_total:,.2f}) differs from Grand Total (₹{total_amt:,.2f})."
             )
 
-    # Check arithmetic sum including cess & round-off
+    # 7. Check arithmetic sum including cess & round-off
     tax_sum = cgst_amt + sgst_amt + igst_amt + cess_amt
     if tax_sum > Decimal('0.00') and taxable_amt > Decimal('0.00'):
         expected_total = taxable_amt + tax_sum + round_off_amt
@@ -372,13 +465,13 @@ def _reconcile_extracted_amounts(data: Dict[str, Any]) -> tuple[Dict[str, Decima
                 f"Taxable (₹{taxable_amt:,.2f}) + Taxes (₹{tax_sum:,.2f}) = ₹{expected_total:,.2f} != Total (₹{total_amt:,.2f})."
             )
 
-    # Check CGST / SGST symmetry
+    # 8. Check CGST / SGST symmetry
     if (cgst_amt > Decimal('0.00')) != (sgst_amt > Decimal('0.00')):
         warnings.append(f"Incomplete intra-state GST split: CGST ₹{cgst_amt:,.2f}, SGST ₹{sgst_amt:,.2f}.")
     elif cgst_amt > Decimal('0.00') and sgst_amt > Decimal('0.00') and abs(cgst_amt - sgst_amt) > Decimal('1.00'):
         warnings.append(f"Asymmetrical GST split: CGST ₹{cgst_amt:,.2f} vs SGST ₹{sgst_amt:,.2f}.")
 
-    # Cross-check extracted line items
+    # 9. Cross-check extracted line items
     items = data.get('items') or []
     items_sum = Decimal('0.00')
     has_item_amounts = False
@@ -424,10 +517,21 @@ def extract_with_gemini(
     Applies independent backend vendor validation (Rules A through E).
     Preserves original digital/OCR text separately from Gemini's interpretation.
     Returns standard dictionary or None on failure / unconfigured API.
+    Supports a pool of 5 to 6 API keys with automatic, seamless failover on exhaustion.
     """
-    api_key = getattr(settings, 'GEMINI_API_KEY', '') or os.getenv('GEMINI_API_KEY', '').strip()
-    if not api_key:
-        return None
+    from apps.invoices.gemini_service import (
+        get_available_gemini_keys,
+        mark_key_exhausted,
+        mark_key_healthy,
+    )
+
+    candidate_keys = get_available_gemini_keys()
+    if not candidate_keys:
+        single_fallback = (getattr(settings, 'GEMINI_API_KEY', '') or os.getenv('GEMINI_API_KEY', '')).strip()
+        if single_fallback:
+            candidate_keys = [single_fallback]
+        else:
+            return None
 
     path_obj = Path(image_path)
     if not path_obj.exists():
@@ -441,8 +545,6 @@ def extract_with_gemini(
     try:
         from google import genai
         from google.genai import types
-
-        client = _get_gemini_client(api_key)
 
         # Detect MIME type
         ext = path_obj.suffix.lower()
@@ -472,17 +574,6 @@ def extract_with_gemini(
         candidate_models = _configured_gemini_models()
         max_attempts = max(1, int(getattr(settings, 'GEMINI_MAX_ATTEMPTS', 3) or 3))
 
-        def _invoke_gemini(model_name: str):
-            return client.models.generate_content(
-                model=model_name,
-                contents=prompt_contents,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_schema=InvoiceSchema,
-                    temperature=0.0,
-                ),
-            )
-
         def _parse_response(resp) -> Optional[Dict[str, Any]]:
             parsed = getattr(resp, 'parsed', None)
             if isinstance(parsed, InvoiceSchema):
@@ -494,56 +585,111 @@ def extract_with_gemini(
 
         data = None
         used_model = None
+        used_key_suffix = None
         last_error_type = None
         gemini_start = time.perf_counter()
 
-        for m_name in candidate_models:
-            for attempt in range(max_attempts):
-                is_last_attempt = attempt == max_attempts - 1
-                try:
-                    if timer is not None:
-                        timer.increment('gemini_requests_count')
-                        timer.start_timing('gemini_api_ms')
+        for key_idx, current_key in enumerate(candidate_keys):
+            has_other_keys = (key_idx < len(candidate_keys) - 1)
+            key_mask_suffix = current_key[-4:] if len(current_key) >= 4 else current_key
+            client = _get_gemini_client(current_key)
+            key_failed_exhausted = False
+
+            def _invoke_gemini_with_client(model_name: str):
+                return client.models.generate_content(
+                    model=model_name,
+                    contents=prompt_contents,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        response_schema=InvoiceSchema,
+                        temperature=0.0,
+                    ),
+                )
+
+            for m_name in candidate_models:
+                for attempt in range(max_attempts):
+                    is_last_attempt = attempt == max_attempts - 1
                     try:
-                        response = _invoke_gemini(m_name)
-                    finally:
                         if timer is not None:
-                            timer.stop_timing('gemini_api_ms')
-                except Exception as m_err:
-                    last_error_type = type(m_err).__name__
-                    code = _gemini_error_code(m_err)
-                    if code in _MODEL_UNAVAILABLE_CODES:
-                        logger.warning("Gemini model %s unavailable (HTTP %s); trying next configured model.", m_name, code)
+                            timer.increment('gemini_requests_count')
+                            timer.start_timing('gemini_api_ms')
+                        try:
+                            response = _invoke_gemini_with_client(m_name)
+                        finally:
+                            if timer is not None:
+                                timer.stop_timing('gemini_api_ms')
+                    except Exception as m_err:
+                        last_error_type = type(m_err).__name__
+                        code = _gemini_error_code(m_err)
+
+                        # If rate-limited or quota exhausted (429 / 403)
+                        if code in _KEY_EXHAUSTED_CODES:
+                            mark_key_exhausted(current_key, cooldown_seconds=3600)
+                            if has_other_keys:
+                                logger.warning(
+                                    "Gemini key ...%s exhausted (HTTP %s, %s). Seamlessly failing over to next key in pool (%d remaining).",
+                                    key_mask_suffix, code, last_error_type, len(candidate_keys) - key_idx - 1
+                                )
+                                key_failed_exhausted = True
+                                break
+                            elif not is_last_attempt:
+                                delay = _gemini_retry_delay(m_err, attempt)
+                                logger.warning("Gemini key ...%s rate-limited (HTTP %s); retrying in %.1fs.", key_mask_suffix, code, delay)
+                                time.sleep(delay)
+                                continue
+                            else:
+                                logger.warning("Gemini key ...%s exhausted (HTTP %s) and no backup keys remain.", key_mask_suffix, code)
+                                key_failed_exhausted = True
+                                break
+
+                        if code in _MODEL_UNAVAILABLE_CODES:
+                            logger.warning("Gemini model %s unavailable (HTTP %s); trying next configured model.", m_name, code)
+                            break
+                        if (code in _RETRYABLE_CODES or code is None) and not is_last_attempt:
+                            delay = _gemini_retry_delay(m_err, attempt)
+                            logger.warning("Gemini model %s error (HTTP %s, %s); retrying in %.1fs.",
+                                           m_name, code, last_error_type, delay)
+                            time.sleep(delay)
+                            continue
+                        logger.warning("Gemini model %s failed on key ...%s (HTTP %s, %s).", m_name, key_mask_suffix, code, last_error_type)
                         break
-                    if (code in _RETRYABLE_CODES or code is None) and not is_last_attempt:
-                        delay = _gemini_retry_delay(m_err, attempt)
-                        logger.warning("Gemini model %s error (HTTP %s, %s); retrying in %.1fs.",
-                                       m_name, code, last_error_type, delay)
-                        time.sleep(delay)
-                        continue
-                    logger.warning("Gemini model %s failed (HTTP %s, %s).", m_name, code, last_error_type)
+
+                    # Response received: validate structure; retry once on malformed / truncated JSON.
+                    try:
+                        data = _parse_response(response)
+                    except Exception as parse_err:
+                        last_error_type = type(parse_err).__name__
+                        data = None
+
+                    if data is not None:
+                        mark_key_healthy(current_key)
+                        used_model = m_name
+                        used_key_suffix = key_mask_suffix
+                        logger.info("Gemini extraction successful using key ...%s and model %s", key_mask_suffix, m_name)
+                        break
+                    logger.warning("Gemini model %s returned empty or malformed JSON (%s).", m_name, last_error_type)
+                    if is_last_attempt:
+                        break
+
+                if key_failed_exhausted:
+                    # Switch immediately to the next key in the pool
+                    break
+                if data is not None:
                     break
 
-                # Response received: validate structure; retry once on malformed / truncated JSON.
-                try:
-                    data = _parse_response(response)
-                except Exception as parse_err:
-                    last_error_type = type(parse_err).__name__
-                    data = None
-                if data is not None:
-                    used_model = m_name
-                    break
-                logger.warning("Gemini model %s returned empty or malformed JSON (%s).", m_name, last_error_type)
-                if is_last_attempt:
-                    break
             if data is not None:
                 break
 
         if data is None:
-            logger.warning("Gemini Extractor: no usable response from %s (last_error=%s).", candidate_models, last_error_type)
+            logger.warning("Gemini Extractor: no usable response from configured keys and models (last_error=%s).", last_error_type)
             return None
 
-        amounts, fin_warnings = _reconcile_extracted_amounts(data)
+        raw_party_name = (data.get('party_name') or '').strip()
+        raw_party_gstin = clean_gstin(data.get('party_gstin'))
+        raw_pan = (data.get('pan') or '').strip().upper()
+        raw_ledger = (data.get('expense_ledger') or 'Purchase Spares & Consumables').strip()
+
+        amounts, fin_warnings = _reconcile_extracted_amounts(data, party_gstin=raw_party_gstin)
 
         # Date parsing
         parsed_invoice_date = None
@@ -568,11 +714,6 @@ def extract_with_gemini(
         round_off_amt = amounts['round_off_amount']
         total_amt = amounts['total_amount']
 
-        raw_party_name = (data.get('party_name') or '').strip()
-        raw_party_gstin = clean_gstin(data.get('party_gstin'))
-        raw_pan = (data.get('pan') or '').strip().upper()
-        raw_ledger = (data.get('expense_ledger') or 'Purchase Spares & Consumables').strip()
-
         # --- CRITICAL BACKEND VENDOR & FINANCIAL VALIDATION (Rules A - E) ---
         # Gemini is advisory only; the backend independently calculates ambiguity,
         # manual review gating, and financial approval eligibility.
@@ -582,6 +723,38 @@ def extract_with_gemini(
             default_expense_ledger=raw_ledger,
             pan=raw_pan,
         )
+
+        def to_dec(val) -> Decimal:
+            if val is None:
+                return Decimal('0.00')
+            try:
+                d = Decimal(str(val)).quantize(Decimal('0.01'))
+                return d if d >= 0 else Decimal('0.00')
+            except (InvalidOperation, ValueError, TypeError):
+                return Decimal('0.00')
+
+        inv_type = (data.get('invoice_type') or 'REGULAR').strip().upper()
+        pol_num = (data.get('policy_number') or '').strip()
+        veh_num = (data.get('vehicle_number') or '').strip().upper()
+        labour_amt = to_dec(data.get('labour_charges'))
+
+        # Document Category determination:
+        # Strictly default to REGULAR unless specifically proven to be Vehicle Insurance or Vehicle Service
+        if pol_num or (inv_type == 'VEHICLE_INSURANCE') or ('lorry insurance' in raw_ledger.lower() or 'vehicle insurance' in raw_ledger.lower()):
+            inv_type = 'VEHICLE_INSURANCE'
+            if backend_val['expense_ledger'] in ('Purchase Spares & Consumables', 'Diesel Expenses'):
+                backend_val['expense_ledger'] = 'Lorry Insurance'
+        elif inv_type == 'VEHICLE_SERVICE' or (veh_num and labour_amt > Decimal('0.00')):
+            inv_type = 'VEHICLE_SERVICE'
+            if backend_val['expense_ledger'] in ('Purchase Spares & Consumables', 'Diesel Expenses'):
+                backend_val['expense_ledger'] = 'Labour Charges / Vehicle Service'
+        else:
+            inv_type = 'REGULAR'
+
+        # If vehicle insurance and invoice_number is empty, use policy_number
+        inv_num = (data.get('invoice_number') or '').strip()
+        if not inv_num and pol_num:
+            inv_num = pol_num
 
         # --- INTERNAL APPEARANCE & FINANCIAL CHECK + COMBINED E-INVOICE STATUS ---
         from .document_type_utils import (
@@ -652,7 +825,11 @@ def extract_with_gemini(
             'party_name': backend_val['party_name'] or raw_party_name,
             'party_gstin': backend_val['party_gstin'] or raw_party_gstin,
             'pan': backend_val.get('pan') or raw_pan,
-            'invoice_number': (data.get('invoice_number') or '').strip(),
+            'invoice_number': inv_num,
+            'invoice_type': inv_type,
+            'policy_number': pol_num,
+            'vehicle_number': veh_num,
+            'labour_charges': labour_amt,
             'invoice_date': parsed_invoice_date,
             'due_date': parsed_due_date,
             'taxable_amount': taxable_amt,

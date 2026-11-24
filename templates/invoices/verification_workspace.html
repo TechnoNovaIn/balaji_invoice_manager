@@ -402,6 +402,30 @@
                         </div>
                     </div>
 
+                    <!-- Classification: Document Category, Policy Number & Vehicle Number -->
+                    <div class="row g-2 mb-2 p-2 bg-light border rounded-3 align-items-center">
+                        <div class="col-12" id="divCategorySelectCol">
+                            <label class="form-label small fw-bold text-dark mb-1">Document Category</label>
+                            <select name="invoice_type" id="fieldInvoiceType" class="form-select form-select-sm fw-semibold">
+                                <option value="REGULAR" {% if submission.invoice_type == 'REGULAR' or not submission.invoice_type and not submission.is_vehicle_insurance and not submission.is_vehicle_service %}selected{% endif %}>Regular Invoice (Spares / Diesel / Goods)</option>
+                                <option value="VEHICLE_INSURANCE" {% if submission.invoice_type == 'VEHICLE_INSURANCE' %}selected{% endif %}>Vehicle Insurance Policy</option>
+                                <option value="VEHICLE_SERVICE" {% if submission.invoice_type == 'VEHICLE_SERVICE' %}selected{% endif %}>Vehicle Service / Garage</option>
+                            </select>
+                        </div>
+                        <div class="col-12 col-md-4 d-none" id="divPolicyNumber">
+                            <label class="form-label small fw-bold text-primary mb-1">
+                                <i class="bi bi-shield-check me-1"></i>Policy Number (Insurance)
+                            </label>
+                            <input type="text" name="policy_number" id="fieldPolicyNumber" value="{{ submission.policy_number }}" class="form-control form-control-sm font-monospace" placeholder="e.g. 123456/31/2026/123">
+                        </div>
+                        <div class="col-12 col-md-4 d-none" id="divVehicleNumber">
+                            <label class="form-label small fw-bold text-dark mb-1">
+                                <i class="bi bi-truck me-1"></i>Vehicle / Lorry No.
+                            </label>
+                            <input type="text" name="vehicle_number" id="fieldVehicleNumber" value="{{ submission.vehicle_number }}" class="form-control form-control-sm font-monospace text-uppercase" placeholder="e.g. KA-01-AB-1234">
+                        </div>
+                    </div>
+
                     <div class="row g-2 mb-2">
                         <!-- Invoice Number -->
                         <div class="col-12 col-md-4">
@@ -488,15 +512,19 @@
                                 <label class="form-label small text-muted mb-0" style="font-size: 0.72rem;">Taxable Base (&#8377;)</label>
                                 <input type="number" step="0.01" name="taxable_amount" id="valTaxable" value="{{ submission.taxable_amount }}" class="form-control form-control-sm text-end font-monospace">
                             </div>
-                            <div class="col-6 col-md-3">
+                            <div class="col-6 col-md-3 d-none" id="divLabourCharges">
+                                <label class="form-label small text-muted mb-0" style="font-size: 0.72rem;">Labour Charges (&#8377;)</label>
+                                <input type="number" step="0.01" name="labour_charges" id="valLabour" value="{{ submission.labour_charges }}" class="form-control form-control-sm text-end font-monospace" placeholder="0.00">
+                            </div>
+                            <div class="col-6 col-md-2">
                                 <label class="form-label small text-muted mb-0" style="font-size: 0.72rem;">CGST (&#8377;)</label>
                                 <input type="number" step="0.01" name="cgst_amount" id="valCgst" value="{{ submission.cgst_amount }}" class="form-control form-control-sm text-end font-monospace">
                             </div>
-                            <div class="col-6 col-md-3">
+                            <div class="col-6 col-md-2">
                                 <label class="form-label small text-muted mb-0" style="font-size: 0.72rem;">SGST (&#8377;)</label>
                                 <input type="number" step="0.01" name="sgst_amount" id="valSgst" value="{{ submission.sgst_amount }}" class="form-control form-control-sm text-end font-monospace">
                             </div>
-                            <div class="col-6 col-md-3">
+                            <div class="col-6 col-md-2">
                                 <label class="form-label small text-muted mb-0" style="font-size: 0.72rem;">IGST (&#8377;)</label>
                                 <input type="number" step="0.01" name="igst_amount" id="valIgst" value="{{ submission.igst_amount }}" class="form-control form-control-sm text-end font-monospace">
                             </div>
@@ -899,7 +927,35 @@ document.addEventListener('DOMContentLoaded', function() {
                 document.getElementById('valIgst').value = '0.00';
                 document.getElementById('valTotal').value = (taxable + (parseFloat(halfTax) * 2)).toFixed(2);
             }
-            checkLiveMathConsistency();
+            // 5. Dynamic Category Field Visibility (Hide Vehicle & Policy for Normal Invoices)
+    function updateCategoryDisplay() {
+        const cat = document.getElementById('fieldInvoiceType')?.value || 'REGULAR';
+        const divPol = document.getElementById('divPolicyNumber');
+        const divVeh = document.getElementById('divVehicleNumber');
+        const divLab = document.getElementById('divLabourCharges');
+        const colCat = document.getElementById('divCategorySelectCol');
+
+        if (cat === 'REGULAR') {
+            if (colCat) colCat.className = 'col-12';
+            if (divPol) divPol.classList.add('d-none');
+            if (divVeh) divVeh.classList.add('d-none');
+            if (divLab) divLab.classList.add('d-none');
+        } else if (cat === 'VEHICLE_INSURANCE') {
+            if (colCat) colCat.className = 'col-12 col-md-4';
+            if (divPol) { divPol.className = 'col-12 col-md-4'; divPol.classList.remove('d-none'); }
+            if (divVeh) { divVeh.className = 'col-12 col-md-4'; divVeh.classList.remove('d-none'); }
+            if (divLab) divLab.classList.add('d-none');
+        } else if (cat === 'VEHICLE_SERVICE') {
+            if (colCat) colCat.className = 'col-12 col-md-6';
+            if (divPol) divPol.classList.add('d-none');
+            if (divVeh) { divVeh.className = 'col-12 col-md-6'; divVeh.classList.remove('d-none'); }
+            if (divLab) divLab.classList.remove('d-none');
+        }
+    }
+    document.getElementById('fieldInvoiceType')?.addEventListener('change', updateCategoryDisplay);
+    updateCategoryDisplay();
+
+    checkLiveMathConsistency();
         }
     });
 
@@ -930,6 +986,34 @@ document.addEventListener('DOMContentLoaded', function() {
     ['valTaxable', 'valCgst', 'valSgst', 'valIgst', 'valTotal'].forEach(id => {
         document.getElementById(id)?.addEventListener('input', checkLiveMathConsistency);
     });
+    // 5. Dynamic Category Field Visibility (Hide Vehicle & Policy for Normal Invoices)
+    function updateCategoryDisplay() {
+        const cat = document.getElementById('fieldInvoiceType')?.value || 'REGULAR';
+        const divPol = document.getElementById('divPolicyNumber');
+        const divVeh = document.getElementById('divVehicleNumber');
+        const divLab = document.getElementById('divLabourCharges');
+        const colCat = document.getElementById('divCategorySelectCol');
+
+        if (cat === 'REGULAR') {
+            if (colCat) colCat.className = 'col-12';
+            if (divPol) divPol.classList.add('d-none');
+            if (divVeh) divVeh.classList.add('d-none');
+            if (divLab) divLab.classList.add('d-none');
+        } else if (cat === 'VEHICLE_INSURANCE') {
+            if (colCat) colCat.className = 'col-12 col-md-4';
+            if (divPol) { divPol.className = 'col-12 col-md-4'; divPol.classList.remove('d-none'); }
+            if (divVeh) { divVeh.className = 'col-12 col-md-4'; divVeh.classList.remove('d-none'); }
+            if (divLab) divLab.classList.add('d-none');
+        } else if (cat === 'VEHICLE_SERVICE') {
+            if (colCat) colCat.className = 'col-12 col-md-6';
+            if (divPol) divPol.classList.add('d-none');
+            if (divVeh) { divVeh.className = 'col-12 col-md-6'; divVeh.classList.remove('d-none'); }
+            if (divLab) divLab.classList.remove('d-none');
+        }
+    }
+    document.getElementById('fieldInvoiceType')?.addEventListener('change', updateCategoryDisplay);
+    updateCategoryDisplay();
+
     checkLiveMathConsistency();
 });
 </script>

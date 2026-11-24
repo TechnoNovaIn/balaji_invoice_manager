@@ -367,6 +367,10 @@ def create_invoice_submissions(
                             party_name=meta.get('party_name', ''),
                             party_gstin=meta.get('party_gstin', ''),
                             invoice_number=meta.get('invoice_number', ''),
+                            invoice_type=meta.get('invoice_type', 'REGULAR'),
+                            policy_number=meta.get('policy_number', ''),
+                            vehicle_number=meta.get('vehicle_number', ''),
+                            labour_charges=meta.get('labour_charges', Decimal('0.00')),
                             invoice_date=meta.get('invoice_date'),
                             taxable_amount=meta.get('taxable_amount', Decimal('0.00')),
                             cgst_amount=meta.get('cgst_amount', Decimal('0.00')),
@@ -513,6 +517,14 @@ def create_invoice_submissions(
                     meta = extract_invoice_metadata(doc_rec.original_file.path, mime_type)
                     if meta.get('invoice_number'):
                         sub.invoice_number = meta['invoice_number']
+                    if meta.get('invoice_type'):
+                        sub.invoice_type = meta['invoice_type']
+                    if meta.get('policy_number'):
+                        sub.policy_number = meta['policy_number']
+                    if meta.get('vehicle_number'):
+                        sub.vehicle_number = meta['vehicle_number']
+                    if meta.get('labour_charges'):
+                        sub.labour_charges = meta['labour_charges']
                     if meta.get('party_name'):
                         sub.party_name = meta['party_name']
                     if meta.get('party_gstin'):
@@ -595,6 +607,14 @@ def create_invoice_submissions(
                 meta = extract_invoice_metadata(doc_rec.original_file.path, mime_type)
                 if meta.get('invoice_number'):
                     sub.invoice_number = meta['invoice_number']
+                if meta.get('invoice_type'):
+                    sub.invoice_type = meta['invoice_type']
+                if meta.get('policy_number'):
+                    sub.policy_number = meta['policy_number']
+                if meta.get('vehicle_number'):
+                    sub.vehicle_number = meta['vehicle_number']
+                if meta.get('labour_charges'):
+                    sub.labour_charges = meta['labour_charges']
                 if meta.get('party_name'):
                     sub.party_name = meta['party_name']
                 if meta.get('party_gstin'):

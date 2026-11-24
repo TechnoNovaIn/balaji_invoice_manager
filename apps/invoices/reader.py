@@ -318,6 +318,10 @@ def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
     """
     result = {
         'invoice_number': '',
+        'invoice_type': 'REGULAR',
+        'policy_number': '',
+        'vehicle_number': '',
+        'labour_charges': Decimal('0.00'),
         'party_name': '',
         'party_gstin': '',
         'expense_ledger': 'Purchase Spares & Consumables',
@@ -982,14 +986,17 @@ def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
             cgst_val = Decimal('0.00')
             sgst_val = Decimal('0.00')
 
+        # Anti-Inversion: Taxable cannot be strictly greater than Grand Total
+        if taxable_val > gtotal_val and gtotal_val > Decimal('0.00'):
+            taxable_val, gtotal_val = gtotal_val, taxable_val
+
         # 9. GST Mathematical Reconciliation
-        if taxable_val > 0 and cgst_val > 0 and sgst_val > 0 and gtotal_val == 0:
-            gtotal_val = (taxable_val + cgst_val + sgst_val).quantize(Decimal('0.01'))
-        elif gtotal_val > 0 and cgst_val > 0 and sgst_val > 0 and taxable_val == 0:
-            taxable_val = (gtotal_val - cgst_val - sgst_val).quantize(Decimal('0.01'))
-        elif gtotal_val > 0 and igst_val > 0 and taxable_val == 0:
-            taxable_val = (gtotal_val - igst_val).quantize(Decimal('0.01'))
-        elif taxable_val > 0 and gtotal_val > taxable_val and cgst_val == 0 and sgst_val == 0 and igst_val == 0:
+        tax_sum = cgst_val + sgst_val + igst_val
+        if taxable_val > 0 and tax_sum > 0 and gtotal_val == 0:
+            gtotal_val = (taxable_val + tax_sum).quantize(Decimal('0.01'))
+        elif gtotal_val > 0 and tax_sum > 0 and taxable_val == 0:
+            taxable_val = max(Decimal('0.00'), (gtotal_val - tax_sum).quantize(Decimal('0.01')))
+        elif taxable_val > 0 and gtotal_val > taxable_val and tax_sum == 0:
             diff = gtotal_val - taxable_val
             if is_interstate:
                 igst_val = diff.quantize(Decimal('0.01'))
@@ -1000,7 +1007,7 @@ def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
         elif gtotal_val == 0 and taxable_val > 0:
             gtotal_val = taxable_val
         elif taxable_val == 0 and gtotal_val > 0:
-            taxable_val = gtotal_val
+            taxable_val = max(Decimal('0.00'), (gtotal_val - tax_sum).quantize(Decimal('0.01'))) if tax_sum > 0 else gtotal_val
 
         # 10. A grand total below the taxable value is impossible; it was a tax line picked up by mistake.
         tax_sum = cgst_val + sgst_val + igst_val
@@ -1014,6 +1021,52 @@ def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
         result['sgst_amount'] = sgst_val
         result['igst_amount'] = igst_val
         result['total_amount'] = gtotal_val
+
+        # --- E. Vehicle & Insurance Patterns Extraction ---
+        # 1. Vehicle Number extraction (e.g. KA-01-AB-1234, NL01AD1234, MH12CD5678)
+        veh_pattern = r'\b([A-Z]{2}[-\s]?[0-9]{1,2}[-\s]?[A-Z]{1,3}[-\s]?[0-9]{4})\b'
+        for line in lines:
+            if re.search(r'(?:Vehicle|Veh|Reg|Regn|Lorry|Truck|Car)\b', line, re.I):
+                m_veh = re.search(veh_pattern, line, re.I)
+                if m_veh:
+                    result['vehicle_number'] = re.sub(r'\s+', '-', m_veh.group(1)).upper()
+                    break
+        if not result['vehicle_number']:
+            m_any_veh = re.search(veh_pattern, raw_text, re.I)
+            if m_any_veh:
+                clean_v = re.sub(r'\s+', '-', m_any_veh.group(1)).upper()
+                if not result['party_gstin'].startswith(clean_v.replace('-', '')[:10]):
+                    result['vehicle_number'] = clean_v
+
+        # 2. Insurance Policy Number extraction
+        m_pol = re.search(r'\b(?:Policy|Cover\s*Note|Certificate)\s*(?:No|Number|#)[\s.:]+([A-Z0-9\/-]{6,35})\b', raw_text, re.I)
+        if m_pol:
+            pol_clean = m_pol.group(1).strip()
+            result['policy_number'] = pol_clean
+            result['invoice_type'] = 'VEHICLE_INSURANCE'
+            result['expense_ledger'] = 'Lorry Insurance'
+            if not result['invoice_number']:
+                result['invoice_number'] = pol_clean
+
+        # 3. Labour Charges extraction for Service / Garage bills
+        labour_val = Decimal('0.00')
+        for line in lines:
+            if re.search(r'\b(?:Labour|Labor|Service\s*Charge|Fitting|Lathe|Washing|Greasing)\b', line, re.I):
+                m_amt = re.search(r'([0-9]+(?:[.,][0-9]{2})+|[0-9]{3,6})', line)
+                if m_amt:
+                    d_labour = parse_amt_str(m_amt.group(1))
+                    if d_labour > 0 and d_labour < gtotal_val:
+                        labour_val += d_labour
+        if labour_val > Decimal('0.00'):
+            result['labour_charges'] = labour_val
+            if result['invoice_type'] != 'VEHICLE_INSURANCE':
+                result['invoice_type'] = 'VEHICLE_SERVICE'
+                if result['expense_ledger'] == 'Purchase Spares & Consumables':
+                    result['expense_ledger'] = 'Labour Charges / Vehicle Service'
+        elif result['invoice_type'] != 'VEHICLE_INSURANCE' and re.search(r'\b(?:Garage|Workshop|Service\s*Station|Mechanic|Job\s*Card|Auto\s*Works)\b', raw_text, re.I):
+            result['invoice_type'] = 'VEHICLE_SERVICE'
+            if result['expense_ledger'] == 'Purchase Spares & Consumables':
+                result['expense_ledger'] = 'Labour Charges / Vehicle Service'
 
         # --- E. Confidence Scoring & Verification Gating ---
         score = 0.0

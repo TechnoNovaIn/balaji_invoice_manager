@@ -17,7 +17,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR / 'apps'))
 
 # Load environment variables from .env
-load_dotenv(BASE_DIR / '.env')
+load_dotenv(BASE_DIR / '.env', override=True)
+
+# Force modern httpx2 client for google-genai 3.0.0 (prevents legacy httpx missing transport error)
+os.environ['GOOGLE_GENAI_HTTP_CLIENT'] = 'httpx2'
 
 DEBUG = os.getenv('DJANGO_DEBUG', 'False').lower() in ('true', '1', 't')
 
@@ -34,13 +37,13 @@ allowed_hosts_env = os.getenv('DJANGO_ALLOWED_HOSTS', '')
 if allowed_hosts_env:
     ALLOWED_HOSTS = [h.strip() for h in allowed_hosts_env.split(',') if h.strip()]
 elif not DEBUG:
-    ALLOWED_HOSTS = ['invoicehub.balajitransports.com', 'localhost', '127.0.0.1']
+    ALLOWED_HOSTS = ['invoicehub.balajitransports.com', 'localhost', '127.0.0.1', '192.168.0.159', '192.168.0.131']
 else:
-    ALLOWED_HOSTS = ['localhost', '127.0.0.1']
+    ALLOWED_HOSTS = ['localhost', '127.0.0.1', '192.168.0.159', '192.168.0.131']
 
-if DEBUG:
-    if 'testserver' not in ALLOWED_HOSTS:
-        ALLOWED_HOSTS.append('testserver')
+for h in ('127.0.0.1', 'localhost', '192.168.0.159', '192.168.0.131', 'testserver'):
+    if h not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(h)
 
 csrf_origins_env = os.getenv('DJANGO_CSRF_TRUSTED_ORIGINS', '')
 if csrf_origins_env:
@@ -279,6 +282,7 @@ BACKUP_RETENTION_DAYS = int(os.getenv('BACKUP_RETENTION_DAYS', 3650))
 
 # Gemini Vision AI for High-Accuracy Autonomous Invoice Extraction
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '').strip()
+GEMINI_API_KEYS = os.getenv('GEMINI_API_KEYS', '').strip()
 GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-3.5-flash').strip()
 GEMINI_FALLBACK_POLICY = os.getenv('GEMINI_FALLBACK_POLICY', 'auto').strip().lower()  # auto | always | never
 GEMINI_MAX_PAGES_PER_INVOICE = max(1, int(os.getenv('GEMINI_MAX_PAGES_PER_INVOICE', '3') or '3'))

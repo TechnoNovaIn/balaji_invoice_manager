@@ -92,9 +92,14 @@
                 <div>Admin Session: <strong>{{ privileged_session_hours }}h</strong> &bull; Submitter Session: <strong>{{ submitter_session_days }}d</strong></div>
                 <div>Login Rate Limit: <strong>{{ login_max_attempts }} attempts / 5m cooldown</strong></div>
             </div>
-            <a href="{% url 'accounts:audit_logs' %}" class="btn btn-outline-primary btn-sm w-100 fw-semibold">
-                <i class="bi bi-shield-lock me-1"></i> View Full Audit Logs
-            </a>
+            <div class="d-flex gap-2">
+                <a href="{% url 'accounts:audit_logs' %}" class="btn btn-outline-primary btn-sm flex-grow-1 fw-semibold">
+                    <i class="bi bi-shield-lock me-1"></i> Audit Logs
+                </a>
+                <a href="{% url 'core:ai_engine_config' %}" class="btn btn-outline-secondary btn-sm fw-semibold" title="Advanced AI Engine & Key Security">
+                    <i class="bi bi-cpu me-1"></i> AI Engine
+                </a>
+            </div>
         </div>
     </div>
 
