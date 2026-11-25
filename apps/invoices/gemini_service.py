@@ -4,7 +4,13 @@ import time
 import logging
 import threading
 
-os.environ['GOOGLE_GENAI_HTTP_CLIENT'] = 'httpx2'
+# Clean up any invalid GOOGLE_GENAI_HTTP_CLIENT configuration
+_client_backend = os.environ.get('GOOGLE_GENAI_HTTP_CLIENT', '').strip()
+if _client_backend:
+    try:
+        __import__(_client_backend)
+    except ImportError:
+        os.environ.pop('GOOGLE_GENAI_HTTP_CLIENT', None)
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Union
@@ -174,7 +180,6 @@ def test_gemini_connection(api_key: str, model_name: str = "gemini-3.5-flash-lit
 
     t0 = time.perf_counter()
     try:
-        os.environ['GOOGLE_GENAI_HTTP_CLIENT'] = 'httpx2'
         timeout_ms = 12000
         client = genai.Client(
             api_key=clean_key,
@@ -199,7 +204,9 @@ def test_gemini_connection(api_key: str, model_name: str = "gemini-3.5-flash-lit
         err_str = str(e)
         logger.warning("Gemini API connection test failed: %s", err_str)
 
-        if '403' in err_str or 'PERMISSION_DENIED' in err_str:
+        if 'httpx' in err_str and 'not installed' in err_str:
+            hint = 'Python package "httpx" is missing on this server environment. Run "pip install httpx" to activate Gemini Vision AI.'
+        elif '403' in err_str or 'PERMISSION_DENIED' in err_str:
             hint = 'Google 403 Forbidden: Free tier unavailable or project disabled. Check billing or try a fresh project key.'
             mark_key_exhausted(clean_key, cooldown_seconds=7200)
         elif '429' in err_str or 'RESOURCE_EXHAUSTED' in err_str:
@@ -272,7 +279,9 @@ def save_gemini_key_pool(keys: List[str], model_name: Optional[str] = None) -> b
         'GEMINI_API_KEY': primary_key,
     }
     if model_name and model_name.strip():
-        key_values['GEMINI_MODEL'] = model_name.strip()
+        safe_model = re.sub(r'[\r\n]+', '', model_name.strip())
+        if safe_model:
+            key_values['GEMINI_MODEL'] = safe_model
 
     lines = env_path.read_text(encoding='utf-8').splitlines(keepends=True)
     updated_keys = set()

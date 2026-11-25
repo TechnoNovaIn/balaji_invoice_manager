@@ -279,3 +279,219 @@ class VehicleInvoiceAndTaxReconciliationTests(TestCase):
         self.assertContains(resp, "Invoice / Bill No.")
         self.assertContains(resp, "Bill Date")
         self.assertContains(resp, "Expense Head")
+
+    def test_rapidocr_interstate_subtotal_and_advance_deduction(self):
+        """
+        Verify that printed invoices with Sub Total, IGST, advance payment deductions,
+        and alphanumeric dates (e.g. Intangles Lab) are correctly parsed.
+        """
+        raw_text = """
+        Intangles Lab Private Limited
+        GSTIN 27AADCI7688G1Z3 TAX INVOICE
+        Invoice# : INT/25-26/01716
+        Invoice Date : 17 Jun 2025
+        Due Date : 17 Jun 2025
+        Place Of Supply : Karnataka (29)
+
+        Bill To
+        BALAJI TRANSPORTS KA
+        GSTIN 29AAWFB0395H1ZX
+
+        # Item & Description HSN/SAC Qty Rate Discount IGST % Amt Amount
+        1 INTFG-VHMS-EDP 84715000 30.00 Nos 10,000.00 75,000.00 18% 40,500.00 2,25,000.00
+        2 SUBSCRIPTION CHARGES 998319 30.00 Nos 4,800.00 0.00 18% 25,920.00 1,44,000.00
+
+        Sub Total 3,70,500.00
+        IGST18 (18%) 66,690.00
+        Total ₹4,37,190.00
+        Payment Made (-) 4,29,810.00
+        Balance Due ₹7,380.00
+
+        Total In Words
+        Indian Rupee Four Lakh Thirty-Seven Thousand One Hundred Ninety Only
+        """
+        meta = extract_metadata_from_text(raw_text)
+        self.assertEqual(meta['invoice_number'], "INT/25-26/01716")
+        self.assertEqual(str(meta['invoice_date']), "2025-06-17")
+        self.assertEqual(meta['party_gstin'], "27AADCI7688G1Z3")
+        self.assertEqual(meta['taxable_amount'], Decimal('370500.00'))
+        self.assertEqual(meta['igst_amount'], Decimal('66690.00'))
+        self.assertEqual(meta['cgst_amount'], Decimal('0.00'))
+        self.assertEqual(meta['sgst_amount'], Decimal('0.00'))
+        self.assertEqual(meta['total_amount'], Decimal('437190.00'))
+        self.assertEqual(meta['expense_ledger'], "GPS-Expenses")
+
+    def test_rapidocr_mahindra_spares_invoice_with_tax_table_and_words(self):
+        """
+        Verify that Mahindra & Mahindra commercial vehicle spare parts invoices
+        with statutory tax summary table and 'rupees in words' with paise
+        extract exact taxable, CGST, SGST, grand total, date, and vehicle number.
+        """
+        raw_text = """
+        MAHINDRA & MAHINDRA LTD.
+        Spares Business Unit Truck & Bus
+        SY number - 216, 217 ,50,51, 53/1B, Jaymangala Village, Lakkur Hobli - 563160
+        Tax Invoice
+        Issued Under Rule 46 of CGST/SGST Rules, 2017.
+        GSTIN: 29AAACM3025E2ZU
+        GST Invoice NO: IN01272900439489
+        GST Invoice Date 19.11.2026
+        Challan/DelNo. & Dt: 8609554968 / 18.11.2026
+
+        Bill To Party : B012100185
+        Balaji Transport
+        TUMKUR 572106
+        Vehicle No: KA51AB2686
+
+        Total
+        Grand Total 97954.00
+        Whether the tax is payable on reverse charge basis: NO
+        Total Tax: FOURTEEN THOUSAND NINE HUNDRED FORTY TWO RUPEES EIGHT PAISE ONLY
+        Grand Total: NINETY SEVEN THOUSAND NINE HUNDRED FIFTY THREE RUPEES FIFTY EIGHT PAISE ONLY
+        Rate Taxable Value CGST Amt SGST Amt IGST Amt
+        18% 83011.50 7471.04 7471.04 0.00
+        """
+        meta = extract_metadata_from_text(raw_text)
+        self.assertEqual(meta['invoice_number'], "IN01272900439489")
+        self.assertEqual(str(meta['invoice_date']), "2026-11-19")
+        self.assertEqual(meta['party_gstin'], "29AAACM3025E2ZU")
+        self.assertEqual(meta['vehicle_number'], "KA51AB2686")
+        self.assertEqual(meta['taxable_amount'], Decimal('83011.50'))
+        self.assertEqual(meta['cgst_amount'], Decimal('7471.04'))
+        self.assertEqual(meta['sgst_amount'], Decimal('7471.04'))
+        self.assertEqual(meta['igst_amount'], Decimal('0.00'))
+        self.assertEqual(meta['total_amount'], Decimal('97954.00'))
+        self.assertEqual(meta['expense_ledger'], "Purchase Spares & Consumables")
+
+    def test_rapidocr_sai_auto_works_invoice(self):
+        """
+        Verify that Sai Auto Works vehicle repair bill with roundoff,
+        statutory tax table, and REGISTRATION number extracts exact amounts.
+        """
+        raw_text = """
+        Sai Auto Works
+        GSTIN Number : 29ADLFS2360K1ZL
+        TAX INVOICE
+        INVOICE NO : LCR5178260001003 INVOICE DATE : 07.10.2026
+        JOB CARD NO : WTY51782627001691
+        CUSTOMER : BALAJI TRANSPORTS
+        REGISTRATION KA06AB1686
+        Subtotal 22.50 1,497.50 134.78 134.78 1,767.06
+        ROUNDOFF (INR) 0.06-
+        GRAND TOTAL (INR) 1,767.00
+        Tax % Taxable Amount CGST SGST
+        9.00 1,497.50 134.78 134.78
+        AMOUNT IN WORDS : ONE THOUSAND SEVEN HUNDRED SIXTY SEVEN RUPEES ONLY
+        """
+        meta = extract_metadata_from_text(raw_text)
+        self.assertEqual(meta['invoice_number'], "LCR5178260001003")
+        self.assertEqual(str(meta['invoice_date']), "2026-10-07")
+        self.assertEqual(meta['party_gstin'], "29ADLFS2360K1ZL")
+        self.assertEqual(meta['vehicle_number'], "KA06AB1686")
+        self.assertEqual(meta['taxable_amount'], Decimal('1497.50'))
+        self.assertEqual(meta['cgst_amount'], Decimal('134.78'))
+        self.assertEqual(meta['sgst_amount'], Decimal('134.78'))
+        self.assertEqual(meta['igst_amount'], Decimal('0.00'))
+        self.assertEqual(meta['total_amount'], Decimal('1767.00'))
+        self.assertEqual(meta['invoice_type'], "VEHICLE_SERVICE")
+        self.assertEqual(meta['expense_ledger'], "Labour Charges / Vehicle Service")
+
+    def test_rapidocr_shriram_insurance_wrapped_vehicle_and_date(self):
+        """
+        Ensure registration date (24/11/2015) is never mistaken for invoice_number,
+        and line-wrapped vehicle numbers like 'KA - 19 - AB -\\n2209' are extracted.
+        """
+        raw_text = """
+        SHRIRAM GENERAL INSURANCE COMPANY LIMITED
+        CERTIFICATE CUM POLICY SCHEDULE
+        Policy No.
+        418012/31/27/004718
+        GSTIN No. 29AAKCS2509K1ZZ
+        PREMIUM AMOUNT
+        46697.00
+        REGISTRATI
+        ON MARK &
+        PLACE
+        DATE OF REGN. /
+        DELIVERY
+        24/11/2015
+        KA - 19 - AB -
+        2209 &
+        MANGALORE
+        Page 1 of 2
+        """
+        meta = extract_metadata_from_text(raw_text)
+        self.assertEqual(meta['invoice_type'], "VEHICLE_INSURANCE")
+        self.assertEqual(meta['policy_number'], "418012/31/27/004718")
+        self.assertEqual(meta['invoice_number'], "418012/31/27/004718")
+        self.assertEqual(meta['vehicle_number'], "KA-19-AB-2209")
+        self.assertEqual(meta['expense_ledger'], "Lorry Insurance")
+
+    def test_segmentation_keeps_multipage_insurance_policy_together(self):
+        """
+        A 2-page insurance policy with the same Policy No / GSTIN and continuation
+        markers must NOT be split into 2 separate PDFs even if vendor string differs.
+        """
+        from apps.invoices.segmentation import detect_invoice_boundaries
+        pages_data = [
+            {
+                'page_num': 1,
+                'page_idx': 0,
+                'invoice_number': '418012/31/27/004718',
+                'policy_number': '418012/31/27/004718',
+                'party_gstin': '29AAKCS2509K1ZZ',
+                'party_name': 'SHRIRAM GENERAL INSURANCE COMPANY LIMITED',
+                'has_invoice_header': False,
+                'has_vendor_header': False,
+                'has_total_or_footer': True,
+                'is_page_1': True,
+                'is_continuation': False,
+                'total_amount': Decimal('46697.00'),
+            },
+            {
+                'page_num': 2,
+                'page_idx': 1,
+                'invoice_number': '418012/31/27/004718',
+                'policy_number': '418012/31/27/004718',
+                'party_gstin': '29AAKCS2509K1ZZ',
+                'party_name': 'Shriram General Insurance Co. Ltd.',
+                'has_invoice_header': False,
+                'has_vendor_header': False,
+                'has_total_or_footer': True,
+                'is_page_1': False,
+                'is_continuation': True,
+                'total_amount': Decimal('0.00'),
+            },
+        ]
+        segs = detect_invoice_boundaries(pages_data)
+        self.assertEqual(len(segs), 1)
+        self.assertEqual(segs[0]['start_page'], 1)
+        self.assertEqual(segs[0]['end_page'], 2)
+
+    def test_sender_can_view_and_search_by_invoice_number_or_party_name(self):
+        """
+        Senders should see Party Name and Invoice/Policy Number prominently on
+        employee_dashboard and my_submissions, and search by them without needing BTI ID.
+        """
+        sub = InvoiceSubmission.objects.create(
+            submission_id="BTI-202611-77001",
+            employee=self.employee,
+            party_name="SHRIRAM GENERAL INSURANCE COMPANY LTD",
+            invoice_number="417055/31/27/006296",
+            policy_number="417055/31/27/006296",
+            vehicle_number="KA-06-AC-4970",
+            total_amount=Decimal('51071.00'),
+            status=InvoiceSubmission.STATUS_SUBMITTED,
+        )
+        self.client.login(username=self.employee.username, password=self.password)
+
+        # Dashboard shows party name and supports search
+        dash_resp = self.client.get(reverse('core:employee_dashboard'), {'q': 'SHRIRAM'})
+        self.assertEqual(dash_resp.status_code, 200)
+        self.assertContains(dash_resp, "SHRIRAM GENERAL INSURANCE COMPANY LTD")
+
+        # My Submissions displays party name and supports searching by party_name, invoice_number, and vehicle_number
+        for q_term in ['SHRIRAM', '006296', 'KA-06-AC-4970']:
+            list_resp = self.client.get(reverse('invoices:my_submissions'), {'q': q_term})
+            self.assertEqual(list_resp.status_code, 200)
+            self.assertContains(list_resp, "SHRIRAM GENERAL INSURANCE COMPANY LTD")

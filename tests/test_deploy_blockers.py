@@ -124,7 +124,7 @@ class _FakeAPIError(Exception):
         self.details = details or {}
 
 
-@override_settings(GEMINI_API_KEY='test-key', GEMINI_MODEL='primary-model', GEMINI_FALLBACK_MODELS='',
+@override_settings(GEMINI_API_KEY='test-key', GEMINI_API_KEYS='', GEMINI_MODEL='primary-model', GEMINI_FALLBACK_MODELS='',
                    GEMINI_MAX_ATTEMPTS=3)
 class GeminiRetryTests(TestCase):
     def test_retry_delay_honours_server_hint(self):
@@ -150,7 +150,8 @@ class GeminiRetryTests(TestCase):
             tmp.write(b'\xff\xd8\xff' + b'0' * 400)
             path = tmp.name
         try:
-            with patch.object(gemini_extractor, '_get_gemini_client', return_value=mock_client), \
+            with patch('apps.invoices.gemini_service.get_available_gemini_keys', return_value=['test-key']), \
+                    patch.object(gemini_extractor, '_get_gemini_client', return_value=mock_client), \
                     patch.object(gemini_extractor.time, 'sleep') as mock_sleep:
                 gemini_extractor.extract_with_gemini(path)
         finally:
@@ -168,7 +169,8 @@ class GeminiRetryTests(TestCase):
             tmp.write(b'\xff\xd8\xff' + b'0' * 400)
             path = tmp.name
         try:
-            with patch.object(gemini_extractor, '_get_gemini_client', return_value=mock_client), \
+            with patch('apps.invoices.gemini_service.get_available_gemini_keys', return_value=['test-key']), \
+                    patch.object(gemini_extractor, '_get_gemini_client', return_value=mock_client), \
                     patch.object(gemini_extractor.time, 'sleep') as mock_sleep:
                 result = gemini_extractor.extract_with_gemini(path)
         finally:

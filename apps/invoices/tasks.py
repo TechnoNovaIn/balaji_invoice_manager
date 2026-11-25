@@ -602,7 +602,7 @@ def process_uploaded_document_task(
                             sgst_amount=meta.get('sgst_amount', Decimal('0.00')),
                             igst_amount=meta.get('igst_amount', Decimal('0.00')),
                             total_amount=meta.get('total_amount', Decimal('0.00')),
-                            expense_ledger=backend_val.get('expense_ledger') or meta.get('expense_ledger', 'Purchase Spares & Consumables'),
+                            expense_ledger=meta.get('expense_ledger') if (meta.get('invoice_type') in ('VEHICLE_SERVICE', 'VEHICLE_INSURANCE') and meta.get('expense_ledger') in ('Labour Charges / Vehicle Service', 'Lorry Insurance', 'Vehicle Repairs & Maintenance')) else (backend_val.get('expense_ledger') or meta.get('expense_ledger', 'Purchase Spares & Consumables')),
                             ocr_confidence=min(meta.get('confidence', 0.8), backend_val.get('confidence', 0.8)),
                             is_ambiguous_vendor=backend_val['is_ambiguous_vendor'],
                             requires_manual_review=backend_val['requires_manual_review'] or einv_manual_gate,

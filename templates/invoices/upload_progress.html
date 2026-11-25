@@ -9,18 +9,23 @@
     <div class="card card-enterprise shadow-sm border-top border-4 border-teal mb-4">
         <div class="card-header bg-white p-4 text-center border-bottom">
             <div class="mb-3">
-                <div class="spinner-border text-teal" style="width: 3.5rem; height: 3.5rem;" role="status" id="mainSpinner">
-                    <span class="visually-hidden">Loading...</span>
-                </div>
-                <div class="rounded-circle mx-auto d-none align-items-center justify-content-center bg-teal text-white shadow-sm" id="successIcon" style="width: 64px; height: 64px; font-size: 2.2rem;">
+                <div class="rounded-circle mx-auto d-flex align-items-center justify-content-center bg-success text-white shadow-sm" id="successIcon" style="width: 56px; height: 56px; font-size: 1.9rem;">
                     <i class="bi bi-check-lg"></i>
                 </div>
             </div>
-            <h4 class="fw-bold mb-1" style="color: var(--primary-navy);" id="headerTitle">Processing Your Document</h4>
-            <p class="text-secondary small mb-0" id="fileSubtext">
+            <h4 class="fw-bold mb-1 text-success" id="headerTitle">Invoice Received & Queued!</h4>
+            <p class="text-secondary small mb-3" id="fileSubtext">
                 <i class="bi bi-file-earmark-pdf-fill text-danger me-1"></i>
-                <strong>{{ document.file_name }}</strong> ({{ document.file_size_display }})
+                <strong>{{ document.file_name }}</strong> ({{ document.file_size_display }}) &mdash; You don't need to wait on this screen.
             </p>
+            <div class="d-flex justify-content-center gap-2 flex-wrap">
+                <a href="{% url 'invoices:upload' %}" class="btn btn-teal px-4 fw-semibold shadow-sm">
+                    <i class="bi bi-plus-circle me-1"></i>Upload Next Invoice
+                </a>
+                <a href="{% url 'invoices:my_submissions' %}" class="btn btn-outline-secondary px-3">
+                    <i class="bi bi-folder2-open me-1"></i>My Submissions
+                </a>
+            </div>
         </div>
 
         <div class="card-body p-4">
@@ -104,7 +109,6 @@ document.addEventListener('DOMContentLoaded', function() {
     const statPagesProcessed = document.getElementById('statPagesProcessed');
     const statInvoicesDetected = document.getElementById('statInvoicesDetected');
     const headerTitle = document.getElementById('headerTitle');
-    const mainSpinner = document.getElementById('mainSpinner');
     const successIcon = document.getElementById('successIcon');
 
     let pollInterval = setInterval(pollStatus, 1500);
@@ -146,9 +150,6 @@ document.addEventListener('DOMContentLoaded', function() {
                     progressPercentText.textContent = '100%';
                     headerTitle.textContent = 'Processing Completed!';
                     headerTitle.classList.add('text-success');
-                    mainSpinner.classList.add('d-none');
-                    successIcon.classList.remove('d-none');
-                    successIcon.classList.add('d-flex');
 
                     // Automatically transition to success receipt
                     if (data.redirect_url) {

@@ -451,6 +451,9 @@ def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
             # Pass 2: Standalone invoice voucher format (e.g. F26-27/225 or 2026-27/001 or B-4091)
             if not result['invoice_number']:
                 for line_str in lines:
+                    # Never treat a calendar date (DD/MM/YYYY or DD-MM-YYYY) as an invoice number
+                    if re.match(r'^\d{1,2}[-\/]\d{1,2}[-\/](?:19|20)\d{2}$', line_str.strip()):
+                        continue
                     m_standalone = re.match(
                         r'^([A-Za-z]{1,4}[0-9]{2}[-\/][0-9]{2,4}[-\/]?[0-9]{1,6}|[0-9]{2,4}[-\/][0-9]{2,4}[-\/][0-9]{1,6})$',
                         line_str
@@ -625,19 +628,23 @@ def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
                 pass
 
         # --- C. Invoice Date Extraction ---
-        date_match = re.search(
-            r'(?:Date|Dated|Dt)?[:.\s]*(\d{1,2}[-\/.]\d{1,2}[-\/.](?:20)?\d{2})',
-            raw_text,
-            re.IGNORECASE
-        )
-        if date_match:
-            date_str = date_match.group(1).replace('/', '-').replace('.', '-')
-            for fmt in ('%d-%m-%Y', '%d-%m-%y', '%Y-%m-%d', '%m-%d-%Y'):
-                try:
-                    result['invoice_date'] = datetime.strptime(date_str, fmt).date()
+        date_patterns = [
+            r'\b(\d{1,2}[\s\-\/.](?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\s\-\/.](?:20)?\d{2})\b',
+            r'\b((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\s\-\/.]\d{1,2}[\s\-\/.,]+(?:20)?\d{2})\b',
+            r'(?:Invoice\s*Date|Bill\s*Date|Date|Dated|Dt)?[:.\s]*(\d{1,2}[-\/.]\d{1,2}[-\/.](?:20)?\d{2})',
+        ]
+        for p in date_patterns:
+            date_match = re.search(p, raw_text, re.IGNORECASE)
+            if date_match:
+                date_str = date_match.group(1).replace('/', '-').replace('.', '-').strip()
+                for fmt in ('%d %b %Y', '%d-%b-%Y', '%d %B %Y', '%d-%B-%Y', '%b %d, %Y', '%b %d %Y', '%d-%m-%Y', '%d-%m-%y', '%Y-%m-%d', '%m-%d-%Y'):
+                    try:
+                        result['invoice_date'] = datetime.strptime(date_str, fmt).date()
+                        break
+                    except ValueError:
+                        continue
+                if result['invoice_date']:
                     break
-                except ValueError:
-                    continue
 
         if result['invoice_date'] and (result['invoice_date'].year < 2020 or result['invoice_date'].year > 2030):
             result['invoice_date'] = None
@@ -743,7 +750,20 @@ def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
         words_amount = None
         raw_words = ""
         for i, l in enumerate(lines):
-            if re.search(r'\b(?:Rupees|INR|Rs)\b.*?\bwords\b', l, re.I):
+            # Matches: "Amount in words: One Thousand...", "Rupees in words...", "Total in words...", "Amount Chargeable (in words)..."
+            m_w = re.search(r'\b(?:AMOUNT\s*(?:CHARGEABLE\s*)?IN\s*WORDS|RUPEES\s*IN\s*WORDS|TOTAL\s*IN\s*WORDS|IN\s*WORDS)\b[:.\s]*(.+)', l, re.I)
+            if m_w:
+                after_words = m_w.group(1).strip()
+                if after_words and len(re.findall(r'[a-zA-Z]+', after_words)) >= 2:
+                    raw_words = after_words
+                else:
+                    cand_words = []
+                    for j in range(i + 1, min(i + 3, len(lines))):
+                        if not re.search(r'\b(?:Goods|Conditions|Signature|Bank|A\/c|Total|1\.|2\.)\b', lines[j], re.I):
+                            cand_words.append(lines[j])
+                    raw_words = ' '.join(cand_words)
+                break
+            elif re.search(r'\b(?:Rupees|INR|Rs)\b.*?\bwords\b', l, re.I):
                 after_words = re.sub(r'.*?\bwords[:.\s]*', '', l, flags=re.I).strip()
                 if after_words and len(re.findall(r'[a-zA-Z]+', after_words)) >= 2:
                     raw_words = after_words
@@ -756,9 +776,17 @@ def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
                 break
 
         if not raw_words:
-            words_match = re.search(r'(?:INR|Rupees|Rs\.?)\s*([A-Za-z\s]+?)\s*(?:Only|\.)', raw_text, re.I)
-            if words_match:
-                raw_words = words_match.group(1)
+            # Look for words preceded by Grand Total, Total, etc.
+            m_gt_w = re.search(r'\b(?:Grand\s*Total|Total\s*(?:Amount|Value)?|Amount\s*(?:Chargeable)?)\s*[:.-]?\s*([A-Za-z\s]+?)\s*(?:Only|\.)', raw_text, re.I)
+            if m_gt_w and not re.search(r'\b(?:Tax|GST)\b', m_gt_w.group(0), re.I):
+                raw_words = m_gt_w.group(1)
+            else:
+                words_match = re.search(r'(?:INR|Rupees|Rs\.?)\s*([A-Za-z\s]+?)\s*(?:Only|\.)', raw_text, re.I)
+                if words_match:
+                    cand_w = words_match.group(1).strip()
+                    # If it only contains paise (e.g. "eight paise"), it's not the main rupee amount
+                    if not re.search(r'^\s*(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|fifty|paise|\s)+\s*paise\b', cand_w, re.I):
+                        raw_words = cand_w
 
         if raw_words:
             spaced = re.sub(r'([A-Z]+)([A-Z][a-z])', r'\1 \2', raw_words)
@@ -794,21 +822,58 @@ def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
             if has_word_tokens and tot > 0:
                 words_amount = Decimal(str(tot))
 
+        _EXCLUDED_TAX_RATES = {'2.5', '2.50', '5', '5.0', '5.00', '6', '6.0', '6.00', '9', '9.0', '9.00', '12', '12.0', '12.00', '14', '14.0', '14.00', '18', '18.0', '18.00', '28', '28.0', '28.00', '2017', '2017.00'}
+
+        # 1b. Statutory Tax Summary Table Detection (e.g. Rate Taxable Value CGST Amt SGST Amt IGST Amt, Tax % Taxable Amount CGST SGST)
+        for i, line in enumerate(lines):
+            if re.search(r'\b(?:Taxable\s*Value|Taxable\s*Amount)\b', line, re.I) and re.search(r'\b(?:CGST|SGST|IGST)\b', line, re.I):
+                if i + 1 < len(lines):
+                    cand = lines[i + 1]
+                    nums = re.findall(r'([0-9]{1,3}(?:,[0-9]{2,3})*(?:\.[0-9]{2})|[0-9]{2,}\.[0-9]{2})', cand)
+                    if nums:
+                        # If first number is tax rate % (e.g. 9.00, 18.00), shift by 1
+                        if nums[0] in _EXCLUDED_TAX_RATES and len(nums) >= 4:
+                            d_taxable = parse_amt_str(nums[1])
+                            d_cgst = parse_amt_str(nums[2])
+                            d_sgst = parse_amt_str(nums[3])
+                            d_igst = parse_amt_str(nums[4]) if len(nums) >= 5 else Decimal('0.00')
+                        elif len(nums) >= 3:
+                            d_taxable = parse_amt_str(nums[0])
+                            d_cgst = parse_amt_str(nums[1])
+                            d_sgst = parse_amt_str(nums[2])
+                            d_igst = parse_amt_str(nums[3]) if len(nums) >= 4 else Decimal('0.00')
+                        else:
+                            d_taxable = Decimal('0.00')
+
+                        if d_taxable > Decimal('10.00'):
+                            taxable_val = d_taxable
+                            cgst_val = d_cgst
+                            sgst_val = d_sgst
+                            igst_val = d_igst
+                            break
+
         # 2. Extract CGST amount
         for i, line in enumerate(lines):
+            if cgst_val > 0:
+                break
+            if re.search(r'\b(?:Item|Description|Particulars|HSN|SAC|Qty|Quantity|Rate|Discount|Unit|Nos)\b', line, re.I):
+                continue
             if re.search(r'(?:CGST|C\.?GST|COST)', line, re.I):
-                for off in [0, 1, -1]:
+                for off in [0, 1, 2, -1]:
                     idx = i + off
                     if 0 <= idx < len(lines):
-                        if re.search(r'(?:A\/c|Account|IFSC|Bank|Mob|Phone|Branch|Value\s*of\s*Supply|Supply|Freight|Less)', lines[idx], re.I):
+                        cand = lines[idx]
+                        if re.search(r'(?:A\/c|Account|IFSC|Bank|Mob|Phone|Branch|Value\s*of\s*Supply|Supply|Freight|Less|Rule|Rules|Act|Section)', cand, re.I):
                             continue
-                        m = re.search(r'([0-9]+(?:[.,-][0-9]+)+|[0-9]{4,6})', lines[idx])
-                        if m and m.group(1) not in ['9', '14', '18']:
-                            val_raw = m.group(1).replace('-', '.')
-                            if '.' not in val_raw and len(val_raw) >= 4:
-                                val_raw = val_raw[:-2] + '.' + val_raw[-2:]
-                            d = parse_amt_str(val_raw)
-                            if d and d > 0:
+                        if off != 0 and re.search(r'(?:%|Rate|Taxable|Sub\s*Total|SubTotal)', cand, re.I):
+                            continue
+                        amt_str = _last_amount(cand) if off == 0 else None
+                        if not amt_str:
+                            m = re.search(r'([0-9]{1,3}(?:,[0-9]{2,3})*(?:\.[0-9]{2})|[0-9]{2,}\.[0-9]{2})', cand)
+                            amt_str = m.group(1) if m else None
+                        if amt_str and amt_str not in _EXCLUDED_TAX_RATES:
+                            d = parse_amt_str(amt_str)
+                            if d and d > Decimal('0.00'):
                                 cgst_val = d
                                 break
                 if cgst_val > 0:
@@ -816,19 +881,26 @@ def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
 
         # 3. Extract SGST amount
         for i, line in enumerate(lines):
+            if sgst_val > 0:
+                break
+            if re.search(r'\b(?:Item|Description|Particulars|HSN|SAC|Qty|Quantity|Rate|Discount|Unit|Nos)\b', line, re.I):
+                continue
             if re.search(r'(?:SGST|S\.?GST|UTGST)', line, re.I):
-                for off in [0, 1, -1]:
+                for off in [0, 1, 2, -1]:
                     idx = i + off
                     if 0 <= idx < len(lines):
-                        if re.search(r'(?:A\/c|Account|IFSC|Bank|Mob|Phone|Branch|Value\s*of\s*Supply|Supply|Freight|Less)', lines[idx], re.I):
+                        cand = lines[idx]
+                        if re.search(r'(?:A\/c|Account|IFSC|Bank|Mob|Phone|Branch|Value\s*of\s*Supply|Supply|Freight|Less|Rule|Rules|Act|Section)', cand, re.I):
                             continue
-                        m = re.search(r'([0-9]+(?:[.,-][0-9]+)+|[0-9]{4,6})', lines[idx])
-                        if m and m.group(1) not in ['9', '14', '18']:
-                            val_raw = m.group(1).replace('-', '.')
-                            if '.' not in val_raw and len(val_raw) >= 4:
-                                val_raw = val_raw[:-2] + '.' + val_raw[-2:]
-                            d = parse_amt_str(val_raw)
-                            if d and d > 0:
+                        if off != 0 and re.search(r'(?:%|Rate|Taxable|Sub\s*Total|SubTotal)', cand, re.I):
+                            continue
+                        amt_str = _last_amount(cand) if off == 0 else None
+                        if not amt_str:
+                            m = re.search(r'([0-9]{1,3}(?:,[0-9]{2,3})*(?:\.[0-9]{2})|[0-9]{2,}\.[0-9]{2})', cand)
+                            amt_str = m.group(1) if m else None
+                        if amt_str and amt_str not in _EXCLUDED_TAX_RATES:
+                            d = parse_amt_str(amt_str)
+                            if d and d > Decimal('0.00'):
                                 sgst_val = d
                                 break
                 if sgst_val > 0:
@@ -838,36 +910,46 @@ def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
         is_interstate = bool(result.get('party_gstin') and not result['party_gstin'].startswith('29'))
         if is_interstate or (cgst_val == 0 and sgst_val == 0):
             for i, line in enumerate(lines):
+                if re.search(r'\b(?:Item|Description|Particulars|HSN|SAC|Qty|Quantity|Rate|Discount|Unit|Nos)\b', line, re.I):
+                    continue
                 if re.search(r'(?:IGST|I\.?GST|Integrated\s*Tax)', line, re.I):
-                    for off in range(1, 10):
+                    for off in [0, 1, 2, 3, 4, 5, -1]:
                         idx = i + off
-                        if idx < len(lines):
+                        if 0 <= idx < len(lines):
                             cand_l = lines[idx]
                             if not re.search(r'\b(?:G\.?TOTAL|Grand\s*Total|Account|IFSC|Mob)\b', cand_l, re.I):
-                                m = re.search(r'([0-9]+(?:[.,-][0-9]{2})+)', cand_l)
-                                if m and m.group(1) not in ['18.00', '12.00', '5.00', '28.00']:
-                                    d = parse_amt_str(m.group(1))
-                                    if d and d > 0 and (gtotal_val == 0 or d < gtotal_val):
-                                        igst_val = d
-                                        break
+                                amt_str = _last_amount(cand_l) if off == 0 else None
+                                if not amt_str:
+                                    m = re.search(r'([0-9]{1,3}(?:,[0-9]{2,3})*(?:\.[0-9]{2})|[0-9]{2,}\.[0-9]{2})', cand_l)
+                                    amt_str = m.group(1) if m else None
+                                if amt_str:
+                                    d = parse_amt_str(amt_str)
+                                    if d and d not in [Decimal('18.00'), Decimal('12.00'), Decimal('5.00'), Decimal('28.00')] and d > Decimal('0.00'):
+                                        if gtotal_val == 0 or d < gtotal_val:
+                                            igst_val = d
+                                            break
                     if igst_val > 0:
                         break
 
         # 5. Extract Grand Total (G.TOTAL / Net Amount / Total Invoice Value)
         for i, line in enumerate(lines):
             if re.search(r'\b(?:G\.?TOTAL|Grand\s*Total|Net\s*Amount|Net\s*Payable|Total\s*Payable|Invoice\s*Total|Bill\s*Amount|(?:Total\s*)?Invoice\s*(?:Value|Amount)|Amount\s*Payable)\b', line, re.I):
-                for off in [0, -1, 1, -2, -3, 2]:
+                # Check same line, next line (+1), +2 lines, THEN previous line (-1)
+                for off in [0, 1, 2, 3, -1]:
                     idx = i + off
                     if 0 <= idx < len(lines):
                         cand_l = lines[idx]
+                        if off != 0 and re.search(r'\b(?:ROUND\s*OFF|ROUNDOFF|DISC|DISCOUNT|DIFF|PAISE)\b', cand_l, re.I):
+                            continue
                         if off == 0:
                             raw_amt = _last_amount(cand_l)
                         else:
-                            m = re.search(r'([0-9]+(?:[.,][0-9]+)+)', cand_l)
+                            m = re.search(r'([0-9]{1,3}(?:,[0-9]{2,3})*(?:\.[0-9]{2})|[0-9]{2,}\.[0-9]{2}|[0-9]{3,})', cand_l)
                             raw_amt = m.group(1) if m else None
                         if raw_amt:
                             d = parse_amt_str(raw_amt)
-                            if d and d > 0:
+                            # Commercial transport grand total is at least ₹1.00; small decimals (<1.00) are roundoffs
+                            if d and d >= Decimal('1.00'):
                                 gtotal_val = d
                                 break
                 if gtotal_val > 0:
@@ -875,11 +957,13 @@ def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
 
         # Words amount cross-validation
         if words_amount:
-            if gtotal_val == 0 or abs(gtotal_val - words_amount) > 1000:
-                # Check leading '7' Rupee symbol OCR artifact
-                if gtotal_val > 0 and str(int(gtotal_val)).startswith('7') and str(int(gtotal_val))[1:] == str(int(words_amount)):
+            if gtotal_val == 0:
+                gtotal_val = words_amount
+            elif abs(gtotal_val - words_amount) > 1000:
+                # Check leading '7' Rupee symbol OCR artifact (e.g. ₹1500 scanned as 71500)
+                if str(int(gtotal_val)).startswith('7') and str(int(gtotal_val))[1:] == str(int(words_amount)):
                     gtotal_val = Decimal(str(gtotal_val)[1:])
-                else:
+                elif words_amount >= Decimal('100.00') and (taxable_val == Decimal('0.00') or abs(words_amount - (taxable_val + cgst_val + sgst_val + igst_val)) <= Decimal('5.00')):
                     gtotal_val = words_amount
 
         # Line item table summation cross-validation
@@ -915,29 +999,30 @@ def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
                 gtotal_val = table_sum
 
         # 6. Extract Taxable Base
-        for i, line in enumerate(lines):
-            # Check same line first: e.g. "Taxable Amount: 5796.00"
-            m_same = re.search(r'\b(?:Taxable\s*Amount|Taxable\s*Value|Taxable)\s*[:.-]?\s*₹?\s*([0-9,]+(?:\.[0-9]+)?)', line, re.I)
-            if m_same:
-                d = parse_amt_str(m_same.group(1))
-                if d and d > 0 and (gtotal_val == 0 or d < gtotal_val):
-                    taxable_val = d
-                    break
+        if taxable_val == Decimal('0.00'):
+            for i, line in enumerate(lines):
+                # Check same line first: e.g. "Sub Total 3,70,500.00", "Taxable Amount: 5796.00"
+                m_same = re.search(r'\b(?:Sub\s*Total|SubTotal|Total\s*Before\s*Tax|Taxable\s*Amount|Taxable\s*Value|Taxable)\s*[:.-]?\s*₹?\s*([0-9,]+(?:\.[0-9]+)?)', line, re.I)
+                if m_same:
+                    d = parse_amt_str(m_same.group(1))
+                    if d and d >= Decimal('10.00') and (gtotal_val == 0 or d < gtotal_val):
+                        taxable_val = d
+                        break
 
-            if re.search(r'\b(?:Taxable\s*Amount|Taxable\s*Value|Taxable)\b', line, re.I) or re.match(r'^Total$', line.strip(), re.I):
-                for off in [1, 2, -1, 3]:
-                    idx = i + off
-                    if 0 <= idx < len(lines):
-                        cand_l = lines[idx]
-                        if not re.search(r'(?:G\.?TOTAL|Grand\s*Total|GST|Tax|CGST|SGST|Round|Date|Dated|Phone|Mobile)', cand_l, re.I):
-                            m = re.search(r'([0-9]+(?:[.,][0-9]+)+|[0-9]{3,7})', cand_l)
-                            if m and m.group(1) not in ['9', '18', '29', '33']:
-                                d = parse_amt_str(m.group(1))
-                                if d and d > 0 and (gtotal_val == 0 or d < gtotal_val):
-                                    taxable_val = d
-                                    break
-                if taxable_val > 0:
-                    break
+                if re.search(r'\b(?:Sub\s*Total|SubTotal|Total\s*Before\s*Tax|Taxable\s*Amount|Taxable\s*Value|Taxable)\b', line, re.I):
+                    for off in [1, 2, 3, 4, -1]:
+                        idx = i + off
+                        if 0 <= idx < len(lines):
+                            cand_l = lines[idx]
+                            if not re.search(r'(?:G\.?TOTAL|Grand\s*Total|GST|Tax|CGST|SGST|Round|Date|Dated|Phone|Mobile|%|Vehicle|Veh|Reg|Regn|Chassis|Bank|Account|IFSC)', cand_l, re.I):
+                                m = re.search(r'([0-9]{1,3}(?:,[0-9]{2,3})*(?:\.[0-9]{2})|[0-9]{2,}\.[0-9]{2}|[0-9]{3,})', cand_l)
+                                if m and m.group(1) not in ['5', '5.00', '9', '9.00', '12', '12.00', '14', '14.00', '18', '18.00', '28', '28.00', '29', '33']:
+                                    d = parse_amt_str(m.group(1))
+                                    if d and d >= Decimal('10.00') and (gtotal_val == 0 or d < gtotal_val):
+                                        taxable_val = d
+                                        break
+                    if taxable_val > 0:
+                        break
 
         # 7. Fallback search for numeric total candidates if gtotal not found
         if gtotal_val == 0:
@@ -949,7 +1034,7 @@ def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
             )
             for raw_num in same_line_matches:
                 d = parse_amt_str(raw_num)
-                if d and d > 0:
+                if d and d >= Decimal('1.00'):
                     numeric_candidates.append(d)
 
             for i, line in enumerate(lines):
@@ -957,21 +1042,24 @@ def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
                     same_line_amt = _last_amount(line)
                     if same_line_amt:
                         d = parse_amt_str(same_line_amt)
-                        if d and d > 0:
+                        if d and d >= Decimal('1.00'):
                             numeric_candidates.append(d)
                             continue
-                    for offset in [1, -1, 2, -2]:
+                    for offset in [1, 2, -1, -2]:
                         idx = i + offset
                         if 0 <= idx < len(lines):
-                            num_matches = re.findall(r'([0-9]+(?:[.,][0-9]+)+)', lines[idx])
+                            cand_line = lines[idx]
+                            if re.search(r'\b(?:ROUND\s*OFF|ROUNDOFF|DISC|PAISE|CGST|SGST|IGST|UTGST)\b', cand_line, re.I):
+                                continue
+                            num_matches = re.findall(r'([0-9]{1,3}(?:,[0-9]{2,3})*(?:\.[0-9]{2})|[0-9]{2,}\.[0-9]{2}|[0-9]{3,})', cand_line)
                             for raw_num in num_matches:
                                 d = parse_amt_str(raw_num)
-                                if d and d > 0:
+                                if d and d >= Decimal('1.00'):
                                     numeric_candidates.append(d)
 
             if numeric_candidates:
-                decimal_cands = [n for n in numeric_candidates if (n % 1) != 0]
-                gtotal_val = decimal_cands[0] if decimal_cands else numeric_candidates[0]
+                # Prefer largest candidate (grand total is upper bound of line items & taxes)
+                gtotal_val = max(numeric_candidates)
 
         # 8. Statutory GST Rules & Parity Normalization
         if not is_interstate:
@@ -986,9 +1074,22 @@ def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
             cgst_val = Decimal('0.00')
             sgst_val = Decimal('0.00')
 
+        # If grand total is below taxable value and taxes exist, check if a tax line was picked up as total
+        tax_sum_pre = cgst_val + sgst_val + igst_val
+        if taxable_val > 0 and tax_sum_pre > 0 and gtotal_val < taxable_val:
+            if gtotal_val == cgst_val or gtotal_val == sgst_val or gtotal_val == igst_val or gtotal_val == tax_sum_pre:
+                gtotal_val = (taxable_val + tax_sum_pre).quantize(Decimal('0.01'))
+
         # Anti-Inversion: Taxable cannot be strictly greater than Grand Total
         if taxable_val > gtotal_val and gtotal_val > Decimal('0.00'):
             taxable_val, gtotal_val = gtotal_val, taxable_val
+
+        # Tax sanity check: CGST or SGST cannot exceed 25% of taxable base (max statutory CGST is 14%)
+        if taxable_val > Decimal('0.00'):
+            if cgst_val >= (taxable_val * Decimal('0.25')) or cgst_val >= gtotal_val:
+                cgst_val = Decimal('0.00')
+            if sgst_val >= (taxable_val * Decimal('0.25')) or sgst_val >= gtotal_val:
+                sgst_val = Decimal('0.00')
 
         # 9. GST Mathematical Reconciliation
         tax_sum = cgst_val + sgst_val + igst_val
@@ -1023,23 +1124,26 @@ def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
         result['total_amount'] = gtotal_val
 
         # --- E. Vehicle & Insurance Patterns Extraction ---
-        # 1. Vehicle Number extraction (e.g. KA-01-AB-1234, NL01AD1234, MH12CD5678)
-        veh_pattern = r'\b([A-Z]{2}[-\s]?[0-9]{1,2}[-\s]?[A-Z]{1,3}[-\s]?[0-9]{4})\b'
-        for line in lines:
-            if re.search(r'(?:Vehicle|Veh|Reg|Regn|Lorry|Truck|Car)\b', line, re.I):
-                m_veh = re.search(veh_pattern, line, re.I)
+        # 1. Vehicle Number extraction (e.g. KA-01-AB-1234, KA - 19 - AB - 2209, KA06AB1686, NL01AD1234)
+        veh_pattern = r'\b([A-Z]{2}[-\s]{0,12}[0-9]{1,2}[-\s]{0,12}[A-Z]{1,3}[-\s]{0,12}[0-9]{4})\b'
+        for i, line in enumerate(lines):
+            if re.search(r'\b(?:Vehicle|Veh|Reg|Regn|Registration|Registrati|Lorry|Truck|Car|Motor)\b', line, re.I):
+                # Check joined window of nearby lines (handles wrapped plates and stacked table headers)
+                window_text = ' '.join(lines[max(0, i - 1):min(len(lines), i + 10)])
+                m_veh = re.search(veh_pattern, window_text, re.I)
                 if m_veh:
-                    result['vehicle_number'] = re.sub(r'\s+', '-', m_veh.group(1)).upper()
+                    result['vehicle_number'] = re.sub(r'[-\s]+', '-', m_veh.group(1)).upper()
                     break
         if not result['vehicle_number']:
             m_any_veh = re.search(veh_pattern, raw_text, re.I)
             if m_any_veh:
-                clean_v = re.sub(r'\s+', '-', m_any_veh.group(1)).upper()
-                if not result['party_gstin'].startswith(clean_v.replace('-', '')[:10]):
+                clean_v = re.sub(r'[-\s]+', '-', m_any_veh.group(1)).upper()
+                v_compact = clean_v.replace('-', '')
+                if not (v_compact in result.get('party_gstin', '') or v_compact in result.get('invoice_number', '')):
                     result['vehicle_number'] = clean_v
 
         # 2. Insurance Policy Number extraction
-        m_pol = re.search(r'\b(?:Policy|Cover\s*Note|Certificate)\s*(?:No|Number|#)[\s.:]+([A-Z0-9\/-]{6,35})\b', raw_text, re.I)
+        m_pol = re.search(r'\b(?:Policy|Cover\s*Note|Certificate)\s*(?:\/Certificate)?\s*(?:No|Number|#)[\s.:]+([A-Z0-9\/-]{6,35})\b', raw_text, re.I)
         if m_pol:
             pol_clean = m_pol.group(1).strip()
             result['policy_number'] = pol_clean
@@ -1063,7 +1167,10 @@ def extract_metadata_from_text(raw_text: str) -> Dict[str, Any]:
                 result['invoice_type'] = 'VEHICLE_SERVICE'
                 if result['expense_ledger'] == 'Purchase Spares & Consumables':
                     result['expense_ledger'] = 'Labour Charges / Vehicle Service'
-        elif result['invoice_type'] != 'VEHICLE_INSURANCE' and re.search(r'\b(?:Garage|Workshop|Service\s*Station|Mechanic|Job\s*Card|Auto\s*Works)\b', raw_text, re.I):
+        elif result['invoice_type'] != 'VEHICLE_INSURANCE' and (
+            re.search(r'\b(?:Garage|Workshop|Service\s*Station|Mechanic|Job\s*Card|Auto\s*Works|TVS\b|Automobiles)\b', raw_text, re.I)
+            or (result.get('vehicle_number') and re.search(r'\b(?:Repair|Fitting|Spare|Oil|Filter|Wheel|Alignment|Grease|Brake|Clutch)\b', raw_text, re.I))
+        ):
             result['invoice_type'] = 'VEHICLE_SERVICE'
             if result['expense_ledger'] == 'Purchase Spares & Consumables':
                 result['expense_ledger'] = 'Labour Charges / Vehicle Service'

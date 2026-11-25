@@ -48,8 +48,21 @@ def employee_dashboard(request):
     Submitter Dashboard (External Submitters and Field Employees).
     Strictly isolated to request.user's own invoice submissions.
     """
+    from django.db.models import Q
+    query = request.GET.get('q', '').strip()
     user_submissions = InvoiceSubmission.objects.filter(employee=request.user)
-    recent_submissions = user_submissions.prefetch_related('documents').order_by('-created_at')[:10]
+    filtered_submissions = user_submissions
+    if query:
+        filtered_submissions = user_submissions.filter(
+            Q(submission_id__icontains=query) |
+            Q(invoice_number__icontains=query) |
+            Q(policy_number__icontains=query) |
+            Q(party_name__icontains=query) |
+            Q(vehicle_number__icontains=query) |
+            Q(remarks__icontains=query) |
+            Q(source_document__file_name__icontains=query)
+        )
+    recent_submissions = filtered_submissions.select_related('source_document').prefetch_related('documents').order_by('-created_at')[:15]
     total_count = user_submissions.count()
     pending_count = user_submissions.filter(
         status__in=[InvoiceSubmission.STATUS_SUBMITTED, InvoiceSubmission.STATUS_RESUBMITTED]
@@ -69,6 +82,7 @@ def employee_dashboard(request):
         'page_title': portal_title,
         'recent_submissions': recent_submissions,
         'recent_uploads': recent_uploads,
+        'query': query,
         'ocr_max_retries': ocr_max_retries,
         'total_count': total_count,
         'pending_count': pending_count,

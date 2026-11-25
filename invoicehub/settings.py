@@ -19,8 +19,15 @@ sys.path.insert(0, str(BASE_DIR / 'apps'))
 # Load environment variables from .env
 load_dotenv(BASE_DIR / '.env', override=True)
 
-# Force modern httpx2 client for google-genai 3.0.0 (prevents legacy httpx missing transport error)
-os.environ['GOOGLE_GENAI_HTTP_CLIENT'] = 'httpx2'
+# Safe HTTP client configuration for google-genai 3.0.0
+# Only retain GOOGLE_GENAI_HTTP_CLIENT if the corresponding library is actually installed
+_client_backend = os.environ.get('GOOGLE_GENAI_HTTP_CLIENT', '').strip()
+if _client_backend:
+    try:
+        __import__(_client_backend)
+    except ImportError:
+        # Invalid / missing client specified in environment, clear it to allow google-genai auto-detect
+        os.environ.pop('GOOGLE_GENAI_HTTP_CLIENT', None)
 
 DEBUG = os.getenv('DJANGO_DEBUG', 'False').lower() in ('true', '1', 't')
 

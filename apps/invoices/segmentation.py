@@ -82,6 +82,7 @@ def analyze_pdf_page(page, page_num: int, ocr_engine=None, timer=None) -> Dict[s
         'ocr_boxes': details.get('boxes', []),
         'is_upside_down': details.get('is_upside_down', False),
         'invoice_number': meta.get('invoice_number', ''),
+        'policy_number': meta.get('policy_number', ''),
         'party_name': meta.get('party_name', ''),
         'party_gstin': meta.get('party_gstin', ''),
         'has_invoice_header': False,
@@ -100,7 +101,7 @@ def analyze_pdf_page(page, page_num: int, ocr_engine=None, timer=None) -> Dict[s
     # 1. Page Number Indicators ("Page 1 of 2", "Page 2 of 2", "Sheet 1", "Contd...")
     if re.search(r'\b(?:page|sheet|pg)\.?\s*([2-9]|\d{2,})\s*(?:of|\/)\s*([2-9]|\d{2,})', text, re.I):
         data['is_continuation'] = True
-    elif re.search(r'\b(?:continued\s+on\s+next\s+page|contd\.?|continued\s+from\s+page|carried\s+over|brought\s+forward)\b', text, re.I):
+    elif re.search(r'\b(?:continued\s+on\s+next\s+page|contd\.?|continued\s+from\s+page|carried\s+over|brought\s+forward|attached\s+to\s+and\s+forming\s+part\s+of\s+policy)\b', text, re.I):
         data['is_continuation'] = True
 
     # Explicit page 1 markers
@@ -178,14 +179,23 @@ def detect_invoice_boundaries(pages_data: List[Dict[str, Any]]) -> List[Dict[str
 
         # Aggregate evidence from current segment so far
         seg_inv_numbers = {p['invoice_number'] for p in current_segment_pages if p['invoice_number']}
+        seg_policies = {p.get('policy_number') for p in current_segment_pages if p.get('policy_number')}
         seg_gstins = {p['party_gstin'] for p in current_segment_pages if p['party_gstin']}
         seg_vendors = {p['party_name'] for p in current_segment_pages if p['party_name']}
         seg_has_total = any(p['has_total_or_footer'] for p in current_segment_pages)
 
         is_new_invoice = False
 
+        # --- Rule 0: Same Policy Number or Explicit Continuation with same GSTIN stays together ---
+        curr_pol = curr.get('policy_number')
+        same_policy = bool(curr_pol and seg_policies and curr_pol in seg_policies)
+        same_gstin = bool(curr['party_gstin'] and seg_gstins and curr['party_gstin'] in seg_gstins)
+
+        if same_policy or (curr['is_continuation'] and (same_gstin or not curr['invoice_number'] or curr['invoice_number'] in seg_inv_numbers)):
+            is_new_invoice = False
+
         # --- Rule 1: Explicit Invoice Number Mismatch ---
-        if curr['invoice_number'] and seg_inv_numbers and curr['invoice_number'] not in seg_inv_numbers:
+        elif curr['invoice_number'] and seg_inv_numbers and curr['invoice_number'] not in seg_inv_numbers:
             is_new_invoice = True
 
         # --- Rule 2: Explicit Supplier GSTIN Mismatch ---

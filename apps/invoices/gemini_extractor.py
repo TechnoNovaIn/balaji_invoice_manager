@@ -22,8 +22,13 @@ from pydantic import BaseModel, Field
 from .vendor_validator import validate_vendor_and_financials, is_valid_gstin, clean_gstin
 from .e_invoice_utils import evaluate_e_invoice_status, extract_qr_e_invoice_data
 
-# Force modern httpx2 client for google-genai 3.0.0
-os.environ['GOOGLE_GENAI_HTTP_CLIENT'] = 'httpx2'
+# Clean up any invalid GOOGLE_GENAI_HTTP_CLIENT configuration
+_client_backend = os.environ.get('GOOGLE_GENAI_HTTP_CLIENT', '').strip()
+if _client_backend:
+    try:
+        __import__(_client_backend)
+    except ImportError:
+        os.environ.pop('GOOGLE_GENAI_HTTP_CLIENT', None)
 
 logger = logging.getLogger(__name__)
 
@@ -279,16 +284,16 @@ CRITICAL RULES:
       * Set `expense_ledger` to "Lorry Insurance".
       * Extract `policy_number` from fields labeled 'Policy No.', 'Policy Number', 'Certificate No.', 'Cover Note No.'.
       * If a separate Tax Invoice / Receipt No is printed, extract that into `invoice_number`; if no separate invoice number is printed, duplicate the Policy Number into `invoice_number`.
-      * Extract `vehicle_number` from 'Vehicle No.', 'Registration No.', 'Regn. No.', 'Lorry No.'.
-      * CRITICAL FOR INSURANCE: Do NOT extract IDV (Insured Declared Value, e.g. ₹15,00,000) as the bill amount!
+      * Extract `vehicle_number` from 'Vehicle No.', 'Registration No.', 'Registration Mark', 'Registration Mark & Place', 'Regn. No.', 'Lorry No.' (join wrapped parts like 'KA - 19 - AB - 2209' into 'KA-19-AB-2209').
+      * CRITICAL FOR INSURANCE: Do NOT extract IDV (Insured Declared Value, e.g. ₹15,00,000) or Sum Insured as the bill amount!
         - `total_amount` is the Total Premium / Gross Premium Payable (typically ₹5,000 to ₹90,000).
         - `taxable_amount` is the Net Premium before GST.
 
 11. VEHICLE SERVICE & GARAGE INVOICES:
-    - If this document is a vehicle service bill, workshop job card/invoice, garage cash memo, or mechanic repair voucher (e.g. Tata Motors, Ashok Leyland, BharatBenz, tyre retreading, local garage/mechanic, body building, lathe work):
+    - If this document is a vehicle service bill, workshop job card/invoice, garage cash memo, or mechanic repair voucher (e.g. Tata Motors, Ashok Leyland, BharatBenz, TVS, tyre retreading, local garage/mechanic, body building, lathe work):
       * Set `invoice_type` to "VEHICLE_SERVICE".
       * Set `expense_ledger` to "Labour Charges / Vehicle Service" (or "Vehicle Repairs & Maintenance").
-      * Extract `vehicle_number` from 'Vehicle No', 'Veh Reg No', 'Reg. No.', 'Lorry No'.
+      * Extract `vehicle_number` from labels like 'REGISTRATION', 'REGISTRATION NO', 'Vehicle No', 'Veh Reg No', 'Reg. No.', 'Lorry No', 'Truck No'.
       * Extract `labour_charges`: sum any charges specifically labeled as Labour, Service Charge, Fitting, Lathe Work, Washing, Greasing, or Alignment.
 
 12. TAX AMOUNTS & GST ANTI-MIXUP RULES:
@@ -298,7 +303,11 @@ CRITICAL RULES:
     - `total_amount`: Grand Total / Net Payable (Taxable + CGST + SGST + IGST + Cess + RoundOff).
     - ANTI-MIXUP RULES:
       * NEVER swap `taxable_amount` with `total_amount`. Total Amount is always greater than or equal to Taxable Amount.
+      * NEVER extract Round off amounts (+/- ₹0.06, ₹0.45) as `total_amount` or `taxable_amount`. Total Amount is the final Grand Total (e.g. ₹1,767.00).
+      * NEVER extract the Tax % rate (e.g. 9.00 or 18.00) as `taxable_amount`. Taxable amount is the full subtotal before tax (e.g. ₹1,497.50).
       * NEVER extract total GST or individual tax line into `taxable_amount`.
+      * For Invoices with Advance / Part Payment / Balance Due (e.g. Intangles, subscriptions, hardware): NEVER extract 'Balance Due' or 'Payment Made / Advance' as `total_amount`. `total_amount` is the full Gross Total / Invoice Value before deducting advance payments (e.g. ₹4,37,190.00). `taxable_amount` is the Sub Total before taxes (e.g. ₹3,70,500.00).
+      * Accurately convert dates with text months (e.g. '17 Jun 2025' or '17 June 2025') into standard 'YYYY-MM-DD' ('2025-06-17').
       * If tax is not itemized or bill is from an unregistered supplier / bill of supply, set `cgst_amount = 0`, `sgst_amount = 0`, `igst_amount = 0`, and `taxable_amount = total_amount`.
 
 Return strictly the structured JSON object.
@@ -404,6 +413,13 @@ def _reconcile_extracted_amounts(
                 warnings.append(f"Auto-aligned inter-state tax to IGST ₹{igst_amt:,.2f}.")
 
     tax_sum = cgst_amt + sgst_amt + igst_amt + cess_amt
+
+    # 1b. Guard against Round-Off mistakenly extracted as Grand Total
+    if Decimal('0.00') < total_amt < Decimal('1.00'):
+        if taxable_amt >= Decimal('1.00'):
+            round_off_amt = total_amt
+            total_amt = (taxable_amt + tax_sum + round_off_amt).quantize(Decimal('0.01'))
+            warnings.append(f"Auto-recovered Grand Total (₹{total_amt:,.2f}) after ₹{round_off_amt} was identified as Round Off.")
 
     # 2. Anti-Inversion Check: Grand Total cannot be strictly less than Taxable Base
     if taxable_amt > total_amt and total_amt > Decimal('0.00'):
@@ -691,20 +707,24 @@ def extract_with_gemini(
 
         amounts, fin_warnings = _reconcile_extracted_amounts(data, party_gstin=raw_party_gstin)
 
-        # Date parsing
-        parsed_invoice_date = None
-        if data.get('invoice_date'):
+        # Date parsing with flexible fallback
+        def _parse_flexible_date(val):
+            if not val:
+                return None
+            s = str(val).strip()
             try:
-                parsed_invoice_date = datetime.strptime(str(data['invoice_date'])[:10], '%Y-%m-%d').date()
+                return datetime.strptime(s[:10], '%Y-%m-%d').date()
             except (ValueError, TypeError):
-                parsed_invoice_date = None
+                pass
+            for fmt in ('%d-%m-%Y', '%d/%m/%Y', '%d %b %Y', '%d-%b-%Y', '%d %B %Y', '%d-%B-%Y', '%b %d, %Y', '%b %d %Y'):
+                try:
+                    return datetime.strptime(s, fmt).date()
+                except (ValueError, TypeError):
+                    continue
+            return None
 
-        parsed_due_date = None
-        if data.get('due_date'):
-            try:
-                parsed_due_date = datetime.strptime(str(data['due_date'])[:10], '%Y-%m-%d').date()
-            except (ValueError, TypeError):
-                parsed_due_date = None
+        parsed_invoice_date = _parse_flexible_date(data.get('invoice_date'))
+        parsed_due_date = _parse_flexible_date(data.get('due_date'))
 
         taxable_amt = amounts['taxable_amount']
         cgst_amt = amounts['cgst_amount']
@@ -736,6 +756,12 @@ def extract_with_gemini(
         inv_type = (data.get('invoice_type') or 'REGULAR').strip().upper()
         pol_num = (data.get('policy_number') or '').strip()
         veh_num = (data.get('vehicle_number') or '').strip().upper()
+        if not veh_num and original_pdf_text:
+            try:
+                from .reader import extract_metadata_from_text
+                veh_num = (extract_metadata_from_text(original_pdf_text).get('vehicle_number') or '').strip().upper()
+            except Exception:
+                pass
         labour_amt = to_dec(data.get('labour_charges'))
 
         # Document Category determination:
@@ -744,7 +770,7 @@ def extract_with_gemini(
             inv_type = 'VEHICLE_INSURANCE'
             if backend_val['expense_ledger'] in ('Purchase Spares & Consumables', 'Diesel Expenses'):
                 backend_val['expense_ledger'] = 'Lorry Insurance'
-        elif inv_type == 'VEHICLE_SERVICE' or (veh_num and labour_amt > Decimal('0.00')):
+        elif inv_type == 'VEHICLE_SERVICE' or (veh_num and (labour_amt > Decimal('0.00') or any(kw in (raw_party_name or '').lower() for kw in ['tvs', 'auto work', 'garage', 'workshop', 'motors', 'service', 'automobiles', 'body building', 'retread']))):
             inv_type = 'VEHICLE_SERVICE'
             if backend_val['expense_ledger'] in ('Purchase Spares & Consumables', 'Diesel Expenses'):
                 backend_val['expense_ledger'] = 'Labour Charges / Vehicle Service'

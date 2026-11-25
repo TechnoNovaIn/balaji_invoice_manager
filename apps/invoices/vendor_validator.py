@@ -155,7 +155,11 @@ def validate_vendor_and_financials(
         result['vendor_match_status'] = 'MATCHED_VERIFIED'
         result['party_name'] = vendor_by_gstin.get('name', cleaned_name)
         result['party_gstin'] = cleaned_gstin_str
-        result['expense_ledger'] = vendor_by_gstin.get('ledger', default_expense_ledger)
+        # Specific expense ledgers (e.g. Labour Charges, Insurance) take precedence over generic master default
+        if default_expense_ledger in ('Labour Charges / Vehicle Service', 'Lorry Insurance', 'Vehicle Repairs & Maintenance'):
+            result['expense_ledger'] = default_expense_ledger
+        else:
+            result['expense_ledger'] = vendor_by_gstin.get('ledger', default_expense_ledger)
         result['is_ambiguous_vendor'] = False
         result['requires_manual_review'] = False
         result['confidence'] = 0.98
@@ -183,7 +187,10 @@ def validate_vendor_and_financials(
         result['vendor_match_status'] = 'KNOWN_VENDOR_NO_GSTIN'
         result['party_name'] = vendor_by_name.get('name', cleaned_name)
         result['party_gstin'] = vendor_by_name.get('gstin', '')
-        result['expense_ledger'] = vendor_by_name.get('ledger', default_expense_ledger)
+        if default_expense_ledger in ('Labour Charges / Vehicle Service', 'Lorry Insurance', 'Vehicle Repairs & Maintenance'):
+            result['expense_ledger'] = default_expense_ledger
+        else:
+            result['expense_ledger'] = vendor_by_name.get('ledger', default_expense_ledger)
         result['is_ambiguous_vendor'] = False
         result['requires_manual_review'] = True  # Accounting policy: GSTIN missing on paper requires check
         result['confidence'] = 0.85

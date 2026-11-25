@@ -394,11 +394,17 @@ def my_submissions(request):
     if query:
         submissions = submissions.filter(
             Q(submission_id__icontains=query) |
+            Q(invoice_number__icontains=query) |
+            Q(policy_number__icontains=query) |
+            Q(party_name__icontains=query) |
+            Q(vehicle_number__icontains=query) |
             Q(remarks__icontains=query) |
+            Q(source_document__file_name__icontains=query) |
+            Q(documents__original_filename__icontains=query) |
             Q(employee__first_name__icontains=query) |
             Q(employee__last_name__icontains=query) |
             Q(employee__username__icontains=query)
-        )
+        ).distinct()
 
     if status_filter:
         submissions = submissions.filter(status=status_filter)
