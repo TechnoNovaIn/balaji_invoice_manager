@@ -472,14 +472,46 @@ def _reconcile_extracted_amounts(
                 f"Rupees-in-words (₹{words_total:,.2f}) differs from Grand Total (₹{total_amt:,.2f})."
             )
 
-    # 7. Check arithmetic sum including cess & round-off
+    # 7. Check arithmetic sum including cess & round-off (with 10x missed-zero recovery on single component)
     tax_sum = cgst_amt + sgst_amt + igst_amt + cess_amt
-    if tax_sum > Decimal('0.00') and taxable_amt > Decimal('0.00'):
+    if tax_sum > Decimal('0.00') and taxable_amt > Decimal('0.00') and total_amt > Decimal('0.00'):
         expected_total = taxable_amt + tax_sum + round_off_amt
         if abs(expected_total - total_amt) > Decimal('2.00'):
-            warnings.append(
-                f"Taxable (₹{taxable_amt:,.2f}) + Taxes (₹{tax_sum:,.2f}) = ₹{expected_total:,.2f} != Total (₹{total_amt:,.2f})."
-            )
+            # Check if a single component dropped a trailing zero (e.g. IGST 6669 -> 66690)
+            recovered_component = False
+            if igst_amt > Decimal('0.00') and cgst_amt == Decimal('0.00') and sgst_amt == Decimal('0.00'):
+                igst_10x = (igst_amt * Decimal('10')).quantize(Decimal('0.01'))
+                if abs((taxable_amt + igst_10x + cess_amt + round_off_amt) - total_amt) <= Decimal('2.00'):
+                    warnings.append(
+                        f"Recovered missed zero on IGST (₹{igst_amt:,.2f} -> ₹{igst_10x:,.2f}) to reconcile Total ₹{total_amt:,.2f}."
+                    )
+                    igst_amt = igst_10x
+                    recovered_component = True
+            elif cgst_amt > Decimal('0.00') and sgst_amt > Decimal('0.00'):
+                cgst_10x = (cgst_amt * Decimal('10')).quantize(Decimal('0.01'))
+                sgst_10x = (sgst_amt * Decimal('10')).quantize(Decimal('0.01'))
+                if abs((taxable_amt + cgst_10x + sgst_10x + cess_amt + round_off_amt) - total_amt) <= Decimal('2.00'):
+                    warnings.append(
+                        f"Recovered missed zero on CGST/SGST (₹{cgst_amt:,.2f} -> ₹{cgst_10x:,.2f}) to reconcile Total ₹{total_amt:,.2f}."
+                    )
+                    cgst_amt = cgst_10x
+                    sgst_amt = sgst_10x
+                    recovered_component = True
+            if not recovered_component:
+                taxable_10x = (taxable_amt * Decimal('10')).quantize(Decimal('0.01'))
+                if abs((taxable_10x + tax_sum + round_off_amt) - total_amt) <= Decimal('2.00'):
+                    warnings.append(
+                        f"Recovered missed zero on Taxable Base (₹{taxable_amt:,.2f} -> ₹{taxable_10x:,.2f}) to reconcile Total ₹{total_amt:,.2f}."
+                    )
+                    taxable_amt = taxable_10x
+                    recovered_component = True
+
+            tax_sum = cgst_amt + sgst_amt + igst_amt + cess_amt
+            expected_total = taxable_amt + tax_sum + round_off_amt
+            if not recovered_component and abs(expected_total - total_amt) > Decimal('2.00'):
+                warnings.append(
+                    f"Taxable (₹{taxable_amt:,.2f}) + Taxes (₹{tax_sum:,.2f}) = ₹{expected_total:,.2f} != Total (₹{total_amt:,.2f})."
+                )
 
     # 8. Check CGST / SGST symmetry
     if (cgst_amt > Decimal('0.00')) != (sgst_amt > Decimal('0.00')):

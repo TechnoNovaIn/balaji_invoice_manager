@@ -495,3 +495,39 @@ class VehicleInvoiceAndTaxReconciliationTests(TestCase):
             list_resp = self.client.get(reverse('invoices:my_submissions'), {'q': q_term})
             self.assertEqual(list_resp.status_code, 200)
             self.assertContains(list_resp, "SHRIRAM GENERAL INSURANCE COMPANY LTD")
+
+    def test_reconciliation_recovers_missed_zero_on_tax_and_words(self):
+        """
+        Verify both:
+        1. Missed zero on total_amount is recovered via amount_in_words.
+        2. Missed zero on a single tax field (e.g. IGST 6669 -> 66690) is recovered
+           when Taxable + Tax = Total reconciles at 10x.
+        """
+        # Case 1: IGST dropped a zero (6669.00 instead of 66690.00)
+        data_tax = {
+            'taxable_amount': 370500.0,
+            'igst_amount': 6669.0,
+            'cgst_amount': 0.0,
+            'sgst_amount': 0.0,
+            'total_amount': 437190.0,
+            'amount_in_words': 'Four Lakh Thirty Seven Thousand One Hundred Ninety Only',
+        }
+        rec1, w1 = _reconcile_extracted_amounts(data_tax, party_gstin='27AADCI7688G1Z3')
+        self.assertEqual(rec1['igst_amount'], Decimal('66690.00'))
+        self.assertEqual(rec1['total_amount'], Decimal('437190.00'))
+        self.assertTrue(any('Recovered missed zero on IGST' in w for w in w1))
+
+        # Case 2: Entire invoice dropped a zero compared to words
+        data_all = {
+            'taxable_amount': 1000.0,
+            'cgst_amount': 90.0,
+            'sgst_amount': 90.0,
+            'igst_amount': 0.0,
+            'total_amount': 1180.0,
+            'amount_in_words': 'Eleven Thousand Eight Hundred Only',
+        }
+        rec2, w2 = _reconcile_extracted_amounts(data_all, party_gstin='29AAWFB0395H1ZX')
+        self.assertEqual(rec2['taxable_amount'], Decimal('10000.00'))
+        self.assertEqual(rec2['cgst_amount'], Decimal('900.00'))
+        self.assertEqual(rec2['sgst_amount'], Decimal('900.00'))
+        self.assertEqual(rec2['total_amount'], Decimal('11800.00'))

@@ -231,15 +231,15 @@
                     <div class="mb-3">
                         <label class="form-label small fw-bold text-dark mb-1">Pool Update Mode</label>
                         <div class="form-check small">
-                            <input class="form-check-input" type="radio" name="action" id="actionReplace" value="replace" checked>
-                            <label class="form-check-label" for="actionReplace">
-                                Replace Entire Pool (Recommended)
+                            <input class="form-check-input" type="radio" name="action" id="actionAdd" value="add" {% if gemini_key_configured %}checked{% endif %}>
+                            <label class="form-check-label fw-semibold text-dark" for="actionAdd">
+                                Append to Existing Pool {% if gemini_key_configured %}<span class="text-success">(Recommended)</span>{% endif %}
                             </label>
                         </div>
                         <div class="form-check small">
-                            <input class="form-check-input" type="radio" name="action" id="actionAdd" value="add">
-                            <label class="form-check-label" for="actionAdd">
-                                Append to Existing Pool
+                            <input class="form-check-input" type="radio" name="action" id="actionReplace" value="replace" {% if not gemini_key_configured %}checked{% endif %}>
+                            <label class="form-check-label text-secondary" for="actionReplace">
+                                Replace Entire Pool (overwrites existing keys)
                             </label>
                         </div>
                     </div>
