@@ -256,7 +256,7 @@ CRITICAL RULES:
    - Missing fields must remain null or explicitly unidentified. Never invent missing invoice information.
 
 6. E-INVOICE & IRN:
-   - Extract `irn_number` ONLY if a complete 64-character hexadecimal SHA-256 IRN (digits 0-9 and letters A-F only) is explicitly readable. Never fabricate, guess, or pad an IRN.
+   - Extract `irn_number` ONLY if a complete 64-character hexadecimal SHA-256 IRN (digits 0-9 and letters A-F only) is explicitly readable (if wrapped across two lines with a hyphen `-`, remove the hyphen/newline and join into one 64-char hex string). Never fabricate, guess, or pad an IRN.
    - Set `is_e_invoice` to true if IRN/Ack No/Signed QR/e-Invoice indicators appear, false ONLY if explicitly declared non-e-invoice (e.g. 'Not an e-invoice', 'E-Invoice Applicable: No'), or null if uncertain or if IRN is simply missing or marked N/A.
 
 7. DOCUMENT APPEARANCE CLASSIFICATION (INDEPENDENT FROM E-INVOICE STATUS):
@@ -294,7 +294,7 @@ CRITICAL RULES:
       * Set `invoice_type` to "VEHICLE_SERVICE".
       * Set `expense_ledger` to "Labour Charges / Vehicle Service" (or "Vehicle Repairs & Maintenance").
       * Extract `vehicle_number` from labels like 'REGISTRATION', 'REGISTRATION NO', 'Vehicle No', 'Veh Reg No', 'Reg. No.', 'Lorry No', 'Truck No'.
-      * Extract `labour_charges`: sum any charges specifically labeled as Labour, Service Charge, Fitting, Lathe Work, Washing, Greasing, or Alignment.
+      * Extract `labour_charges`: sum ONLY individual line items explicitly labeled as Labour, Service Charge, Fitting, Lathe Work, Washing, Greasing, or Alignment. NEVER copy physical items (e.g. glass, beeding, silicon, spares) or the full bill total into `labour_charges` just because the shop header says "Sales & Fitting". If no line item is explicitly a labour/service charge, set `labour_charges` to 0.
 
 12. TAX AMOUNTS & GST ANTI-MIXUP RULES:
     - `taxable_amount`: Value of supply BEFORE tax (Subtotal / Basic / Taxable Value).
@@ -795,6 +795,21 @@ def extract_with_gemini(
             except Exception:
                 pass
         labour_amt = to_dec(data.get('labour_charges'))
+
+        # Guard: if line items are extracted and NONE are labour/service charges, do not misclassify item costs as labour
+        extracted_items = data.get('items') or []
+        if labour_amt > Decimal('0.00') and extracted_items:
+            _labour_kws = (
+                'labour', 'labor', 'service', 'fitting', 'lathe', 'wash',
+                'greas', 'align', 'repair', 'dent', 'paint', 'weld', 'mechanic',
+                'overhaul', 'tinkering', 'wiring', 'scanning', 'erasing',
+            )
+            has_any_labour_item = any(
+                any(kw in str(it.get('description') or '').lower() for kw in _labour_kws)
+                for it in extracted_items if isinstance(it, dict)
+            )
+            if not has_any_labour_item:
+                labour_amt = Decimal('0.00')
 
         # Document Category determination:
         # Strictly default to REGULAR unless specifically proven to be Vehicle Insurance or Vehicle Service

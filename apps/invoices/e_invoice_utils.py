@@ -38,10 +38,10 @@ POSITIVE_EINVOICE_PATTERNS = [
 
 
 def normalize_irn(value: Optional[str]) -> str:
-    """Strip whitespace/newlines and uppercase a candidate IRN string."""
+    """Strip whitespace, newlines, and line-wrap hyphens and uppercase a candidate IRN string."""
     if not value:
         return ''
-    return re.sub(r'[\s\r\n]+', '', str(value)).upper()
+    return re.sub(r'[\s\r\n\-]+', '', str(value)).upper()
 
 
 def is_valid_irn(value: Optional[str]) -> bool:
@@ -205,8 +205,8 @@ def extract_irn_from_text(raw_text: str) -> Dict[str, Any]:
         info['explicit_irn_label'] = True
         info['explicit_positive_einvoice'] = True
 
-        # Strip separators/spaces to handle OCR line breaks across a 64-char hex hash
-        compact = re.sub(r'[\s\r\n]+', '', trailing_head).upper()
+        # Strip separators/spaces/line-wrap hyphens to handle OCR/Tally line breaks across a 64-char hex hash
+        compact = re.sub(r'[\s\r\n\-]+', '', trailing_head).upper()
         # Strict 64-char hexadecimal token (rejecting G-Z and rejecting >64 alphanumeric tokens)
         tok_match = re.match(r'^([A-F0-9]{64})(?:[^A-Z0-9]|$)', compact)
         if tok_match and is_valid_irn(tok_match.group(1)):

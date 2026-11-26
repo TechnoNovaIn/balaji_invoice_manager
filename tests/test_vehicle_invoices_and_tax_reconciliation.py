@@ -531,3 +531,39 @@ class VehicleInvoiceAndTaxReconciliationTests(TestCase):
         self.assertEqual(rec2['cgst_amount'], Decimal('900.00'))
         self.assertEqual(rec2['sgst_amount'], Decimal('900.00'))
         self.assertEqual(rec2['total_amount'], Decimal('11800.00'))
+
+    @patch('apps.invoices.gemini_service.get_available_gemini_keys', return_value=['AQ.TestKey_123456789'])
+    @patch('apps.invoices.gemini_extractor._get_gemini_client')
+    def test_gemini_does_not_put_item_costs_into_labour_charges(self, mock_get_client, mock_keys):
+        """
+        If all extracted line items are physical parts/spares (e.g. glass, beeding, silicon),
+        labour_charges must be zeroed out instead of copying the ₹6,900 item total.
+        """
+        mock_response = MagicMock()
+        mock_response.parsed = InvoiceSchema(
+            invoice_type="VEHICLE_SERVICE",
+            party_name="AMG AL-MALIK GLASS",
+            taxable_amount=6900.0,
+            total_amount=6900.0,
+            labour_charges=6900.0,
+            items=[
+                {"description": "Mahindra front glass", "quantity": 1.0, "unit_price": 4800.0, "amount": 4800.0},
+                {"description": "Beeding", "quantity": 1.0, "unit_price": 1300.0, "amount": 1300.0},
+                {"description": "Silicon", "quantity": 2.0, "unit_price": 300.0, "amount": 600.0},
+                {"description": "Auto", "amount": 200.0},
+            ],
+        )
+        client = MagicMock()
+        client.models.generate_content.return_value = mock_response
+        mock_get_client.return_value = client
+
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tf:
+            tf.write(b"X" * 600)
+            tf_path = tf.name
+        try:
+            res = extract_with_gemini(tf_path)
+            self.assertIsNotNone(res)
+            self.assertEqual(res['total_amount'], Decimal('6900.00'))
+            self.assertEqual(res['labour_charges'], Decimal('0.00'))
+        finally:
+            os.unlink(tf_path)

@@ -486,4 +486,12 @@ class EInvoiceAndIRNTests(TestCase):
         self.assertIsNone(uncertain_res["is_e_invoice"])
         self.assertTrue(uncertain_res["e_invoice_manual_review"])
 
+    def test_14_hyphen_wrapped_irn_is_extracted_and_validated(self):
+        wrapped_irn = "729fe58a9a09de92919ad6147db16a316c191d62540-\n6748d7ac13e05170e2f3a"
+        expected = "729FE58A9A09DE92919AD6147DB16A316C191D625406748D7AC13E05170E2F3A"
+        self.assertTrue(is_valid_irn(wrapped_irn))
+        info = extract_irn_from_text(f"Tax Invoice\nIRN : {wrapped_irn}\nAck No. : 112632951139780")
+        self.assertEqual(info["valid_irn"], expected)
+        self.assertFalse(info["invalid_irn_candidate"])
+
 
