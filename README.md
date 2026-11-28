@@ -110,10 +110,11 @@ DJANGO_DEBUG=False
 DJANGO_ALLOWED_HOSTS=127.0.0.1,localhost,192.168.0.131,invoicehub.balajitransports.com
 DJANGO_CSRF_TRUSTED_ORIGINS=http://127.0.0.1:8000,http://localhost:8000,http://192.168.0.131:8000,https://invoicehub.balajitransports.com
 
-# Production Server Host (0.0.0.0 allows other PCs on the office LAN to connect)
-WAITRESS_HOST=0.0.0.0
+# Production Server Host (127.0.0.1 recommended behind Cloudflare Tunnel; 0.0.0.0 only for trusted office LAN)
+WAITRESS_HOST=127.0.0.1
 WAITRESS_PORT=8000
 WAITRESS_THREADS=8
+WAITRESS_TRUSTED_PROXY=127.0.0.1
 
 # Database (SQLite in WAL mode)
 DB_ENGINE=django.db.backends.sqlite3
@@ -142,9 +143,9 @@ Run the production Waitress server entrypoint:
 python serve_production.py
 ```
 Waitress will:
-1. Verify database readiness and apply startup OCR recovery checks for any interrupted jobs.
+1. Verify database readiness and queue startup OCR recovery checks in the background without blocking boot.
 2. Initialize multi-threaded production workers.
-3. Serve on `http://0.0.0.0:8000`.
+3. Serve on `http://127.0.0.1:8000` (exposed over HTTPS via Cloudflare Tunnel).
 
 ### 3. Start Development Server (Debugging Only)
 ```powershell
@@ -179,14 +180,9 @@ python manage.py run_invoicehub_backup
 
 ---
 
-## 👥 Default User Accounts
+## 👥 User Accounts & Access Control
 
-| Role | Username | Password | Purpose / Default Landing Page |
-|---|---|---|---|
-| **Employee (Collector)** | `employee` | `BalajiEmp@2026` | Mobile upload portal (`/dashboard/employee/`) |
-| **Naveen (Accounts)** | `naveen` | `BalajiNaveen@2026` | Accounts chronological feed & Tally check-off (`/dashboard/naveen/`) |
-| **Admin** | `admin` | `BalajiAdmin@2026` | User administration, audit logs & backups (`/dashboard/admin/`) |
-| **Management** | `management` | `BalajiMgmt@2026` | Read-only executive oversight & analytics (`/dashboard/management/`) |
+User accounts and role assignments (`Employee`, `Naveen / Accounts`, `Admin`, `Management`) are managed via the Admin User Management portal (`/accounts/manage/users/`) or `python manage.py createsuperuser`. Do not store default or production credentials in documentation or version control; enforce password rotation via `must_change_password` for newly provisioned accounts.
 
 ---
 

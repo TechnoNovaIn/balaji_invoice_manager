@@ -1,0 +1,7 @@
+-r requirements.txt
+
+# Automated Testing & QA
+pytest==9.1.1
+pytest-django==4.14.0
+pluggy==1.7.0
+iniconfig==2.3.1

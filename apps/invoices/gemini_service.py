@@ -18,8 +18,9 @@ from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
-# Thread-safe in-memory key health state
+# Thread-safe in-memory key health state & atomic .env write lock
 _KEY_HEALTH_LOCK = threading.Lock()
+_ENV_WRITE_LOCK = threading.Lock()
 _KEY_EXHAUSTED_UNTIL: Dict[str, float] = {}  # key -> epoch timestamp when cooldown expires
 _KEY_FAIL_COUNT: Dict[str, int] = {}         # key -> consecutive fail count
 
@@ -202,19 +203,29 @@ def test_gemini_connection(api_key: str, model_name: str = "gemini-3.5-flash-lit
     except Exception as e:
         latency = round((time.perf_counter() - t0) * 1000)
         err_str = str(e)
+        err_code = getattr(e, 'code', None)
+        if not isinstance(err_code, int):
+            err_code = getattr(e, 'status_code', None)
         logger.warning("Gemini API connection test failed: %s", err_str)
+
+        is_timeout = isinstance(e, TimeoutError) or 'Timeout' in type(e).__name__
+        is_connect_err = isinstance(e, ConnectionError) or 'Connect' in type(e).__name__ or 'Transport' in type(e).__name__
 
         if 'httpx' in err_str and 'not installed' in err_str:
             hint = 'Python package "httpx" is missing on this server environment. Run "pip install httpx" to activate Gemini Vision AI.'
-        elif '403' in err_str or 'PERMISSION_DENIED' in err_str:
+        elif is_timeout:
+            hint = f'Google Gemini API timed out after {latency}ms. Check internet connectivity or firewall access.'
+        elif is_connect_err:
+            hint = f'Network transport error reaching Google Gemini API: {err_str[:160]}'
+        elif err_code == 403 or '403' in err_str or 'PERMISSION_DENIED' in err_str:
             hint = 'Google 403 Forbidden: Free tier unavailable or project disabled. Check billing or try a fresh project key.'
             mark_key_exhausted(clean_key, cooldown_seconds=7200)
-        elif '429' in err_str or 'RESOURCE_EXHAUSTED' in err_str:
+        elif err_code == 429 or '429' in err_str or 'RESOURCE_EXHAUSTED' in err_str:
             hint = 'Google 429 Quota Exceeded: Daily or per-minute rate limit reached for this key. Cooldown activated.'
             mark_key_exhausted(clean_key, cooldown_seconds=3600)
-        elif '404' in err_str or 'NOT_FOUND' in err_str:
+        elif err_code == 404 or '404' in err_str or 'NOT_FOUND' in err_str:
             hint = f'Google 404 Not Found: Model "{target_model}" is unavailable for this key. We recommend "gemini-3.5-flash-lite".'
-        elif '400' in err_str or 'INVALID_ARGUMENT' in err_str:
+        elif err_code == 400 or '400' in err_str or 'INVALID_ARGUMENT' in err_str:
             hint = 'Google 400 Invalid Argument: API key appears invalid or malformed.'
         else:
             hint = f'Connection error: {err_str[:180]}'
@@ -283,30 +294,31 @@ def save_gemini_key_pool(keys: List[str], model_name: Optional[str] = None) -> b
         if safe_model:
             key_values['GEMINI_MODEL'] = safe_model
 
-    lines = env_path.read_text(encoding='utf-8').splitlines(keepends=True)
-    updated_keys = set()
-    new_lines = []
+    with _ENV_WRITE_LOCK:
+        lines = env_path.read_text(encoding='utf-8').splitlines(keepends=True)
+        updated_keys = set()
+        new_lines = []
 
-    for line in lines:
-        stripped = line.strip()
-        matched = False
+        for line in lines:
+            stripped = line.strip()
+            matched = False
+            for k, v in key_values.items():
+                if stripped.startswith(f'{k}=') or stripped == k:
+                    new_lines.append(f'{k}={v}\n')
+                    updated_keys.add(k)
+                    matched = True
+                    break
+            if not matched:
+                new_lines.append(line)
+
         for k, v in key_values.items():
-            if stripped.startswith(f'{k}=') or stripped == k:
+            if k not in updated_keys:
                 new_lines.append(f'{k}={v}\n')
-                updated_keys.add(k)
-                matched = True
-                break
-        if not matched:
-            new_lines.append(line)
 
-    for k, v in key_values.items():
-        if k not in updated_keys:
-            new_lines.append(f'{k}={v}\n')
-
-    # Atomic write to .env
-    temp_path = env_path.with_suffix('.tmp')
-    temp_path.write_text(''.join(new_lines), encoding='utf-8')
-    temp_path.replace(env_path)
+        # Atomic write to .env
+        temp_path = env_path.with_suffix('.tmp')
+        temp_path.write_text(''.join(new_lines), encoding='utf-8')
+        temp_path.replace(env_path)
 
     # Hot update in-memory runtime
     os.environ['GEMINI_API_KEYS'] = keys_str

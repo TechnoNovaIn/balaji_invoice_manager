@@ -13,7 +13,12 @@ import atexit
 import logging
 import os
 import signal
-import sys
+import threading
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parent / '.env')
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'invoicehub.settings')
 
@@ -22,16 +27,21 @@ import django
 django.setup()
 
 from django.core.wsgi import get_wsgi_application
-from waitress import serve
+from django.db import close_old_connections
+from waitress import create_server
 
 from apps.invoices.tasks import recover_incomplete_documents, shutdown_ocr_executor
 
 logger = logging.getLogger('waitress')
+_SHUTDOWN_EVENT = threading.Event()
+_SHUTDOWN_LOCK = threading.Lock()
+_SHUTDOWN_STARTED = False
 
 
 def run_startup_recovery() -> None:
+    """Requeue incomplete OCR jobs asynchronously without blocking server startup."""
     try:
-        summary = recover_incomplete_documents(stale_minutes=0, requeue_only=False)
+        summary = recover_incomplete_documents(stale_minutes=0, requeue_only=True)
         logger.info(
             "Startup OCR recovery check: found=%s recovered=%s already_completed=%s failed_missing=%s skipped_active=%s",
             summary['total_found'],
@@ -42,9 +52,16 @@ def run_startup_recovery() -> None:
         )
     except Exception:
         logger.exception("Startup OCR recovery check encountered an error; continuing server boot.")
+    finally:
+        close_old_connections()
 
 
 def _on_shutdown(*_args) -> None:
+    global _SHUTDOWN_STARTED
+    with _SHUTDOWN_LOCK:
+        if _SHUTDOWN_STARTED:
+            return
+        _SHUTDOWN_STARTED = True
     remaining = shutdown_ocr_executor(wait=True, timeout=15.0)
     if remaining:
         logger.warning("Shutdown proceeding with %d active OCR background job(s) still running.", remaining)
@@ -59,16 +76,7 @@ def main() -> None:
     trusted_proxy = os.getenv('WAITRESS_TRUSTED_PROXY', '127.0.0.1').strip()
     trusted_proxy_count = max(1, int(os.getenv('DJANGO_TRUSTED_PROXY_COUNT', '1') or '1'))
 
-    run_startup_recovery()
-
     atexit.register(_on_shutdown)
-    for sig_name in ('SIGINT', 'SIGTERM'):
-        sig = getattr(signal, sig_name, None)
-        if sig is not None:
-            try:
-                signal.signal(sig, lambda *_a: sys.exit(0))
-            except Exception:
-                pass
 
     application = get_wsgi_application()
     logger.info(
@@ -99,7 +107,43 @@ def main() -> None:
                 'x-forwarded-port',
             },
         )
-    serve(application, **serve_kwargs)
+
+    server = create_server(application, **serve_kwargs)
+
+    def _request_shutdown(signum, _frame) -> None:
+        logger.info("Received signal %s; initiating graceful Waitress & OCR worker shutdown.", signum)
+        _SHUTDOWN_EVENT.set()
+
+    def _shutdown_watcher() -> None:
+        _SHUTDOWN_EVENT.wait()
+        try:
+            task_dispatcher = getattr(server, 'task_dispatcher', None)
+            if task_dispatcher is not None and hasattr(task_dispatcher, 'shutdown'):
+                task_dispatcher.shutdown(cancel_pending=False, timeout=10)
+        except Exception:
+            logger.exception("Error draining Waitress worker threads during shutdown.")
+        try:
+            server.close()
+        except Exception:
+            logger.exception("Error closing Waitress server socket during shutdown.")
+        _on_shutdown()
+
+    for sig_name in ('SIGINT', 'SIGTERM', 'SIGBREAK'):
+        sig = getattr(signal, sig_name, None)
+        if sig is not None:
+            try:
+                signal.signal(sig, _request_shutdown)
+            except Exception:
+                pass
+
+    threading.Thread(target=_shutdown_watcher, name='waitress-shutdown', daemon=True).start()
+    threading.Thread(target=run_startup_recovery, name='startup-ocr-recovery', daemon=True).start()
+
+    try:
+        server.run()
+    finally:
+        _SHUTDOWN_EVENT.set()
+        _on_shutdown()
 
 
 if __name__ == '__main__':

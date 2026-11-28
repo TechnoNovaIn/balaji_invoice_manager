@@ -271,6 +271,21 @@
 </div>
 
 <script>
+document.addEventListener('DOMContentLoaded', function() {
+    const keyForm = document.getElementById('keyUpdateForm');
+    const saveBtn = document.getElementById('btnSaveKey');
+    if (keyForm && saveBtn) {
+        keyForm.addEventListener('submit', function() {
+            if (saveBtn.dataset.submitting === '1') {
+                return false;
+            }
+            saveBtn.dataset.submitting = '1';
+            saveBtn.disabled = true;
+            saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status"></span> Verifying &amp; Saving...';
+        });
+    }
+});
+
 function hideFeedback() {
     document.getElementById('testFeedbackBox').classList.add('d-none');
 }

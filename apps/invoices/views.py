@@ -1601,21 +1601,10 @@ def batch_complete_tally(request):
 
 
 def _record_tally_batch_history(request, submission_ids, entered: bool) -> None:
-    """Write status history + audit log for batch Tally (un)marking, which bypasses model save()."""
+    """Write AuditLog for batch Tally (un)marking without creating no-op status history rows."""
     if not submission_ids:
         return
-    note = "Marked as entered in Tally (batch)" if entered else "Moved back to pending Tally entry (batch)"
     subs = list(InvoiceSubmission.objects.filter(submission_id__in=submission_ids).only('id', 'status', 'submission_id'))
-    InvoiceStatusHistory.objects.bulk_create([
-        InvoiceStatusHistory(
-            submission=sub,
-            old_status=sub.status,
-            new_status=sub.status,
-            changed_by=request.user,
-            notes=note,
-        )
-        for sub in subs
-    ])
     try:
         record_audit_log(
             request.user,

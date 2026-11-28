@@ -333,6 +333,7 @@ def update_gemini_api_key_view(request):
         test_gemini_connection,
     )
     from apps.accounts.models import AuditLog
+    from apps.accounts.security import get_client_ip
 
     action = request.POST.get('action', 'replace').strip().lower()
     new_model = request.POST.get('model', 'gemini-3.5-flash-lite').strip() or 'gemini-3.5-flash-lite'
@@ -349,11 +350,10 @@ def update_gemini_api_key_view(request):
                 removed_key = current_keys.pop(target_idx)
                 save_gemini_key_pool(current_keys, model_name=new_model)
 
-                client_ip = request.META.get('HTTP_X_FORWARDED_FOR', '').split(',')[0].strip() or request.META.get('REMOTE_ADDR')
                 AuditLog.objects.create(
                     user=request.user,
                     action='CONFIG_GEMINI_KEY_REMOVED',
-                    ip_address=client_ip,
+                    ip_address=get_client_ip(request),
                     user_agent=request.META.get('HTTP_USER_AGENT', '')[:500],
                     details={
                         'removed_key_suffix': removed_key[-4:],
@@ -399,11 +399,26 @@ def update_gemini_api_key_view(request):
         messages.error(request, error_msg)
         return redirect('core:ai_engine_config')
 
+    existing_keys = get_configured_gemini_keys()
+    current_model = (getattr(settings, 'GEMINI_MODEL', 'gemini-3.5-flash-lite') or 'gemini-3.5-flash-lite').strip()
+
     if action == 'add':
-        existing = get_configured_gemini_keys()
-        final_keys = parse_gemini_keys(existing + submitted_keys)
+        final_keys = parse_gemini_keys(existing_keys + submitted_keys)
     else:  # 'replace'
         final_keys = submitted_keys
+
+    if final_keys == existing_keys and new_model == current_model:
+        no_change_msg = "No changes detected: the submitted Gemini API key pool and model are already active."
+        if is_ajax:
+            return JsonResponse({
+                'success': True,
+                'unchanged': True,
+                'message': no_change_msg,
+                'pool_count': len(final_keys),
+                'model': new_model,
+            })
+        messages.info(request, no_change_msg)
+        return redirect('core:ai_engine_config')
 
     # Optional pre-save validation
     test_results = []
@@ -434,12 +449,11 @@ def update_gemini_api_key_view(request):
         messages.error(request, error_msg)
         return redirect('core:ai_engine_config')
 
-    # Record security audit log
-    client_ip = request.META.get('HTTP_X_FORWARDED_FOR', '').split(',')[0].strip() or request.META.get('REMOTE_ADDR')
+    # Record security audit log only when configuration actually changed
     AuditLog.objects.create(
         user=request.user,
         action='CONFIG_GEMINI_API_KEY_UPDATED',
-        ip_address=client_ip,
+        ip_address=get_client_ip(request),
         user_agent=request.META.get('HTTP_USER_AGENT', '')[:500],
         details={
             'action': action,

@@ -66,12 +66,44 @@ def _get_gemini_client(api_key: str):
 
 
 def _gemini_error_code(err: Exception) -> Optional[int]:
-    """Extract the HTTP status code from a google-genai APIError (None for network errors)."""
+    """Extract the HTTP status code from a google-genai APIError (None for transport/network errors)."""
     code = getattr(err, 'code', None)
     if isinstance(code, int):
         return code
     status_code = getattr(err, 'status_code', None)
-    return status_code if isinstance(status_code, int) else None
+    if isinstance(status_code, int):
+        return status_code
+    response = getattr(err, 'response', None)
+    resp_status = getattr(response, 'status_code', None)
+    return resp_status if isinstance(resp_status, int) else None
+
+
+def _is_retryable_transport_error(err: Exception) -> bool:
+    """Return True for httpx/httpx2/stdlib network timeouts and transient transport errors."""
+    if isinstance(err, (TimeoutError, ConnectionError, OSError)):
+        return True
+    try:
+        import httpx
+        if isinstance(err, (httpx.TimeoutException, httpx.TransportError)):
+            return True
+    except ImportError:
+        pass
+    try:
+        from google.genai import errors as genai_errors
+        httpx2_mod = getattr(genai_errors, 'httpx2', None)
+        if httpx2_mod is not None:
+            transport_errs = tuple(
+                cls for cls in (
+                    getattr(httpx2_mod, 'TimeoutException', None),
+                    getattr(httpx2_mod, 'TransportError', None),
+                )
+                if isinstance(cls, type)
+            )
+            if transport_errs and isinstance(err, transport_errs):
+                return True
+    except Exception:
+        pass
+    return False
 
 
 def _gemini_retry_delay(err: Exception, attempt: int) -> float:
@@ -693,7 +725,7 @@ def extract_with_gemini(
                         if code in _MODEL_UNAVAILABLE_CODES:
                             logger.warning("Gemini model %s unavailable (HTTP %s); trying next configured model.", m_name, code)
                             break
-                        if (code in _RETRYABLE_CODES or code is None) and not is_last_attempt:
+                        if (code in _RETRYABLE_CODES or (code is None and _is_retryable_transport_error(m_err))) and not is_last_attempt:
                             delay = _gemini_retry_delay(m_err, attempt)
                             logger.warning("Gemini model %s error (HTTP %s, %s); retrying in %.1fs.",
                                            m_name, code, last_error_type, delay)

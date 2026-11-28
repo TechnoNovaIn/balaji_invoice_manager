@@ -36,7 +36,10 @@ class TestStaticAndLoggingConfiguration:
         )
         assert 'app_file' in settings.LOGGING['handlers']
         assert 'security_file' in settings.LOGGING['handlers']
-        assert settings.LOGGING['handlers']['app_file']['class'] == 'logging.handlers.RotatingFileHandler'
+        assert settings.LOGGING['handlers']['app_file']['class'] in (
+            'logging.handlers.RotatingFileHandler',
+            'apps.core.logging_handlers.SafeRotatingFileHandler',
+        )
 
         req_text = Path(settings.BASE_DIR / 'requirements.txt').read_text(encoding='utf-8')
         assert 'waitress==' in req_text

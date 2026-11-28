@@ -16,8 +16,6 @@ from apps.invoices.gemini_service import (
     get_key_health,
     get_available_gemini_keys,
     save_gemini_key_pool,
-    test_gemini_connection,
-    test_all_gemini_keys,
     _KEY_EXHAUSTED_UNTIL,
 )
 
